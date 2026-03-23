@@ -939,35 +939,44 @@ class SettingsWindow(QWidget):
 
             self.sig_sparkybot_status.emit("Installing update...")
 
-            # Extract, skipping config/user files and certain directories
-            SKIP_FILES = {'config.properties', 'assets/sbtray.png', 'assets/wvw_icon.png'}
-            SKIP_DIRS = {'GW2EI', '__pycache__', '.git'}
+            # Paths to protect during the update
+            PROTECTED_PATHS = {'config.properties', 'GW2EI'}
 
-            with zipfile.ZipFile(tmp_path) as zf:
-                # Find the root folder name inside the zip (GitHub adds one)
-                root_prefix = ""
-                for name in zf.namelist():
-                    if '/' in name:
-                        root_prefix = name.split('/')[0] + '/'
-                        break
+            # Delete everything except protected paths
+            for item in app_dir.iterdir():
+                if item.name in PROTECTED_PATHS:
+                    continue
+                if item.name.startswith('.'):
+                    continue  # skip hidden files like .git
+                try:
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+                except Exception as e:
+                    logger.warning(f"Could not delete {item.name}: {e}")
 
+            # Extract zip, skipping protected paths
+            with zipfile.ZipFile(tmp_path, 'r') as zf:
                 for member in zf.namelist():
-                    # Strip the root folder prefix
-                    rel_path = member[len(root_prefix):] if root_prefix else member
-                    if not rel_path or rel_path.endswith('/'):
+                    # Get the path relative to the zip's root directory
+                    parts = member.split('/', 1)
+                    if len(parts) < 2 or not parts[1]:
+                        continue  # skip the top-level directory entry itself
+                    relative_path = parts[1]
+
+                    # Skip protected paths
+                    top_level = relative_path.split('/')[0]
+                    if top_level in PROTECTED_PATHS:
                         continue
 
-                    # Skip config/user files and certain directories
-                    parts = Path(rel_path).parts
-                    if any(d in SKIP_DIRS for d in parts):
-                        continue
-                    if Path(rel_path).name in SKIP_FILES:
-                        continue
-
-                    target = app_dir / rel_path
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(member) as src, open(target, 'wb') as dst:
-                        shutil.copyfileobj(src, dst)
+                    target = app_dir / relative_path
+                    if member.endswith('/'):
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(member) as src, open(target, 'wb') as dst:
+                            dst.write(src.read())
 
             tmp_path.unlink()
 
