@@ -49,7 +49,7 @@ class Config:
             'showQuickReport': 'true',
         },
         'Behavior': {
-            'closeToTray': 'true',
+            'closeToTray': 'false',
             'minimizeToTray': 'true',
             'startMinimized': 'false',
             'startWatcherOnStartup': 'false',

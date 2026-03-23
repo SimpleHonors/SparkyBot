@@ -15,6 +15,7 @@ import sys
 import logging
 import threading
 import json
+import ctypes
 from pathlib import Path
 from enum import Enum
 from typing import Optional
@@ -24,7 +25,7 @@ from core.version import VERSION
 sys.path.insert(0, str(Path(__file__).parent / "core"))
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import pyqtSignal, QObject, QThread, QTimer
+from PyQt6.QtCore import pyqtSignal, QObject, QThread, QTimer, Qt
 
 from core.config import Config
 from core.file_watcher import FileWatcher
@@ -252,12 +253,19 @@ class SparkyBotApp(QApplication):
 
     def __init__(self, args, config):
         super().__init__(args)
+
+        # Set application-wide icon (taskbar, alt-tab, title bars)
+        from PyQt6.QtGui import QIcon
+        icon_path = Path(__file__).parent / "sbtray.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
         self.config = config
         self.logger = logging.getLogger("SparkyBot")
 
         # Setup components
         self.watcher_thread: Optional[QThread] = None
-        self.watcher_worker = WatcherWorker(config)
+        self.watcher_worker: Optional[WatcherWorker] = None
 
         self.tray_manager = TrayManager("SparkyBot")
         self.settings_window: Optional[SettingsWindow] = None
@@ -280,19 +288,23 @@ class SparkyBotApp(QApplication):
 
     def _setup_tray(self):
         """Setup system tray"""
-        # Use mztray.png from the app directory
-        icon_path = str(Path(__file__).parent / "sbtray.png")
+        icon_path = str(Path(__file__).parent / "sbtray.ico")
         self.tray_manager.setup(icon_path)
         self.tray_manager.show()
+
+    def _connect_watcher_signals(self):
+        """Connect watcher worker signals to slots."""
+        self.watcher_worker.status_changed.connect(self.tray_manager.set_status)
+        self.watcher_worker.running_state_changed.connect(self.tray_manager.set_watcher_running)
+        self.watcher_worker.file_processed.connect(self._on_file_processed)
 
     def _setup_signals(self):
         """Setup signal connections"""
         self.tray_manager.activated.connect(self._on_tray_action)
         self.tray_manager.quit_requested.connect(self.quit)
 
-        self.watcher_worker.status_changed.connect(self.tray_manager.set_status)
-        self.watcher_worker.running_state_changed.connect(self.tray_manager.set_watcher_running)
-        self.watcher_worker.file_processed.connect(self._on_file_processed)
+        if self.watcher_worker is not None:
+            self._connect_watcher_signals()
 
     def _on_tray_action(self, action: str):
         """Handle tray actions"""
@@ -327,23 +339,39 @@ class SparkyBotApp(QApplication):
                 icon=self.tray_manager.MessageIcon.Critical
             )
 
+    def start_watcher(self):
+        """Start the file watcher on a new thread."""
+        # Always create fresh worker and thread
+        self.watcher_worker = WatcherWorker(self.config)
+        self.watcher_thread = QThread()
+        self.watcher_worker.moveToThread(self.watcher_thread)
+        self.watcher_thread.started.connect(self.watcher_worker.start)
+        self.watcher_thread.start()
+        # Reconnect signals for the new worker
+        self._connect_watcher_signals()
+        # Reconnect settings window if it exists (use UniqueConnection to avoid duplicates)
+        if self.settings_window is not None:
+            self.watcher_worker.running_state_changed.connect(
+                self.settings_window.set_watcher_state,
+                Qt.ConnectionType.UniqueConnection
+            )
+
+    def stop_watcher(self):
+        """Stop the file watcher and clean up."""
+        if hasattr(self, 'watcher_worker') and self.watcher_worker is not None:
+            self.watcher_worker.stop()
+        if hasattr(self, 'watcher_thread') and self.watcher_thread is not None:
+            self.watcher_thread.quit()
+            self.watcher_thread.wait(5000)  # Wait up to 5 seconds
+            self.watcher_thread = None
+            self.watcher_worker = None
+
     def toggle_watcher(self):
         """Toggle watcher on/off"""
-        if self.watcher_worker.is_running():
-            self.watcher_worker.stop()
-            # Stop and destroy the old thread
-            if self.watcher_thread:
-                self.watcher_thread.quit()
-                self.watcher_thread.wait()
-                self.watcher_thread.deleteLater()
-                self.watcher_thread = None
+        if self.watcher_worker is not None and self.watcher_worker.is_running():
+            self.stop_watcher()
         else:
-            # Create fresh thread and start
-            self.watcher_thread = QThread()
-            self.watcher_worker.moveToThread(self.watcher_thread)
-            self.watcher_thread.started.connect(self.watcher_worker.start)
-            self.watcher_thread.start()
-            # State updated via running_state_changed signal to both tray and settings window
+            self.start_watcher()
 
     def show_settings(self):
         """Show settings window"""
@@ -352,10 +380,12 @@ class SparkyBotApp(QApplication):
             self.settings_window.watcher_toggled.connect(self.toggle_watcher)
             self.settings_window.settings_changed.connect(self._on_settings_changed)
             self.settings_window.destroyed.connect(self._on_settings_window_destroyed)
-            self.watcher_worker.running_state_changed.connect(
-                self.settings_window.set_watcher_state
-            )
-            self.settings_window.set_watcher_state(self.watcher_worker.is_running())
+            # Connect to watcher if running
+            if self.watcher_worker is not None:
+                self.watcher_worker.running_state_changed.connect(
+                    self.settings_window.set_watcher_state
+                )
+                self.settings_window.set_watcher_state(self.watcher_worker.is_running())
 
         self.settings_window.show()
         self.settings_window.activateWindow()
@@ -371,11 +401,7 @@ class SparkyBotApp(QApplication):
 
     def _shutdown(self):
         """Clean shutdown - stop watcher and wait for thread"""
-        if self.watcher_worker.is_running():
-            self.watcher_worker.stop()
-        if self.watcher_thread:
-            self.watcher_thread.quit()
-            self.watcher_thread.wait()
+        self.stop_watcher()
 
     def run(self):
         """Run the application"""
@@ -424,7 +450,14 @@ def main():
         return run_headless(config)
     else:
         # GUI mode with system tray
+        # Tell Windows this is its own app (not python.exe) so it gets its own taskbar icon
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('SimpleHonors.SparkyBot')
+        except Exception:
+            pass
+
         app = SparkyBotApp(sys.argv, config)
+
         return app.run()
 
 

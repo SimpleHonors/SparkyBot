@@ -1,25 +1,17 @@
 @echo off
-setlocal
-
-:: SparkyBot Launcher
-:: Uses Python for efficient file watching
-
 title SparkyBot
+echo Starting SparkyBot...
 
-:: Check for Python
-python --version 1>nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: Python not found. Please install Python 3.9+ from https://python.org
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo Python is not installed or not in PATH.
+    echo.
+    echo Please install Python 3.9+ from https://www.python.org/downloads/
+    echo IMPORTANT: Check "Add Python to PATH" during installation.
     echo.
     pause
     exit /b 1
 )
 
-:: Set PATH to include bundled tools if needed
-set PATH=%~dp0;%PATH%
-
-:: Launch Python watcher
-echo Starting SparkyBot...
-python "%~dp0bootstrap.py" %*
-
-exit /b %ERRORLEVEL%
+python bootstrap.py %*
+if errorlevel 1 pause

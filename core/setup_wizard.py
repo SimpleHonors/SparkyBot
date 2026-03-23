@@ -20,8 +20,8 @@ class SetupWizard(QWizard):
         self.setMinimumSize(600, 400)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
-        # Set window icon to sbtray.png
-        icon_path = Path(__file__).parent.parent / "sbtray.png"
+        # Set window icon to sbtray.ico
+        icon_path = Path(__file__).parent.parent / "sbtray.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 

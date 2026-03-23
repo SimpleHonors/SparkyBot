@@ -27,6 +27,9 @@ class SettingsWindow(QWidget):
     sig_progress_value = pyqtSignal(int)
     sig_ei_status_refresh = pyqtSignal()
     sig_ei_latest = pyqtSignal(str)
+    sig_sparkybot_status = pyqtSignal(str)
+    sig_sparkybot_button_state = pyqtSignal(str, bool)
+    sig_sparkybot_latest = pyqtSignal(str)
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -34,8 +37,8 @@ class SettingsWindow(QWidget):
         self.setWindowTitle("SparkyBot Settings")
         self.setMinimumSize(600, 500)
 
-        # Set window icon to sbtray.png
-        icon_path = Path(__file__).parent.parent / "sbtray.png"
+        # Set window icon to sbtray.ico
+        icon_path = Path(__file__).parent.parent / "sbtray.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -191,50 +194,50 @@ class SettingsWindow(QWidget):
         if color.isValid():
             self._current_embed_color = color
             self._update_color_preview()
-            self.color_hex_label.setText(color.name().upper())
 
     def _create_paths_tab(self) -> QWidget:
-        """Create paths settings tab"""
+        """Create paths configuration tab"""
         scroll = QScrollArea()
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Log folder
-        group = QGroupBox("Log Folder")
+        # Logs folder
+        group = QGroupBox("Logging")
         form = QFormLayout(group)
 
-        folder_layout = QHBoxLayout()
+        log_layout = QHBoxLayout()
         self.log_folder = QLineEdit()
-        self.log_folder.setPlaceholderText("Z:\\Logs\\arcdps.cbtlogs\\1")
+        self.log_folder.setPlaceholderText("Path to GW2 logs folder")
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(lambda: self._browse_folder(self.log_folder))
-        folder_layout.addWidget(self.log_folder)
-        folder_layout.addWidget(browse_btn)
-        form.addRow("Folder:", folder_layout)
+        log_layout.addWidget(self.log_folder)
+        log_layout.addWidget(browse_btn)
+        form.addRow("Log Folder:", log_layout)
 
         layout.addWidget(group)
 
-        # GW2EI
-        ei_group = QGroupBox("GW2EI Parser")
-        ei_form = QFormLayout(ei_group)
+        # GW2EI settings
+        group = QGroupBox("Elite Insights")
+        form = QFormLayout(group)
 
-        ei_layout = QHBoxLayout()
+        gw2ei_layout = QHBoxLayout()
         self.gw2ei_exe = QLineEdit()
-        self.gw2ei_exe.setPlaceholderText("GuildWars2EliteInsights-CLI.exe")
-        browse_ei_btn = QPushButton("Browse...")
-        browse_ei_btn.clicked.connect(self._browse_gw2ei_exe)
-        ei_layout.addWidget(self.gw2ei_exe)
-        ei_layout.addWidget(browse_ei_btn)
-        ei_form.addRow("Executable:", ei_layout)
+        self.gw2ei_exe.setPlaceholderText("Path to GuildWars2EliteInsights-CLI.exe")
+        browse_gw2ei = QPushButton("Browse...")
+        browse_gw2ei.clicked.connect(self._browse_gw2ei_exe)
+        gw2ei_layout.addWidget(self.gw2ei_exe)
+        gw2ei_layout.addWidget(browse_gw2ei)
+        form.addRow("CLI Executable:", gw2ei_layout)
 
-        layout.addWidget(ei_group)
+        layout.addWidget(group)
         layout.addStretch()
+
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
 
     def _create_thresholds_tab(self) -> QWidget:
-        """Create thresholds settings tab"""
+        """Create thresholds configuration tab"""
         scroll = QScrollArea()
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -243,105 +246,98 @@ class SettingsWindow(QWidget):
         form = QFormLayout(group)
 
         self.min_duration = QSpinBox()
-        self.min_duration.setRange(0, 600)
+        self.min_duration.setRange(1, 3600)
+        self.min_duration.setSingleStep(1)
         self.min_duration.setSuffix(" seconds")
         form.addRow("Min Fight Duration:", self.min_duration)
 
         self.min_downs = QSpinBox()
-        self.min_downs.setRange(0, 100)
-        form.addRow("Min Downs:", self.min_downs)
+        self.min_downs.setRange(0, 10)
+        form.addRow("Min Fight Downs:", self.min_downs)
 
         self.min_damage = QSpinBox()
-        self.min_damage.setRange(0, 10000000)
+        self.min_damage.setRange(0, 9999999)
         self.min_damage.setSingleStep(10000)
-        form.addRow("Min Total Damage:", self.min_damage)
-
-        layout.addWidget(group)
-
-        # Upload thresholds
-        upload_group = QGroupBox("Upload Settings")
-        upload_form = QFormLayout(upload_group)
+        form.addRow("Min Fight Total DMG:", self.min_damage)
 
         self.max_upload = QSpinBox()
-        self.max_upload.setRange(1, 999)
+        self.max_upload.setRange(1, 1024)
+        self.max_upload.setSingleStep(1)
         self.max_upload.setSuffix(" MB")
-        upload_form.addRow("Max Upload Size:", self.max_upload)
+        form.addRow("Max Upload Size:", self.max_upload)
 
-        self.large_upload_after = QCheckBox("Upload large files after parsing")
-        upload_form.addRow("", self.large_upload_after)
+        self.large_upload_after = QCheckBox("Upload Large Files After Parsing")
+        form.addRow("", self.large_upload_after)
 
-        layout.addWidget(upload_group)
+        layout.addWidget(group)
         layout.addStretch()
+
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
 
     def _create_display_tab(self) -> QWidget:
-        """Create display options tab"""
+        """Create display configuration tab"""
         scroll = QScrollArea()
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Combat stats
-        combat_group = QGroupBox("Combat Statistics")
-        combat_grid = QVBoxLayout(combat_group)
+        group = QGroupBox("Report Display Options")
+        grid = QVBoxLayout(group)
 
-        self.show_damage = QCheckBox("Show Damage")
-        self.show_damage.setChecked(True)
-        combat_grid.addWidget(self.show_damage)
+        self.show_quick_report = QCheckBox("Show Quick Report")
+        grid.addWidget(self.show_quick_report)
+
+        self.show_damage = QCheckBox("Show Damage Stats")
+        grid.addWidget(self.show_damage)
 
         self.show_heals = QCheckBox("Show Heals")
-        combat_grid.addWidget(self.show_heals)
+        grid.addWidget(self.show_heals)
 
         self.show_defense = QCheckBox("Show Defense")
-        combat_grid.addWidget(self.show_defense)
+        grid.addWidget(self.show_defense)
 
         self.show_ccs = QCheckBox("Show Crowd Control")
-        combat_grid.addWidget(self.show_ccs)
+        grid.addWidget(self.show_ccs)
 
         self.show_cleanses = QCheckBox("Show Cleanses")
-        combat_grid.addWidget(self.show_cleanses)
+        grid.addWidget(self.show_cleanses)
 
         self.show_downs = QCheckBox("Show Downs/Kills")
-        combat_grid.addWidget(self.show_downs)
-
-        layout.addWidget(combat_group)
-
-        # Advanced display
-        adv_group = QGroupBox("Advanced Display")
-        adv_grid = QVBoxLayout(adv_group)
+        grid.addWidget(self.show_downs)
 
         self.show_burst = QCheckBox("Show Burst Damage")
-        adv_grid.addWidget(self.show_burst)
+        grid.addWidget(self.show_burst)
 
         self.show_spike = QCheckBox("Show Spike Damage")
-        adv_grid.addWidget(self.show_spike)
+        grid.addWidget(self.show_spike)
 
         self.show_top_skills = QCheckBox("Show Top Enemy Skills")
-        adv_grid.addWidget(self.show_top_skills)
+        grid.addWidget(self.show_top_skills)
 
         self.show_offensive_boons = QCheckBox("Show Offensive Boons")
-        adv_grid.addWidget(self.show_offensive_boons)
+        grid.addWidget(self.show_offensive_boons)
 
         self.show_defensive_boons = QCheckBox("Show Defensive Boons")
-        adv_grid.addWidget(self.show_defensive_boons)
+        grid.addWidget(self.show_defensive_boons)
 
         self.show_enemy_breakdown = QCheckBox("Show Enemy Breakdown")
-        adv_grid.addWidget(self.show_enemy_breakdown)
+        grid.addWidget(self.show_enemy_breakdown)
 
-        layout.addWidget(adv_group)
+        layout.addWidget(group)
         layout.addStretch()
+
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
 
     def _create_behavior_tab(self) -> QWidget:
-        """Create behavior settings tab"""
+        """Create behavior configuration tab"""
         scroll = QScrollArea()
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        group = QGroupBox("Window Behavior")
+        group = QGroupBox("Behavior")
         grid = QVBoxLayout(group)
 
         self.close_to_tray = QCheckBox("Close to System Tray")
@@ -352,9 +348,6 @@ class SettingsWindow(QWidget):
 
         self.start_minimized = QCheckBox("Start Minimized")
         grid.addWidget(self.start_minimized)
-
-        self.show_quick_report = QCheckBox("Show Quick Report")
-        grid.addWidget(self.show_quick_report)
 
         self.start_watcher_on_startup = QCheckBox("Start Watcher on Startup")
         grid.addWidget(self.start_watcher_on_startup)
@@ -378,9 +371,46 @@ class SettingsWindow(QWidget):
         return scroll
 
     def _create_updates_tab(self) -> QWidget:
-        """Create updates tab for Elite Insights"""
+        """Create updates tab for SparkyBot and Elite Insights"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
+
+        # SparkyBot section
+        sparkybot_group = QGroupBox("SparkyBot")
+        sparkybot_layout = QVBoxLayout(sparkybot_group)
+
+        # Current version
+        version_layout = QFormLayout()
+        self.sparkybot_version_label = QLabel(f"v{VERSION}")
+        version_layout.addRow("Current Version:", self.sparkybot_version_label)
+
+        self.sparkybot_latest_label = QLabel("Checking GitHub...")
+        self.sparkybot_latest_label.setOpenExternalLinks(True)
+        version_layout.addRow("Latest Version:", self.sparkybot_latest_label)
+
+        sparkybot_layout.addLayout(version_layout)
+
+        # Update button
+        self.update_sparkybot_button = QPushButton("Check for SparkyBot Update")
+        self.update_sparkybot_button.setMinimumHeight(40)
+        self.update_sparkybot_button.clicked.connect(self._on_update_sparkybot_clicked)
+        sparkybot_layout.addWidget(self.update_sparkybot_button)
+
+        # Progress bar
+        self.sparkybot_progress = QProgressBar()
+        self.sparkybot_progress.setRange(0, 100)
+        self.sparkybot_progress.setValue(0)
+        self.sparkybot_progress.setVisible(False)
+        sparkybot_layout.addWidget(self.sparkybot_progress)
+
+        # Status text
+        self.sparkybot_status_label = QLabel("")
+        self.sparkybot_status_label.setWordWrap(True)
+        self.sparkybot_status_label.setTextFormat(Qt.TextFormat.RichText)
+        self.sparkybot_status_label.setOpenExternalLinks(True)
+        sparkybot_layout.addWidget(self.sparkybot_status_label)
+
+        layout.addWidget(sparkybot_group)
 
         # Elite Insights section
         ei_group = QGroupBox("Elite Insights Parser")
@@ -423,23 +453,225 @@ class SettingsWindow(QWidget):
 
         layout.addWidget(ei_group)
 
-        # Note about config preservation
-        note_group = QGroupBox("Note")
-        note_layout = QVBoxLayout(note_group)
-        note = QLabel(
-            "The update process preserves all Settings files (wvwupload.conf, etc.).<br>"
-            "Only the parser executable and related files are updated."
-        )
-        note.setWordWrap(True)
-        note_layout.addWidget(note)
-        layout.addWidget(note_group)
-
         layout.addStretch()
 
         # Check initial status
         QTimer.singleShot(100, self._check_ei_status)
+        QTimer.singleShot(100, self._check_sparkybot_status)
 
         return widget
+
+    def _check_sparkybot_status(self):
+        """Check current SparkyBot version and latest from GitHub"""
+        try:
+            self.sparkybot_status_label.setText("Checking for updates...")
+            
+            thread = threading.Thread(target=self._fetch_latest_sparkybot_version, daemon=True)
+            thread.start()
+        except Exception as e:
+            self.sparkybot_status_label.setText(f"Error checking status: {e}")
+
+    def _fetch_latest_sparkybot_version(self):
+        """Fetch latest SparkyBot version from GitHub API"""
+        try:
+            import requests
+            import re
+            response = requests.get(
+                "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
+                headers={"User-Agent": "SparkyBot"},
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                # Try release name first (e.g., "v1.1.2"), fall back to tag_name
+                raw_version = data.get("name", "") or data.get("tag_name", "")
+                latest_version = raw_version.lstrip("v").strip()
+
+                # Validate it looks like a version number (digits and dots)
+                if not re.match(r'^\d+\.\d+', latest_version):
+                    self.sig_sparkybot_latest.emit("Unable to parse version")
+                    return
+
+                text = f'<a href="https://github.com/SimpleHonors/SparkyBot/releases">v{latest_version}</a>'
+                self.sig_sparkybot_latest.emit(text)
+                if latest_version == VERSION:
+                    self.sig_sparkybot_status.emit(f"You have the latest version (v{VERSION}).")
+                else:
+                    self.sig_sparkybot_status.emit(f"Update available: v{VERSION} → v{latest_version}")
+            elif response.status_code == 404:
+                self.sig_sparkybot_latest.emit("No releases yet")
+                self.sig_sparkybot_status.emit("No releases found on GitHub.")
+            else:
+                self.sig_sparkybot_latest.emit("Unable to fetch")
+                self.sig_sparkybot_status.emit(f"GitHub API returned {response.status_code}")
+        except Exception as e:
+            self.sig_sparkybot_latest.emit("Unable to fetch")
+            self.sig_sparkybot_status.emit(f"Error: {e}")
+
+    def _on_update_sparkybot_clicked(self):
+        """Handle SparkyBot update button click"""
+        if hasattr(self, '_sparkybot_update_url') and self._sparkybot_update_url:
+            url = self._sparkybot_update_url
+            version = getattr(self, '_sparkybot_latest_version', 'unknown')
+            self._sparkybot_update_url = None
+            self.update_sparkybot_button.setEnabled(False)
+            thread = threading.Thread(
+                target=self._do_sparkybot_install,
+                args=(url, version),
+                daemon=True
+            )
+            thread.start()
+        else:
+            self.update_sparkybot_button.setEnabled(False)
+            self.update_sparkybot_button.setText("Checking...")
+            thread = threading.Thread(target=self._do_sparkybot_update_check, daemon=True)
+            thread.start()
+
+    def _do_sparkybot_update_check(self):
+        """Background thread for SparkyBot update check"""
+        try:
+            import requests
+            import re
+            self.sig_sparkybot_status.emit("Checking GitHub for updates...")
+
+            response = requests.get(
+                "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
+                headers={"User-Agent": "SparkyBot"},
+                timeout=10
+            )
+
+            if response.status_code == 404:
+                self.sig_sparkybot_status.emit("No releases found on GitHub yet.")
+                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
+                return
+
+            if response.status_code != 200:
+                self.sig_sparkybot_status.emit(f"GitHub API returned {response.status_code}")
+                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
+                return
+
+            data = response.json()
+            # Try release name first (e.g., "v1.1.2"), fall back to tag_name
+            raw_version = data.get("name", "") or data.get("tag_name", "")
+            latest_version = raw_version.lstrip("v").strip()
+
+            # Validate it looks like a version number (digits and dots)
+            if not re.match(r'^\d+\.\d+', latest_version):
+                self.sig_sparkybot_status.emit("Could not parse version from GitHub API.")
+                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
+                return
+
+            current_version = VERSION
+
+            if latest_version == current_version:
+                self.sig_sparkybot_status.emit(f"You have the latest SparkyBot (v{current_version}).")
+                self.sig_sparkybot_button_state.emit("Already Up to Date", True)
+                return
+
+            # Update available — find the download URL
+            assets = data.get("assets", [])
+            download_url = None
+            for asset in assets:
+                if asset.get("name", "").endswith(".zip"):
+                    download_url = asset.get("browser_download_url")
+                    break
+
+            if not download_url:
+                download_url = data.get("zipball_url")
+
+            # Log what we found for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"SparkyBot update: assets={len(assets)}, zipball_url={data.get('zipball_url')}, download_url={download_url}")
+
+            if not download_url or download_url == "None":
+                self.sig_sparkybot_status.emit(
+                    f"Update available: v{current_version} → v{latest_version}\n"
+                    f"Could not find download URL. Visit GitHub manually."
+                )
+                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
+                return
+
+            self._sparkybot_update_url = download_url
+            self._sparkybot_latest_version = latest_version
+            self.sig_sparkybot_status.emit(
+                f"Update available: v{current_version} → v{latest_version}"
+            )
+            self.sig_sparkybot_button_state.emit("Download & Install Update", True)
+
+        except Exception as e:
+            self.sig_sparkybot_status.emit(f"Error: {e}")
+            self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
+
+    def _do_sparkybot_install(self, url, version):
+        """Download and install SparkyBot update."""
+        try:
+            import requests
+            import zipfile
+            import shutil
+            import tempfile
+            import logging
+            logger = logging.getLogger(__name__)
+
+            logger.info(f"Starting SparkyBot update download from: {url}")
+
+            app_dir = Path(__file__).parent.parent
+
+            self.sig_sparkybot_status.emit("Downloading update...")
+            self.sig_sparkybot_button_state.emit("Downloading...", False)
+
+            # Download to temp file
+            response = requests.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
+                tmp_path = Path(tmp.name)
+                for chunk in response.iter_content(chunk_size=8192):
+                    tmp.write(chunk)
+
+            self.sig_sparkybot_status.emit("Installing update...")
+
+            # Extract, skipping config/user files and certain directories
+            SKIP_FILES = {'config.properties', 'sbtray.png', 'wvw_icon.png'}
+            SKIP_DIRS = {'GW2EI', '__pycache__', '.git'}
+
+            with zipfile.ZipFile(tmp_path) as zf:
+                # Find the root folder name inside the zip (GitHub adds one)
+                root_prefix = ""
+                for name in zf.namelist():
+                    if '/' in name:
+                        root_prefix = name.split('/')[0] + '/'
+                        break
+
+                for member in zf.namelist():
+                    # Strip the root folder prefix
+                    rel_path = member[len(root_prefix):] if root_prefix else member
+                    if not rel_path or rel_path.endswith('/'):
+                        continue
+
+                    # Skip config/user files and certain directories
+                    parts = Path(rel_path).parts
+                    if any(d in SKIP_DIRS for d in parts):
+                        continue
+                    if Path(rel_path).name in SKIP_FILES:
+                        continue
+
+                    target = app_dir / rel_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, open(target, 'wb') as dst:
+                        shutil.copyfileobj(src, dst)
+
+            tmp_path.unlink()
+
+            self.sig_sparkybot_status.emit(
+                f"Updated to v{version}. "
+                f"Please restart SparkyBot for changes to take effect."
+            )
+            self.sig_sparkybot_button_state.emit("Restart Required", False)
+
+        except Exception as e:
+            self.sig_sparkybot_status.emit(f"Update failed: {e}")
+            self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
 
     def _check_ei_status(self):
         """Check current EI status and latest version from GitHub"""
@@ -557,82 +789,28 @@ class SettingsWindow(QWidget):
             lambda t, e: (self.update_ei_button.setText(t), self.update_ei_button.setEnabled(e))
         )
         self.sig_progress.connect(
-            lambda v, val: (self.update_progress.setVisible(v), self.update_progress.setValue(val))
+            lambda show, val: (self.update_progress.setVisible(show), self.update_progress.setValue(val))
         )
         self.sig_progress_value.connect(
             lambda val: self.update_progress.setValue(val)
         )
-        self.sig_ei_status_refresh.connect(self._check_ei_status)
         self.sig_ei_latest.connect(
             lambda t: self.ei_latest_label.setText(t)
         )
-
-    def _create_about_tab(self) -> QWidget:
-        """Create about tab"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        title = QLabel("<h1>SparkyBot</h1>")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-
-        version = QLabel(f"Version {VERSION}")
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(version)
-
-        desc = QLabel(
-            "Guild Wars 2 Fight Log Reporter<br>"
-            "Monitors ArcDPS logs and sends WvW fight reports to Discord.<br><br>"
-            "Python port with efficient OS-native file watching."
+        self.sig_ei_status_refresh.connect(
+            lambda: QTimer.singleShot(100, self._check_ei_status)
         )
-        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        layout.addStretch()
-
-        # Core inspiration section
-        inspired_label = QLabel("<b>Built on the shoulders of giants:</b>")
-        inspired_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(inspired_label)
-
-        layout.addSpacing(5)
-
-        # MzFightReporter credit
-        mz_link = QLabel(
-            '<a href="https://github.com/Swedemon/MzFightReporter">'
-            '<b>MzFightReporter</b></a> by Swedemon<br>'
-            '<small>The original C# application that inspired this project</small>'
+        
+        # SparkyBot signals
+        self.sig_sparkybot_status.connect(
+            lambda t: self.sparkybot_status_label.setText(t)
         )
-        mz_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mz_link.setTextFormat(Qt.TextFormat.RichText)
-        mz_link.setOpenExternalLinks(True)
-        layout.addWidget(mz_link)
-
-        layout.addSpacing(5)
-
-        # Elite Insights credit
-        ei_link = QLabel(
-            '<a href="https://github.com/baaron4/GW2-Elite-Insights-Parser">'
-            '<b>GW2 Elite Insights</b></a> by baaron4<br>'
-            '<small>The parser that powers all log analysis</small>'
+        self.sig_sparkybot_button_state.connect(
+            lambda t, e: (self.update_sparkybot_button.setText(t), self.update_sparkybot_button.setEnabled(e))
         )
-        ei_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ei_link.setTextFormat(Qt.TextFormat.RichText)
-        ei_link.setOpenExternalLinks(True)
-        layout.addWidget(ei_link)
-
-        layout.addStretch()
-
-        credits = QLabel(
-            "<small>SparkyBot is a community-built alternative for users who prefer "
-            "a Python-based solution with a focus on reliability and ease of deployment.</small>"
+        self.sig_sparkybot_latest.connect(
+            lambda t: self.sparkybot_latest_label.setText(t)
         )
-        credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        credits.setWordWrap(True)
-        layout.addWidget(credits)
-
-        return widget
 
     def _browse_folder(self, line_edit: QLineEdit):
         """Open folder browser dialog"""
@@ -799,3 +977,70 @@ class SettingsWindow(QWidget):
                 self.hide()
                 return
         super().changeEvent(event)
+
+    def _create_about_tab(self) -> QWidget:
+        """Create about tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        layout.addSpacing(20)
+
+        # SparkyBot title and version
+        title = QLabel("<b>SparkyBot</b>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 18px;")
+        layout.addWidget(title)
+
+        version_label = QLabel(f"Version {VERSION}")
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_label)
+
+        layout.addSpacing(10)
+
+        # GitHub link
+        github_link = QLabel(
+            '<a href="https://github.com/SimpleHonors/SparkyBot">'
+            '<b>View on GitHub</b></a>'
+        )
+        github_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        github_link.setTextFormat(Qt.TextFormat.RichText)
+        github_link.setOpenExternalLinks(True)
+        layout.addWidget(github_link)
+
+        layout.addSpacing(20)
+
+        # MezzeTools credit
+        mz_link = QLabel(
+            '<a href="https://github.com/MezzeTools/GW2-Synthesis">'
+            '<b>GW2 Synthesis</b></a> by MezzeTools<br>'
+            '<small>Discord embeds and bot framework</small>'
+        )
+        mz_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mz_link.setTextFormat(Qt.TextFormat.RichText)
+        mz_link.setOpenExternalLinks(True)
+        layout.addWidget(mz_link)
+
+        layout.addSpacing(5)
+
+        # Elite Insights credit
+        ei_link = QLabel(
+            '<a href="https://github.com/baaron4/GW2-Elite-Insights-Parser">'
+            '<b>GW2 Elite Insights</b></a> by baaron4<br>'
+            '<small>The parser that powers all log analysis</small>'
+        )
+        ei_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ei_link.setTextFormat(Qt.TextFormat.RichText)
+        ei_link.setOpenExternalLinks(True)
+        layout.addWidget(ei_link)
+
+        layout.addStretch()
+
+        credits = QLabel(
+            "<small>SparkyBot is a community-built alternative for users who prefer "
+            "a Python-based solution with a focus on reliability and ease of deployment.</small>"
+        )
+        credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits.setWordWrap(True)
+        layout.addWidget(credits)
+
+        return widget
