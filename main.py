@@ -144,7 +144,47 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker, disco
             display_config,
             icon_filename=icon_path  # guild icon for thumbnail
         )
+
+        # Send fight report immediately — no waiting on AI
         success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
+
+        # AI analysis runs AFTER report is already posted
+        if config.enable_ai_analysis and config.ai_base_url and config.ai_model:
+            try:
+                from core.ai_analyst import FightAnalyst
+                analyst = FightAnalyst(
+                    base_url=config.ai_base_url,
+                    api_key=config.ai_api_key,
+                    model=config.ai_model,
+                    system_prompt=config.ai_system_prompt or None,
+                    max_tokens=config.ai_max_tokens,
+                )
+                summary = report.get_ai_summary()
+                analysis = analyst.analyze(summary)
+                if analysis:
+                    # Truncate to last complete sentence within Discord's 4096-char description limit
+                    if len(analysis) > 4096:
+                        truncated = analysis[:4093]  # leave room for "..."
+                        # Find the last sentence-ending punctuation
+                        last_period = max(truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?'))
+                        if last_period > 0:
+                            analysis = truncated[:last_period + 1]
+                        else:
+                            analysis = truncated + "..."
+
+                    ai_label = config.discord_webhook_label or "SparkyBot"
+                    ai_embed = {
+                        "color": report.EMBED_COLOR,
+                        "author": {
+                            "name": f"{ai_label} Hot Take and Bad Advice!",
+                            "icon_url": report.AUTHOR_ICON_URL,
+                        },
+                        "description": analysis[:4096],
+                    }
+                    # Send AI analysis as a separate follow-up message (no icon attachment)
+                    discord.send_to_all(embeds=[ai_embed])
+            except Exception as e:
+                logger.warning(f"AI analysis failed: {e}")
 
         # success_count can be: 0 (all failed), 1+ (webhooks succeeded), or True (single, deprecated)
         if isinstance(success_count, bool):
@@ -256,7 +296,7 @@ class SparkyBotApp(QApplication):
 
         # Set application-wide icon (taskbar, alt-tab, title bars)
         from PyQt6.QtGui import QIcon
-        icon_path = Path(__file__).parent / "sbtray.ico"
+        icon_path = Path(__file__).parent / "assets" / "sbtray.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -288,7 +328,7 @@ class SparkyBotApp(QApplication):
 
     def _setup_tray(self):
         """Setup system tray"""
-        icon_path = str(Path(__file__).parent / "sbtray.ico")
+        icon_path = str(Path(__file__).parent / "assets" / "sbtray.ico")
         self.tray_manager.setup(icon_path)
         self.tray_manager.show()
 

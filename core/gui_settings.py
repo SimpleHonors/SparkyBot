@@ -1,17 +1,31 @@
 """Main Settings Window for SparkyBot"""
 
+import sys
 import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QLineEdit, QSpinBox, QCheckBox, QPushButton,
     QGroupBox, QFormLayout, QScrollArea,
-    QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog
+    QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog,
+    QTextEdit, QDialog, QDialogButtonBox
 )
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
 from pathlib import Path
 from version import VERSION
+
+
+def _parse_version(version_str: str) -> tuple:
+    """Parse version string like 'v1.5' or '1.12.3' into a comparable tuple of ints."""
+    clean = version_str.strip().lstrip('v')
+    parts = []
+    for part in clean.split('.'):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
 
 
 class SettingsWindow(QWidget):
@@ -38,7 +52,7 @@ class SettingsWindow(QWidget):
         self.setMinimumSize(600, 500)
 
         # Set window icon to sbtray.ico
-        icon_path = Path(__file__).parent.parent / "sbtray.ico"
+        icon_path = Path(__file__).parent.parent / "assets" / "sbtray.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -60,6 +74,7 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._create_display_tab(), "Display")
         tabs.addTab(self._create_behavior_tab(), "Behavior")
         tabs.addTab(self._create_updates_tab(), "Updates")
+        tabs.addTab(self._create_ai_tab(), "AI")
         tabs.addTab(self._create_about_tab(), "About")
 
         layout.addWidget(tabs)
@@ -109,7 +124,7 @@ class SettingsWindow(QWidget):
         # Thumbnail icon file
         thumb_layout = QHBoxLayout()
         self.guild_icon = QLineEdit()
-        self.guild_icon.setPlaceholderText("wvw_icon.png")
+        self.guild_icon.setPlaceholderText("assets/wvw_icon.png")
         browse_thumb_btn = QPushButton("Browse...")
         browse_thumb_btn.clicked.connect(self._browse_guild_icon)
         thumb_layout.addWidget(self.guild_icon)
@@ -352,6 +367,12 @@ class SettingsWindow(QWidget):
         self.start_watcher_on_startup = QCheckBox("Start Watcher on Startup")
         grid.addWidget(self.start_watcher_on_startup)
 
+        self.start_with_windows = QCheckBox("Start with Windows")
+        grid.addWidget(self.start_with_windows)
+
+        self.hide_console = QCheckBox("Hide Console Window (use pythonw.exe)")
+        grid.addWidget(self.hide_console)
+
         layout.addWidget(group)
 
         # Memory
@@ -369,6 +390,281 @@ class SettingsWindow(QWidget):
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
+
+    def _create_ai_tab(self) -> QWidget:
+        """Create AI analysis configuration tab"""
+        from core.ai_analyst import PRESETS
+
+        scroll = QScrollArea()
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        group = QGroupBox("AI Fight Analysis")
+        form = QFormLayout(group)
+
+        self.enable_ai = QCheckBox("Enable AI Fight Analysis")
+        form.addRow("", self.enable_ai)
+
+        # Provider preset dropdown
+        self.ai_provider = QComboBox()
+        self.ai_provider.addItems(list(PRESETS.keys()))
+        self.ai_provider.currentTextChanged.connect(self._on_ai_provider_changed)
+        form.addRow("Provider:", self.ai_provider)
+
+        # Base URL
+        self.ai_base_url = QLineEdit()
+        self.ai_base_url.setPlaceholderText("https://api.example.com/v1")
+        form.addRow("API Base URL:", self.ai_base_url)
+
+        # API Key
+        self.ai_api_key = QLineEdit()
+        self.ai_api_key.setPlaceholderText("sk-... (leave blank for local models)")
+        self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("API Key:", self.ai_api_key)
+
+        # Model — editable combo box with refresh button
+        model_layout = QHBoxLayout()
+        self.ai_model = QComboBox()
+        self.ai_model.setEditable(True)
+        self.ai_model.setPlaceholderText("Select or type a model name")
+        self.ai_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+
+        self.ai_refresh_models_btn = QPushButton("Refresh Models")
+        self.ai_refresh_models_btn.clicked.connect(self._refresh_ai_models)
+        model_layout.addWidget(self.ai_model)
+        model_layout.addWidget(self.ai_refresh_models_btn)
+        form.addRow("Model:", model_layout)
+
+        # Max tokens
+        self.ai_max_tokens = QSpinBox()
+        self.ai_max_tokens.setRange(100, 4000)
+        self.ai_max_tokens.setValue(350)
+        form.addRow("Max Tokens:", self.ai_max_tokens)
+
+        # System Prompt — small read-only preview with pop-out editor
+        prompt_layout = QVBoxLayout()
+        self.ai_system_prompt = QTextEdit()
+        self.ai_system_prompt.setMaximumHeight(80)
+        self.ai_system_prompt.setReadOnly(True)
+        self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+        self.ai_system_prompt.setPlaceholderText("Using default SparkyBot analyst prompt")
+
+        edit_prompt_btn = QPushButton("Edit System Prompt...")
+        edit_prompt_btn.clicked.connect(self._edit_system_prompt)
+
+        prompt_layout.addWidget(self.ai_system_prompt)
+        prompt_layout.addWidget(edit_prompt_btn)
+        form.addRow("System Prompt:", prompt_layout)
+
+        # Test button
+        self.ai_test_btn = QPushButton("Test Connection")
+        self.ai_test_btn.clicked.connect(self._test_ai_connection)
+        form.addRow("", self.ai_test_btn)
+
+        self.ai_test_status = QLabel("")
+        self.ai_test_status.setWordWrap(True)
+        form.addRow("", self.ai_test_status)
+
+        layout.addWidget(group)
+        layout.addStretch()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+        return scroll
+
+    def _on_ai_provider_changed(self, provider_name: str):
+        """Fill in base URL and model from preset, then refresh model list."""
+        from core.ai_analyst import PRESETS
+        preset = PRESETS.get(provider_name, {})
+        if preset.get("base_url"):
+            self.ai_base_url.setText(preset["base_url"])
+        if preset.get("default_model"):
+            self.ai_model.setEditText(preset["default_model"])
+        # Auto-fetch available models for this provider
+        if preset.get("base_url"):
+            self._refresh_ai_models()
+
+    def _refresh_ai_models(self):
+        """Fetch available models from the configured API endpoint."""
+        base_url = self.ai_base_url.text().strip()
+        api_key = self.ai_api_key.text().strip()
+
+        if not base_url:
+            self.ai_test_status.setText("Enter a Base URL first")
+            return
+
+        self.ai_refresh_models_btn.setEnabled(False)
+        self.ai_refresh_models_btn.setText("Fetching...")
+
+        import threading
+        def _fetch():
+            from core.ai_analyst import FightAnalyst, PRESETS
+            models = FightAnalyst.fetch_models(base_url, api_key)
+            source = "API"
+
+            if not models:
+                # Fallback to preset model list
+                provider = self.ai_provider.currentText()
+                preset = PRESETS.get(provider, {})
+                models = preset.get("models", [])
+                source = "preset"
+
+            self.ai_refresh_models_btn.setEnabled(True)
+            self.ai_refresh_models_btn.setText("Refresh Models")
+
+            if models:
+                current = self.ai_model.currentText()
+                self.ai_model.clear()
+                self.ai_model.addItems(models)
+                idx = self.ai_model.findText(current)
+                if idx >= 0:
+                    self.ai_model.setCurrentIndex(idx)
+                elif current:
+                    self.ai_model.setEditText(current)
+                self.ai_test_status.setText(f"Loaded {len(models)} models (from {source})")
+            else:
+                self.ai_test_status.setText("No models found — type a model name manually")
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _test_ai_connection(self):
+        """Send a test request to verify the AI connection works."""
+        from core.ai_analyst import FightAnalyst
+
+        analyst = FightAnalyst(
+            base_url=self.ai_base_url.text(),
+            api_key=self.ai_api_key.text(),
+            model=self.ai_model.currentText(),
+            system_prompt=self.ai_system_prompt.toPlainText() or None,
+            max_tokens=self.ai_max_tokens.value(),
+        )
+
+        test_summary = {
+            "zone": "Eternal Battlegrounds",
+            "duration": "05m 30s",
+            "kdr": 4.5,
+            "squad_count": 35,
+            "ally_count": 10,
+            "squad_damage": 5000000,
+            "squad_dps": 15000,
+            "squad_downs": 40,
+            "squad_kills": 27,
+            "squad_deaths": 6,
+            "enemy_count": 50,
+            "enemy_deaths": 27,
+            "top_damage": [{"name": "TestPlayer", "profession": "Guardian", "damage": 800000}],
+            "enemy_breakdown": {"GUAR": 8, "NECR": 6, "ELEM": 5},
+            "enemy_teams": {"Red": 30, "Blue": 20},
+        }
+
+        self.ai_test_status.setText("Testing...")
+        self.ai_test_btn.setEnabled(False)
+
+        import threading
+        def _run_test():
+            result = analyst.analyze(test_summary, timeout=15)
+            if result:
+                self.ai_test_status.setText(f"Success! Response:\n{result[:200]}")
+            else:
+                self.ai_test_status.setText("Failed — check URL, key, and model name")
+            self.ai_test_btn.setEnabled(True)
+
+        threading.Thread(target=_run_test, daemon=True).start()
+
+    def _edit_system_prompt(self):
+        """Open a larger dialog for editing the system prompt."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QLabel
+        from PyQt6.QtCore import Qt
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit System Prompt")
+        dialog.setMinimumSize(700, 500)
+
+        # Apply same icon as main window
+        icon_path = Path(__file__).parent.parent / "assets" / "sbtray.ico"
+        if icon_path.exists():
+            from PyQt6.QtGui import QIcon
+            dialog.setWindowIcon(QIcon(str(icon_path)))
+
+        layout = QVBoxLayout(dialog)
+
+        hint = QLabel("Customize the AI's personality and analysis style. Leave blank to use the built-in default.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        editor = QTextEdit()
+        editor.setPlainText(self.ai_system_prompt.toPlainText())
+        editor.setMinimumHeight(400)
+        layout.addWidget(editor)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+
+        # Add a "Reset to Default" button
+        reset_btn = buttons.addButton("Reset to Default", QDialogButtonBox.ButtonRole.ResetRole)
+
+        def on_reset():
+            from core.ai_analyst import FightAnalyst
+            editor.setPlainText(FightAnalyst._default_system_prompt())
+
+        reset_btn.clicked.connect(on_reset)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.ai_system_prompt.setPlainText(editor.toPlainText())
+
+    # ---- Windows startup registry helpers ----
+    _STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    _STARTUP_REG_NAME = "SparkyBot"
+
+    def _get_startup_command(self) -> str:
+        """Build the command that Windows will run at startup."""
+        python_exe = sys.executable
+        if self.config.hide_console:
+            pythonw = python_exe.replace("python.exe", "pythonw.exe")
+            if Path(pythonw).exists():
+                python_exe = pythonw
+        bootstrap = Path(__file__).parent.parent / "bootstrap.py"
+        return f'"{python_exe}" "{bootstrap}"'
+
+    def _is_in_startup_registry(self) -> bool:
+        """Check if SparkyBot is registered to start with Windows."""
+        if sys.platform != "win32":
+            return False
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._STARTUP_REG_KEY, 0, winreg.KEY_READ)
+            winreg.QueryValueEx(key, self._STARTUP_REG_NAME)
+            winreg.CloseKey(key)
+            return True
+        except (FileNotFoundError, OSError):
+            return False
+
+    def _add_to_startup_registry(self):
+        """Add SparkyBot to Windows startup."""
+        if sys.platform != "win32":
+            return
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, self._STARTUP_REG_NAME, 0, winreg.REG_SZ, self._get_startup_command())
+            winreg.CloseKey(key)
+        except OSError as e:
+            logging.getLogger(__name__).warning(f"Failed to add startup registry entry: {e}")
+
+    def _remove_from_startup_registry(self):
+        """Remove SparkyBot from Windows startup."""
+        if sys.platform != "win32":
+            return
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(key, self._STARTUP_REG_NAME)
+            winreg.CloseKey(key)
+        except (FileNotFoundError, OSError):
+            pass
 
     def _create_updates_tab(self) -> QWidget:
         """Create updates tab for SparkyBot and Elite Insights"""
@@ -562,9 +858,21 @@ class SettingsWindow(QWidget):
                 return
 
             current_version = VERSION
+            latest_tuple = _parse_version(latest_version)
+            current_tuple = _parse_version(current_version)
 
-            if latest_version == current_version:
+            if latest_tuple > current_tuple:
+                # Update available — find the download URL
+                pass  # continues to download URL logic below
+            elif latest_tuple == current_tuple:
                 self.sig_sparkybot_status.emit(f"You have the latest SparkyBot (v{current_version}).")
+                self.sig_sparkybot_button_state.emit("Already Up to Date", True)
+                return
+            else:
+                # Current is newer than latest release (dev/pre-release build)
+                self.sig_sparkybot_status.emit(
+                    f"v{current_version} is newer than latest release (v{latest_version})"
+                )
                 self.sig_sparkybot_button_state.emit("Already Up to Date", True)
                 return
 
@@ -632,7 +940,7 @@ class SettingsWindow(QWidget):
             self.sig_sparkybot_status.emit("Installing update...")
 
             # Extract, skipping config/user files and certain directories
-            SKIP_FILES = {'config.properties', 'sbtray.png', 'wvw_icon.png'}
+            SKIP_FILES = {'config.properties', 'assets/sbtray.png', 'assets/wvw_icon.png'}
             SKIP_DIRS = {'GW2EI', '__pycache__', '.git'}
 
             with zipfile.ZipFile(tmp_path) as zf:
@@ -886,8 +1194,30 @@ class SettingsWindow(QWidget):
         self.start_minimized.setChecked(self.config.start_minimized)
         self.start_watcher_on_startup.setChecked(self.config.start_watcher_on_startup)
 
+        # Capture initial values for relaunch-change detection
+        self._initial_hide_console = self.config.hide_console
+        self._initial_start_with_windows = self._is_in_startup_registry()
+
+        # Check if SparkyBot is in the Windows startup registry
+        self.start_with_windows.setChecked(self._is_in_startup_registry())
+        self.hide_console.setChecked(self.config.hide_console)
+
         # Memory
         self.max_parse_memory.setValue(self.config.max_parse_memory)
+
+        # AI
+        self.enable_ai.setChecked(self.config.enable_ai_analysis)
+        self.ai_provider.setCurrentText(self.config.ai_provider)
+        self.ai_base_url.setText(self.config.ai_base_url)
+        self.ai_api_key.setText(self.config.ai_api_key)
+        self.ai_model.setEditText(self.config.ai_model)
+        self.ai_max_tokens.setValue(self.config.ai_max_tokens)
+        if self.config.ai_system_prompt:
+            self.ai_system_prompt.setPlainText(self.config.ai_system_prompt)
+        else:
+            # Show the built-in default so users can see and edit it
+            from core.ai_analyst import FightAnalyst
+            self.ai_system_prompt.setPlainText(FightAnalyst._default_system_prompt())
 
     def _on_save_clicked(self):
         """Save settings from UI to config"""
@@ -933,12 +1263,46 @@ class SettingsWindow(QWidget):
         cfg('Behavior', 'minimizeToTray', str(self.minimize_to_tray.isChecked()))
         cfg('Behavior', 'startMinimized', str(self.start_minimized.isChecked()))
         cfg('Behavior', 'startWatcherOnStartup', str(self.start_watcher_on_startup.isChecked()))
+        cfg('Behavior', 'hideConsole', str(self.hide_console.isChecked()))
+
+        # Windows startup registry
+        if self.start_with_windows.isChecked():
+            self._add_to_startup_registry()
+        else:
+            self._remove_from_startup_registry()
+
         cfg('Behavior', 'maxParseMemory', str(self.max_parse_memory.value()))
+
+        # AI
+        cfg('AI', 'enableAiAnalysis', str(self.enable_ai.isChecked()))
+        cfg('AI', 'aiProvider', self.ai_provider.currentText())
+        cfg('AI', 'aiBaseUrl', self.ai_base_url.text())
+        cfg('AI', 'aiApiKey', self.ai_api_key.text())
+        cfg('AI', 'aiModel', self.ai_model.currentText())
+        cfg('AI', 'aiMaxTokens', str(self.ai_max_tokens.value()))
+        cfg('AI', 'aiSystemPrompt', self.ai_system_prompt.toPlainText())
 
         # Write to file and reload attributes
         if self.config.save():
             self.settings_changed.emit()
             QMessageBox.information(self, "Settings", "Settings saved successfully!")
+
+            # Relaunch notice if console or startup settings changed
+            relaunch_needed = False
+            if self.hide_console.isChecked() != self._initial_hide_console:
+                relaunch_needed = True
+            if self.start_with_windows.isChecked() != self._initial_start_with_windows:
+                relaunch_needed = True
+
+            if relaunch_needed:
+                QMessageBox.information(
+                    self,
+                    "Relaunch Required",
+                    "Console window and Windows startup changes will take effect the next time SparkyBot is launched.",
+                )
+                # Update so we don't nag again on next save
+                self._initial_hide_console = self.hide_console.isChecked()
+                self._initial_start_with_windows = self.start_with_windows.isChecked()
         else:
             QMessageBox.warning(self, "Settings", "Failed to save settings.")
 
@@ -985,7 +1349,6 @@ class SettingsWindow(QWidget):
 
         layout.addSpacing(20)
 
-        # SparkyBot title and version
         title = QLabel("<b>SparkyBot</b>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 18px;")
@@ -997,7 +1360,6 @@ class SettingsWindow(QWidget):
 
         layout.addSpacing(10)
 
-        # GitHub link
         github_link = QLabel(
             '<a href="https://github.com/SimpleHonors/SparkyBot">'
             '<b>View on GitHub</b></a>'
@@ -1009,11 +1371,17 @@ class SettingsWindow(QWidget):
 
         layout.addSpacing(20)
 
-        # MezzeTools credit
+        # "Built on the shoulders of giants" section
+        inspired_label = QLabel("<b>Built on the shoulders of giants:</b>")
+        inspired_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(inspired_label)
+
+        layout.addSpacing(5)
+
         mz_link = QLabel(
-            '<a href="https://github.com/MezzeTools/GW2-Synthesis">'
-            '<b>GW2 Synthesis</b></a> by MezzeTools<br>'
-            '<small>Discord embeds and bot framework</small>'
+            '<a href="https://github.com/Swedemon/MzFightReporter">'
+            '<b>MzFightReporter</b></a> by Swedemon<br>'
+            '<small>The original Java WvW fight reporter that inspired this project</small>'
         )
         mz_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mz_link.setTextFormat(Qt.TextFormat.RichText)
@@ -1022,7 +1390,6 @@ class SettingsWindow(QWidget):
 
         layout.addSpacing(5)
 
-        # Elite Insights credit
         ei_link = QLabel(
             '<a href="https://github.com/baaron4/GW2-Elite-Insights-Parser">'
             '<b>GW2 Elite Insights</b></a> by baaron4<br>'
@@ -1032,6 +1399,42 @@ class SettingsWindow(QWidget):
         ei_link.setTextFormat(Qt.TextFormat.RichText)
         ei_link.setOpenExternalLinks(True)
         layout.addWidget(ei_link)
+
+        layout.addSpacing(5)
+
+        arcdps_link = QLabel(
+            '<a href="https://www.deltaconnected.com/arcdps/">'
+            '<b>ArcDPS</b></a> by deltaconnected<br>'
+            '<small>The combat logging addon that makes all of this possible</small>'
+        )
+        arcdps_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        arcdps_link.setTextFormat(Qt.TextFormat.RichText)
+        arcdps_link.setOpenExternalLinks(True)
+        layout.addWidget(arcdps_link)
+
+        layout.addSpacing(5)
+
+        plenbot_link = QLabel(
+            '<a href="https://github.com/Plenyx/PlenBotLogUploader">'
+            '<b>PlenBot Log Uploader</b></a> by Plenyx<br>'
+            '<small>Log uploader and Discord reporter for GW2</small>'
+        )
+        plenbot_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        plenbot_link.setTextFormat(Qt.TextFormat.RichText)
+        plenbot_link.setOpenExternalLinks(True)
+        layout.addWidget(plenbot_link)
+
+        layout.addSpacing(5)
+
+        evtc_link = QLabel(
+            '<a href="https://github.com/Drevarr/EVTC_parser">'
+            '<b>EVTC Parser</b></a> by Drevarr<br>'
+            '<small>Python EVTC parser and WvW stats aggregator</small>'
+        )
+        evtc_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        evtc_link.setTextFormat(Qt.TextFormat.RichText)
+        evtc_link.setOpenExternalLinks(True)
+        layout.addWidget(evtc_link)
 
         layout.addStretch()
 

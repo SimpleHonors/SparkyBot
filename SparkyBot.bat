@@ -1,17 +1,17 @@
 @echo off
-title SparkyBot
-echo Starting SparkyBot...
+:: SparkyBot Launcher
+:: Default to showing console
+set HIDDEN=0
 
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo Python is not installed or not in PATH.
-    echo.
-    echo Please install Python 3.9+ from https://www.python.org/downloads/
-    echo IMPORTANT: Check "Add Python to PATH" during installation.
-    echo.
-    pause
-    exit /b 1
+:: Check if config says to hide console
+for /f "tokens=*" %%A in ('findstr /i "hideconsole" config.properties 2^>nul') do (
+    echo %%A | findstr /i "True" >nul 2>&1
+    if not errorlevel 1 set HIDDEN=1
 )
 
-python bootstrap.py %*
-if errorlevel 1 pause
+if %HIDDEN%==1 (
+    start "" pythonw bootstrap.py
+) else (
+    python bootstrap.py
+    pause
+)

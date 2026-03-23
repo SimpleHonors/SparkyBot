@@ -1,3 +1,8 @@
+import sys
+import os
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+sys.dont_write_bytecode = True
+
 """Bootstrap script for SparkyBot.
 
 Checks and installs Python dependencies BEFORE importing anything

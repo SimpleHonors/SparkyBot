@@ -84,6 +84,29 @@ class FightReport:
     }
     DEFAULT_ICON = "https://i.imgur.com/B0iKe5d.png"
 
+    PROFESSION_NAMES = {
+        # Core professions
+        "GUAR": "Guardian", "WARR": "Warrior", "ENGI": "Engineer",
+        "RANG": "Ranger", "THIE": "Thief", "ELEM": "Elementalist",
+        "MESM": "Mesmer", "NECR": "Necromancer", "REVE": "Revenant",
+        # HoT elite specs
+        "DRAG": "Dragonhunter", "BERS": "Berserker", "SCRA": "Scrapper",
+        "DRUI": "Druid", "DARE": "Daredevil", "TEMP": "Tempest",
+        "CHRO": "Chronomancer", "REAP": "Reaper", "HERA": "Herald",
+        # PoF elite specs
+        "FIRE": "Firebrand", "SPEL": "Spellbreaker", "HOLO": "Holosmith",
+        "SOUL": "Soulbeast", "DEAD": "Deadeye", "WEAV": "Weaver",
+        "MIRA": "Mirage", "SCOU": "Scourge", "RENE": "Renegade",
+        # EoD elite specs
+        "WILL": "Willbender", "BLAD": "Bladesworn", "MECH": "Mechanist",
+        "UNTA": "Untamed", "SPEC": "Specter", "CATA": "Catalyst",
+        "VIRT": "Virtuoso", "HARB": "Harbinger", "VIND": "Vindicator",
+        # JW elite specs
+        "AMAL": "Amalgam", "COND": "Conduit", "PARA": "Paragon",
+        "EVOK": "Evoker", "LUMI": "Luminary", "TROU": "Troubadour",
+        "RITU": "Ritualist", "GALE": "Galeshot", "ANTI": "Antiquary",
+    }
+
     def _fmt_table(self, lines: List[str]) -> str:
         """Enforce uniform table width with a ruler at start and end.
 
@@ -93,6 +116,10 @@ class FightReport:
         """
         ruler = "-" * self.TABLE_WIDTH
         return self.LF.join([ruler] + lines + [ruler])
+
+    def _get_full_profession_name(self, abbrev: str) -> str:
+        """Convert 4-letter profession abbreviation to full name."""
+        return self.PROFESSION_NAMES.get(abbrev, abbrev)
 
     def __init__(self, json_data: Dict[str, Any]):
         self.data = json_data
@@ -938,3 +965,81 @@ class FightReport:
             })
 
         return embeds
+
+    def get_ai_summary(self) -> Dict[str, Any]:
+        """Export fight data as a structured dict for AI analysis."""
+        squad_dead = sum(p.dead for p in self.players)
+        squad_kdr = self.total_kills / squad_dead if squad_dead > 0 else float(self.total_kills)
+        enemy_dead = sum(e.dead for e in self.enemies)
+
+        # Determine outcome explicitly
+        if squad_kdr >= 2.0 and squad_dead < enemy_dead:
+            outcome = "Decisive Win"
+        elif self.total_kills > squad_dead:
+            outcome = "Win"
+        elif self.total_kills == squad_dead:
+            outcome = "Draw"
+        elif squad_kdr >= 0.5:
+            outcome = "Loss"
+        else:
+            outcome = "Decisive Loss"
+
+        top_damage = sorted(self.players, key=lambda p: p.damage, reverse=True)[:5]
+
+        # Aggregate squad stats for WvW-specific metrics
+        total_strips = sum(p.boon_strips for p in self.players)
+        total_cleanses = sum(p.cleanse for p in self.players)
+        total_healing = sum(p.healing for p in self.players)
+        total_barrier = sum(p.barrier for p in self.players)
+
+        enemy_profs = {}
+        for e in self.enemies:
+            abbrev = (e.profession or "Unknown")[:4].upper()
+            full_name = self._get_full_profession_name(abbrev)
+            if full_name not in enemy_profs:
+                enemy_profs[full_name] = {"count": 0, "damage": 0}
+            enemy_profs[full_name]["count"] += 1
+            enemy_profs[full_name]["damage"] += e.damage
+
+        enemy_total_damage = sum(e.damage for e in self.enemies)
+
+        enemy_teams = {}
+        for e in self.enemies:
+            team = e.team or "Unknown"
+            enemy_teams[team] = enemy_teams.get(team, 0) + 1
+
+        return {
+            "outcome": outcome,
+            "zone": self.zone,
+            "duration": self._format_duration(),
+            "duration_seconds": self.total_seconds,
+            "kdr": round(squad_kdr, 2),
+            "squad_count": len(self.players),
+            "ally_count": len(self._allies),
+            "squad_damage": self.total_damage,
+            "squad_dps": self._calc_dps(self.total_damage),
+            "squad_downs": self.total_downs,
+            "squad_kills": self.total_kills,
+            "squad_deaths": squad_dead,
+            "squad_strips": total_strips,
+            "squad_cleanses": total_cleanses,
+            "squad_healing": total_healing,
+            "squad_barrier": total_barrier,
+            "enemy_count": len(self.enemies),
+            "enemy_deaths": enemy_dead,
+            "enemy_total_damage": enemy_total_damage,
+            "top_damage": [
+                {"name": p.name, "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "damage": p.damage, "downs": p.downs, "kills": p.kills}
+                for p in top_damage
+            ],
+            "enemy_breakdown": {
+                prof: {
+                    "count": data["count"],
+                    "damage": data["damage"],
+                    "damage_per_player": data["damage"] // data["count"] if data["count"] > 0 else 0,
+                }
+                for prof, data in enemy_profs.items()
+            },
+            "enemy_teams": enemy_teams,
+        }

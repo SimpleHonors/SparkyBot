@@ -19,7 +19,7 @@ class Config:
             'discordWebhookLabel': 'SparkyBot',
             'activeDiscordWebhook': '1',
             'enableDiscordBot': 'true',
-            'guildIcon': 'wvw_icon.png',
+            'guildIcon': 'assets/wvw_icon.png',
             'embedColor': '0x00A86B',
         },
         'Paths': {
@@ -53,7 +53,17 @@ class Config:
             'minimizeToTray': 'true',
             'startMinimized': 'false',
             'startWatcherOnStartup': 'false',
+            'hideConsole': 'false',
             'maxParseMemory': '4096',
+        },
+        'AI': {
+            'enableAiAnalysis': 'false',
+            'aiProvider': 'Custom',
+            'aiBaseUrl': '',
+            'aiApiKey': '',
+            'aiModel': '',
+            'aiSystemPrompt': '',
+            'aiMaxTokens': '350',
         }
     }
 
@@ -106,7 +116,7 @@ class Config:
         self.discord_webhook = self._config.get('Discord', 'discordWebhook')
         self.discord_webhook2 = self._config.get('Discord', 'discordWebhook2')
         self.discord_webhook3 = self._config.get('Discord', 'discordWebhook3')
-        self.discord_webhook_label = self._config.get('Discord', 'discordWebhookLabel')
+        self.discord_webhook_label = self._config.get('Discord', 'discordWebhookLabel', fallback='SparkyBot')
         self.active_discord_webhook = self._config.getint('Discord', 'activeDiscordWebhook')
         self.enable_discord_bot = self._config.getboolean('Discord', 'enableDiscordBot')
         self.guild_icon = self._config.get('Discord', 'guildIcon')
@@ -143,14 +153,38 @@ class Config:
         self.start_minimized = self._config.getboolean('Behavior', 'startMinimized')
         self.show_quick_report = self._config.getboolean('UI', 'showQuickReport')
         self.start_watcher_on_startup = self._config.getboolean('Behavior', 'startWatcherOnStartup')
+        self.hide_console = self._config.getboolean('Behavior', 'hideConsole')
         self.max_parse_memory = self._config.getint('Behavior', 'maxParseMemory')
 
-    def get_thumbnail_path(self) -> str:
-        """Get absolute path to the thumbnail/guild icon file."""
+        # AI Analysis settings
+        self.enable_ai_analysis = self._config.getboolean('AI', 'enableAiAnalysis')
+        self.ai_provider = self._config.get('AI', 'aiProvider')
+        self.ai_base_url = self._config.get('AI', 'aiBaseUrl')
+        self.ai_api_key = self._config.get('AI', 'aiApiKey')
+        self.ai_model = self._config.get('AI', 'aiModel')
+        self.ai_system_prompt = self._config.get('AI', 'aiSystemPrompt')
+        self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 350)
+
+    def get_thumbnail_path(self):
         if not self.guild_icon:
-            return ""
-        candidate = Path(__file__).parent.parent / self.guild_icon
-        return str(candidate) if candidate.exists() else ""
+            return None
+
+        home_dir = Path(__file__).parent.parent
+        icon_path = Path(self.guild_icon)
+
+        if not icon_path.is_absolute():
+            icon_path = home_dir / icon_path
+
+        if icon_path.exists():
+            return str(icon_path)
+
+        # Migration fallback: check assets/ for files referenced without the prefix
+        if not self.guild_icon.startswith('assets'):
+            migrated_path = home_dir / "assets" / self.guild_icon
+            if migrated_path.exists():
+                return str(migrated_path)
+
+        return None
 
     def get_current_discord_webhook(self) -> str:
         """Get the active Discord webhook URL based on activeDiscordWebhook setting"""

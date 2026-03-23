@@ -21,7 +21,7 @@ class SetupWizard(QWizard):
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
         # Set window icon to sbtray.ico
-        icon_path = Path(__file__).parent.parent / "sbtray.ico"
+        icon_path = Path(__file__).parent.parent / "assets" / "sbtray.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
