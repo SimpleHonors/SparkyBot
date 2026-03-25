@@ -41,6 +41,7 @@ class EIUpdater:
             current_version = self.get_current_version()
             if current_version and self._compare_versions(latest_version, current_version) <= 0:
                 logger.info(f"Already on latest version: {current_version}")
+                self._save_version(current_version)  # Ensure version file exists for future reads
                 return False, latest_version, ""
 
             # Find the CLI release asset (we need CLI for parsing)
@@ -70,23 +71,41 @@ class EIUpdater:
             return False, "", ""
 
     def get_current_version(self) -> str:
-        """Get current installed version from executable"""
+        """Get current installed version."""
         cli_path = self.gw2ei_folder / "GuildWars2EliteInsights-CLI.exe"
         if not cli_path.exists():
             return ""
 
-        # Try to get version from file properties
+        # Method 1: Read from our version file (most reliable, no pywin32 needed)
+        version_file = self.gw2ei_folder / ".ei_version"
+        if version_file.exists():
+            try:
+                version = version_file.read_text().strip()
+                if version:
+                    return version
+            except Exception:
+                pass
+
+        # Method 2: Try win32api (requires pywin32)
         try:
-            import win32api  # pywin32
+            import win32api
             info = win32api.GetFileVersionInfo(str(cli_path), '\\')
             version = f"{win32api.HIWORD(info['FileVersionMS'])}.{win32api.LOWORD(info['FileVersionMS'])}.{win32api.HIWORD(info['FileVersionLS'])}"
+            # Save for future reads
+            self._save_version(version)
             return version
         except ImportError:
             pass
 
-        # Fallback: try to parse from filename in folder
-        # The release zips typically contain version info
         return ""
+
+    def _save_version(self, version: str):
+        """Save installed EI version to a file."""
+        version_file = self.gw2ei_folder / ".ei_version"
+        try:
+            version_file.write_text(version)
+        except Exception:
+            pass
 
     def _compare_versions(self, v1: str, v2: str) -> int:
         """Compare versions. Returns 1 if v1 > v2, 0 if equal, -1 if v1 < v2"""
@@ -104,7 +123,7 @@ class EIUpdater:
         except:
             return 0
 
-    def download_and_update(self, download_url: str, progress_callback=None) -> Tuple[bool, str]:
+    def download_and_update(self, download_url: str, version: str = "", progress_callback=None) -> Tuple[bool, str]:
         """Download and install update, preserving Settings folder
 
         Returns:
@@ -186,6 +205,8 @@ class EIUpdater:
                 logger.info("Settings folder restored")
 
             version = extracted_folder.name
+            # Save version so future reads don't need pywin32
+            self._save_version(version)
             return True, f"Successfully updated to {version}"
 
         except requests.RequestException as e:

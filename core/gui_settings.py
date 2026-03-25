@@ -972,27 +972,13 @@ class SettingsWindow(QWidget):
             # Paths to protect during the update
             PROTECTED_PATHS = {'config.properties', 'GW2EI'}
 
-            # Delete everything except protected paths
-            for item in app_dir.iterdir():
-                if item.name in PROTECTED_PATHS:
-                    continue
-                if item.name.startswith('.'):
-                    continue  # skip hidden files like .git
-                try:
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
-                except Exception as e:
-                    logger.warning(f"Could not delete {item.name}: {e}")
-
-            # Extract zip, skipping protected paths
+            # Extract only files that are new or changed
             with zipfile.ZipFile(tmp_path, 'r') as zf:
                 for member in zf.namelist():
-                    # Get the path relative to the zip's root directory
+                    # Get path relative to zip's root directory
                     parts = member.split('/', 1)
                     if len(parts) < 2 or not parts[1]:
-                        continue  # skip the top-level directory entry itself
+                        continue  # skip top-level directory entry
                     relative_path = parts[1]
 
                     # Skip protected paths
@@ -1001,12 +987,25 @@ class SettingsWindow(QWidget):
                         continue
 
                     target = app_dir / relative_path
+
+                    # Create directories as needed
                     if member.endswith('/'):
                         target.mkdir(parents=True, exist_ok=True)
-                    else:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as src, open(target, 'wb') as dst:
-                            dst.write(src.read())
+                        continue
+
+                    # Skip if local file exists and is identical size
+                    # (zip doesn't preserve mtime reliably, so use size as a quick check)
+                    info = zf.getinfo(member)
+                    if target.exists() and target.stat().st_size == info.file_size:
+                        continue
+
+                    # Write new or changed file
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, open(target, 'wb') as dst:
+                        dst.write(src.read())
+                    logger.debug(f"Updated: {relative_path}")
+
+            logger.info("Update complete — only new/changed files were written")
 
             tmp_path.unlink()
 
@@ -1115,7 +1114,7 @@ class SettingsWindow(QWidget):
             def progress_callback(pct):
                 self.sig_progress_value.emit(int(pct))
 
-            success, message = updater.download_and_update(download_url, progress_callback)
+            success, message = updater.download_and_update(download_url, version=latest_version, progress_callback=progress_callback)
 
             self.sig_progress.emit(False, 0)
             self.sig_status_text.emit(message)

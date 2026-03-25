@@ -568,7 +568,9 @@ class SparkyBotApp(QApplication):
                 available, version, url = ei.check_for_update()
                 if available and url:
                     self.logger.info(f"Auto-updating Elite Insights to {version}")
-                    ei.download_and_update(url)
+                    success, msg = ei.download_and_update(url)
+                    if success:
+                        ei._save_version(version)  # Persist version so future reads don't need pywin32
 
             except Exception as e:
                 self.logger.debug(f"Launch update check failed: {e}")
