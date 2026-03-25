@@ -1,6 +1,7 @@
 """Main Settings Window for SparkyBot"""
 
 import sys
+import hashlib
 import threading
 
 from PyQt6.QtWidgets import (
@@ -974,6 +975,16 @@ class SettingsWindow(QWidget):
 
             # Extract only files that are new or changed
             with zipfile.ZipFile(tmp_path, 'r') as zf:
+                names = zf.namelist()
+                logger.info(f"Zip contains {len(names)} entries")
+                logger.info(f"Zip root: {names[0] if names else 'empty'}")
+
+                # Log a few sample paths
+                for n in names[1:5]:
+                    logger.info(f"  Sample: {n}")
+
+                skipped = updated = new_files = 0
+
                 for member in zf.namelist():
                     # Get path relative to zip's root directory
                     parts = member.split('/', 1)
@@ -993,19 +1004,38 @@ class SettingsWindow(QWidget):
                         target.mkdir(parents=True, exist_ok=True)
                         continue
 
-                    # Skip if local file exists and is identical size
-                    # (zip doesn't preserve mtime reliably, so use size as a quick check)
-                    info = zf.getinfo(member)
-                    if target.exists() and target.stat().st_size == info.file_size:
+                    # Log version.py specifically
+                    if 'version.py' in relative_path:
+                        logger.info(f"Found version.py: member={member}, target={target}, exists={target.exists()}")
+                        if target.exists():
+                            logger.info(f"  Local content: {target.read_text()[:50]}")
+                            new_content = zf.read(member)
+                            logger.info(f"  Zip content: {new_content[:50]}")
+
+                    # Skip if local file exists and is identical by content hash
+                    if target.exists():
+                        new_content = zf.read(member)
+                        old_hash = hashlib.md5(target.read_bytes()).digest()
+                        new_hash = hashlib.md5(new_content).digest()
+                        if old_hash == new_hash:
+                            skipped += 1
+                            continue
+                        # Content differs — write it
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with open(target, 'wb') as dst:
+                            dst.write(new_content)
+                        updated += 1
+                        logger.debug(f"Updated: {relative_path}")
                         continue
 
-                    # Write new or changed file
+                    # File doesn't exist locally — write it
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(member) as src, open(target, 'wb') as dst:
                         dst.write(src.read())
-                    logger.debug(f"Updated: {relative_path}")
+                    new_files += 1
+                    logger.debug(f"New file: {relative_path}")
 
-            logger.info("Update complete — only new/changed files were written")
+            logger.info(f"Update result: {new_files} new, {updated} updated, {skipped} unchanged")
 
             tmp_path.unlink()
 

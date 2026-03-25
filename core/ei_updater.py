@@ -204,10 +204,13 @@ class EIUpdater:
                 shutil.copytree(settings_backup, self.settings_folder)
                 logger.info("Settings folder restored")
 
-            version = extracted_folder.name
+            # Use the caller-provided version (from GitHub tag) if available,
+            # otherwise fall back to the extracted folder name
+            if not version:
+                version = extracted_folder.name
             # Save version so future reads don't need pywin32
             self._save_version(version)
-            return True, f"Successfully updated to {version}"
+            return True, f"Successfully updated to v{version}"
 
         except requests.RequestException as e:
             logger.error(f"Download failed: {e}")

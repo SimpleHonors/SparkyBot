@@ -320,6 +320,7 @@ class SparkyBotApp(QApplication):
     """Main application class with GUI and system tray"""
 
     sig_show_update = pyqtSignal(str, object)  # latest_version, release_data
+    sig_show_ei_update = pyqtSignal(str, str, str)  # current_version, latest_version, download_url
 
     def __init__(self, args, config):
         super().__init__(args)
@@ -335,6 +336,7 @@ class SparkyBotApp(QApplication):
 
         # Connect cross-thread signal for update dialog
         self.sig_show_update.connect(self._show_update_dialog)
+        self.sig_show_ei_update.connect(self._show_ei_update_dialog)
 
         # Setup components
         self.watcher_thread: Optional[QThread] = None
@@ -542,11 +544,12 @@ class SparkyBotApp(QApplication):
                 from core.version import VERSION
                 from core.ei_updater import EIUpdater
 
-                # Check SparkyBot version
+                # Check SparkyBot version FIRST
                 response = requests.get(
                     "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
                     timeout=10
                 )
+                sparkybot_needs_update = False
                 if response.status_code == 200:
                     data = response.json()
                     latest = data.get("tag_name", "").lstrip("v").strip()
@@ -560,17 +563,17 @@ class SparkyBotApp(QApplication):
                     if _parse(latest) > _parse(VERSION):
                         self._update_info = data
                         self.sig_show_update.emit(latest, data)
+                        sparkybot_needs_update = True
 
-                # Silently check and update EI
-                from core.gw2ei_invoker import GW2EIInvoker
-                invoker = GW2EIInvoker(self.config)
-                ei = EIUpdater(invoker.get_gw2ei_folder())
-                available, version, url = ei.check_for_update()
-                if available and url:
-                    self.logger.info(f"Auto-updating Elite Insights to {version}")
-                    success, msg = ei.download_and_update(url)
-                    if success:
-                        ei._save_version(version)  # Persist version so future reads don't need pywin32
+                # Only check EI if SparkyBot is already up to date
+                if not sparkybot_needs_update:
+                    from core.gw2ei_invoker import GW2EIInvoker
+                    invoker = GW2EIInvoker(self.config)
+                    ei = EIUpdater(invoker.get_gw2ei_folder())
+                    available, version, url = ei.check_for_update()
+                    if available and url:
+                        current = ei.get_current_version() or "unknown"
+                        self.sig_show_ei_update.emit(current, version, url)
 
             except Exception as e:
                 self.logger.debug(f"Launch update check failed: {e}")
@@ -602,6 +605,36 @@ class SparkyBotApp(QApplication):
         elif msg.clickedButton() == never_btn:
             self.config.update('Behavior', 'checkUpdatesOnLaunch', 'false')
             self.config.save()
+
+    def _show_ei_update_dialog(self, current: str, latest: str, url: str):
+        """Show EI update prompt to user."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        msg = QMessageBox()
+        msg.setWindowTitle("Elite Insights Update Available")
+        msg.setText(f"A new version of Elite Insights is available.\n\n"
+                    f"Current: v{current}\n"
+                    f"Latest: v{latest}\n\n"
+                    f"Would you like to update now?")
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        update_btn = msg.addButton("Update Now", QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = msg.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec()
+
+        if msg.clickedButton() == update_btn:
+            try:
+                from core.ei_updater import EIUpdater
+                from core.gw2ei_invoker import GW2EIInvoker
+                invoker = GW2EIInvoker(self.config)
+                ei = EIUpdater(invoker.get_gw2ei_folder())
+                success, result_msg = ei.download_and_update(url, version=latest)
+                if success:
+                    ei._save_version(latest)
+                    self.logger.info(f"Elite Insights updated to v{latest}")
+            except Exception as e:
+                self.logger.error(f"EI update failed: {e}")
 
     def _on_update_complete(self, version: str):
         """Show restart dialog after successful update."""
