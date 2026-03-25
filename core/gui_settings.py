@@ -4,11 +4,11 @@ import sys
 import threading
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QLabel, QLineEdit, QSpinBox, QCheckBox, QPushButton,
-    QGroupBox, QFormLayout, QScrollArea,
+    QGroupBox, QFormLayout, QScrollArea, QSizePolicy,
     QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog,
-    QTextEdit, QDialog, QDialogButtonBox
+    QTextEdit, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem
 )
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
@@ -50,7 +50,7 @@ class SettingsWindow(QWidget):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("SparkyBot Settings")
-        self.setMinimumSize(600, 500)
+        self.setMinimumSize(600, 500)  # height only; width computed after tabs are added
 
         # Set window icon to sbtray.ico
         icon_path = Path(__file__).parent.parent / "assets" / "sbtray.ico"
@@ -61,12 +61,20 @@ class SettingsWindow(QWidget):
         self._load_settings()
         self._connect_thread_signals()
 
+        # Dynamically size window to fit all tabs without scrolling
+        tab_bar = self.tab_widget.tabBar()
+        tabs_width = sum(tab_bar.tabRect(i).width() for i in range(tab_bar.count()))
+        min_width = tabs_width + 40
+        self.setMinimumWidth(min_width)
+        self.resize(max(min_width, self.width()), self.height())
+
     def _setup_ui(self):
         """Setup the user interface"""
         layout = QVBoxLayout(self)
 
         # Create tab widget
-        tabs = QTabWidget()
+        self.tab_widget = QTabWidget()
+        tabs = self.tab_widget
 
         # Add tabs
         tabs.addTab(self._create_discord_tab(), "Discord")
@@ -76,6 +84,7 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._create_behavior_tab(), "Behavior")
         tabs.addTab(self._create_updates_tab(), "Updates")
         tabs.addTab(self._create_ai_tab(), "AI")
+        tabs.addTab(self._create_process_files_tab(), "Process Files")
         tabs.addTab(self._create_about_tab(), "About")
 
         layout.addWidget(tabs)
@@ -246,6 +255,22 @@ class SettingsWindow(QWidget):
         form.addRow("CLI Executable:", gw2ei_layout)
 
         layout.addWidget(group)
+
+        # Network polling
+        group = QGroupBox("Network")
+        poll_form = QFormLayout(group)
+
+        self.poll_interval = QSpinBox()
+        self.poll_interval.setRange(1, 30)
+        self.poll_interval.setSuffix(" seconds")
+        self.poll_interval.setValue(5)
+        self.poll_interval.setToolTip(
+            "How often to check for new files when watching a network share.\n"
+            "Does not affect local folder monitoring (which uses instant OS events)."
+        )
+        poll_form.addRow("Network Poll Interval:", self.poll_interval)
+
+        layout.addWidget(group)
         layout.addStretch()
 
         scroll.setWidget(widget)
@@ -299,46 +324,30 @@ class SettingsWindow(QWidget):
         layout = QVBoxLayout(widget)
 
         group = QGroupBox("Report Display Options")
-        grid = QVBoxLayout(group)
+        grid = QGridLayout(group)
 
-        self.show_quick_report = QCheckBox("Show Quick Report")
-        grid.addWidget(self.show_quick_report)
+        checkboxes = [
+            ("show_quick_report", "Show Quick Report"),
+            ("show_damage", "Show Damage Stats"),
+            ("show_heals", "Show Heals"),
+            ("show_defense", "Show Defense"),
+            ("show_ccs", "Show Crowd Control"),
+            ("show_strips", "Show Strips"),
+            ("show_cleanses", "Show Cleanses"),
+            ("show_downs", "Show Downs/Kills"),
+            ("show_burst", "Show Burst Damage"),
+            ("show_top_skills", "Show Top Enemy Skills"),
+            ("show_offensive_boons", "Show Offensive Boons"),
+            ("show_defensive_boons", "Show Defensive Boons"),
+            ("show_enemy_breakdown", "Show Enemy Breakdown"),
+        ]
 
-        self.show_damage = QCheckBox("Show Damage Stats")
-        grid.addWidget(self.show_damage)
-
-        self.show_heals = QCheckBox("Show Heals")
-        grid.addWidget(self.show_heals)
-
-        self.show_defense = QCheckBox("Show Defense")
-        grid.addWidget(self.show_defense)
-
-        self.show_ccs = QCheckBox("Show Crowd Control")
-        grid.addWidget(self.show_ccs)
-
-        self.show_cleanses = QCheckBox("Show Cleanses")
-        grid.addWidget(self.show_cleanses)
-
-        self.show_downs = QCheckBox("Show Downs/Kills")
-        grid.addWidget(self.show_downs)
-
-        self.show_burst = QCheckBox("Show Burst Damage")
-        grid.addWidget(self.show_burst)
-
-        self.show_spike = QCheckBox("Show Spike Damage")
-        grid.addWidget(self.show_spike)
-
-        self.show_top_skills = QCheckBox("Show Top Enemy Skills")
-        grid.addWidget(self.show_top_skills)
-
-        self.show_offensive_boons = QCheckBox("Show Offensive Boons")
-        grid.addWidget(self.show_offensive_boons)
-
-        self.show_defensive_boons = QCheckBox("Show Defensive Boons")
-        grid.addWidget(self.show_defensive_boons)
-
-        self.show_enemy_breakdown = QCheckBox("Show Enemy Breakdown")
-        grid.addWidget(self.show_enemy_breakdown)
+        for i, (attr, label) in enumerate(checkboxes):
+            cb = QCheckBox(label)
+            setattr(self, attr, cb)
+            row = i // 2
+            col = i % 2
+            grid.addWidget(cb, row, col)
 
         layout.addWidget(group)
         layout.addStretch()
@@ -374,6 +383,12 @@ class SettingsWindow(QWidget):
         self.hide_console = QCheckBox("Hide Console Window (use pythonw.exe)")
         grid.addWidget(self.hide_console)
 
+        self.check_updates_on_launch = QCheckBox("Check for updates on launch")
+        self.check_updates_on_launch.setToolTip(
+            "Automatically check for SparkyBot and Elite Insights updates when the app starts."
+        )
+        grid.addWidget(self.check_updates_on_launch)
+
         layout.addWidget(group)
 
         # Memory
@@ -406,35 +421,43 @@ class SettingsWindow(QWidget):
         self.enable_ai = QCheckBox("Enable AI Fight Analysis")
         form.addRow("", self.enable_ai)
 
-        # Provider preset dropdown
+        # Provider + Model on one row
+        provider_model_row = QHBoxLayout()
+
+        provider_label = QLabel("Provider:")
         self.ai_provider = QComboBox()
         self.ai_provider.addItems(list(PRESETS.keys()))
         self.ai_provider.currentTextChanged.connect(self._on_ai_provider_changed)
-        form.addRow("Provider:", self.ai_provider)
 
-        # Base URL
+        model_label = QLabel("Model:")
+        self.ai_model = QComboBox()
+        self.ai_model.setEditable(True)
+        self.ai_model.setPlaceholderText("Select or type model")
+        self.ai_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+
+        provider_model_row.addWidget(provider_label)
+        provider_model_row.addWidget(self.ai_provider, 1)  # stretch=1
+        provider_model_row.addSpacing(10)
+        provider_model_row.addWidget(model_label)
+        provider_model_row.addWidget(self.ai_model, 1)  # stretch=1
+        form.addRow(provider_model_row)
+
+        # Base URL + small Refresh button on one row
+        url_row = QHBoxLayout()
         self.ai_base_url = QLineEdit()
         self.ai_base_url.setPlaceholderText("https://api.example.com/v1")
-        form.addRow("API Base URL:", self.ai_base_url)
+        self.ai_refresh_models_btn = QPushButton("Refresh Models")
+        self.ai_refresh_models_btn.setFixedWidth(110)
+        self.ai_refresh_models_btn.clicked.connect(self._refresh_ai_models)
+        url_row.addWidget(self.ai_base_url, 1)  # stretch=1, takes most of the space
+        url_row.addWidget(self.ai_refresh_models_btn)
+        form.addRow("API Base URL:", url_row)
 
-        # API Key
+        # API Key stays on its own row
         self.ai_api_key = QLineEdit()
         self.ai_api_key.setPlaceholderText("sk-... (leave blank for local models)")
         self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         form.addRow("API Key:", self.ai_api_key)
-
-        # Model — editable combo box with refresh button
-        model_layout = QHBoxLayout()
-        self.ai_model = QComboBox()
-        self.ai_model.setEditable(True)
-        self.ai_model.setPlaceholderText("Select or type a model name")
-        self.ai_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-
-        self.ai_refresh_models_btn = QPushButton("Refresh Models")
-        self.ai_refresh_models_btn.clicked.connect(self._refresh_ai_models)
-        model_layout.addWidget(self.ai_model)
-        model_layout.addWidget(self.ai_refresh_models_btn)
-        form.addRow("Model:", model_layout)
 
         # Max tokens
         self.ai_max_tokens = QSpinBox()
@@ -791,10 +814,16 @@ class SettingsWindow(QWidget):
 
                 text = f'<a href="https://github.com/SimpleHonors/SparkyBot/releases">v{latest_version}</a>'
                 self.sig_sparkybot_latest.emit(text)
-                if latest_version == VERSION:
+
+                current = _parse_version(VERSION)
+                latest = _parse_version(latest_version)
+
+                if latest > current:
+                    self.sig_sparkybot_status.emit(f"Update available: v{VERSION} → v{latest_version}")
+                elif latest == current:
                     self.sig_sparkybot_status.emit(f"You have the latest version (v{VERSION}).")
                 else:
-                    self.sig_sparkybot_status.emit(f"Update available: v{VERSION} → v{latest_version}")
+                    self.sig_sparkybot_status.emit(f"You are ahead of the latest release (v{VERSION} > v{latest_version})")
             elif response.status_code == 404:
                 self.sig_sparkybot_latest.emit("No releases yet")
                 self.sig_sparkybot_status.emit("No releases found on GitHub.")
@@ -1176,6 +1205,7 @@ class SettingsWindow(QWidget):
         # Paths
         self.log_folder.setText(self.config.log_folder)
         self.gw2ei_exe.setText(self.config.gw2ei_exe)
+        self.poll_interval.setValue(self.config.poll_interval)
 
         # Thresholds
         self.min_duration.setValue(self.config.min_fight_duration)
@@ -1190,10 +1220,10 @@ class SettingsWindow(QWidget):
         self.show_heals.setChecked(self.config.show_heals)
         self.show_defense.setChecked(self.config.show_defense)
         self.show_ccs.setChecked(self.config.show_ccs)
+        self.show_strips.setChecked(self.config.show_strips)
         self.show_cleanses.setChecked(self.config.show_cleanses)
         self.show_downs.setChecked(self.config.show_downs_kills)
         self.show_burst.setChecked(self.config.show_burst_dmg)
-        self.show_spike.setChecked(self.config.show_spike_dmg)
         self.show_top_skills.setChecked(self.config.show_top_enemy_skills)
         self.show_offensive_boons.setChecked(self.config.show_offensive_boons)
         self.show_defensive_boons.setChecked(self.config.show_defensive_boons)
@@ -1212,6 +1242,7 @@ class SettingsWindow(QWidget):
         # Check if SparkyBot is in the Windows startup registry
         self.start_with_windows.setChecked(self._is_in_startup_registry())
         self.hide_console.setChecked(self.config.hide_console)
+        self.check_updates_on_launch.setChecked(self.config.check_updates_on_launch)
 
         # Memory
         self.max_parse_memory.setValue(self.config.max_parse_memory)
@@ -1246,6 +1277,7 @@ class SettingsWindow(QWidget):
         # Paths
         cfg('Paths', 'logFolder', self.log_folder.text())
         cfg('Paths', 'gw2eiExe', self.gw2ei_exe.text())
+        cfg('Paths', 'pollInterval', str(self.poll_interval.value()))
 
         # Thresholds
         cfg('Thresholds', 'minFightDuration', str(self.min_duration.value()))
@@ -1260,10 +1292,10 @@ class SettingsWindow(QWidget):
         cfg('UI', 'showHeals', str(self.show_heals.isChecked()))
         cfg('UI', 'showDefense', str(self.show_defense.isChecked()))
         cfg('UI', 'showCCs', str(self.show_ccs.isChecked()))
+        cfg('UI', 'showStrips', str(self.show_strips.isChecked()))
         cfg('UI', 'showCleanses', str(self.show_cleanses.isChecked()))
         cfg('UI', 'showDownsKills', str(self.show_downs.isChecked()))
         cfg('UI', 'showBurstDmg', str(self.show_burst.isChecked()))
-        cfg('UI', 'showSpikeDmg', str(self.show_spike.isChecked()))
         cfg('UI', 'showTopEnemySkills', str(self.show_top_skills.isChecked()))
         cfg('UI', 'showOffensiveBoons', str(self.show_offensive_boons.isChecked()))
         cfg('UI', 'showDefensiveBoons', str(self.show_defensive_boons.isChecked()))
@@ -1275,6 +1307,7 @@ class SettingsWindow(QWidget):
         cfg('Behavior', 'startMinimized', str(self.start_minimized.isChecked()))
         cfg('Behavior', 'startWatcherOnStartup', str(self.start_watcher_on_startup.isChecked()))
         cfg('Behavior', 'hideConsole', str(self.hide_console.isChecked()))
+        cfg('Behavior', 'checkUpdatesOnLaunch', str(self.check_updates_on_launch.isChecked()))
 
         # Windows startup registry
         if self.start_with_windows.isChecked():
@@ -1353,108 +1386,246 @@ class SettingsWindow(QWidget):
                 return
         super().changeEvent(event)
 
+    def _create_process_files_tab(self) -> QWidget:
+        """Create process files tab for manual log processing."""
+        from PyQt6.QtCore import QMimeData
+        from pathlib import Path as P
+
+        class ProcessFilesWidget(QWidget):
+            # Signal emitted when user clicks Process — sends list of Path objects
+            process_requested = pyqtSignal(list)
+
+            def __init__(self, config, parent=None):
+                super().__init__(parent)
+                self.config = config
+                self.setAcceptDrops(True)
+                self._build_ui()
+
+            def _build_ui(self):
+                layout = QVBoxLayout(self)
+
+                # Header description
+                header = QLabel(
+                    "Manually process individual log files without the file watcher. "
+                    "Drop or browse for .evtc/.zevtc files below — they'll run through "
+                    "the full pipeline (GW2EI parse → report → Discord) as a one-off."
+                )
+                header.setWordWrap(True)
+                header.setStyleSheet("color: #aaa; padding: 4px 0 8px 0;")
+                layout.addWidget(header)
+
+                # Drop zone
+                self.drop_label = QLabel("Drag & drop .evtc / .zevtc files here\nor use Browse below")
+                self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.drop_label.setMinimumHeight(120)
+                self.drop_label.setStyleSheet(
+                    "border: 2px dashed #666; border-radius: 8px; "
+                    "padding: 20px; font-size: 14px; color: #999;"
+                )
+                layout.addWidget(self.drop_label)
+
+                # Browse button
+                browse_btn = QPushButton("Browse Files...")
+                browse_btn.clicked.connect(self._browse_files)
+                layout.addWidget(browse_btn)
+
+                # File queue list
+                self.file_list = QListWidget()
+                layout.addWidget(self.file_list)
+
+                # Button row
+                btn_row = QHBoxLayout()
+                remove_btn = QPushButton("Remove Selected")
+                remove_btn.clicked.connect(self._remove_selected)
+                clear_btn = QPushButton("Clear All")
+                clear_btn.clicked.connect(self.file_list.clear)
+                self.process_btn = QPushButton("Process Files")
+                self.process_btn.setEnabled(False)
+                self.process_btn.clicked.connect(self._process)
+                btn_row.addWidget(remove_btn)
+                btn_row.addWidget(clear_btn)
+                btn_row.addStretch()
+                btn_row.addWidget(self.process_btn)
+                layout.addLayout(btn_row)
+
+                # Status label
+                self.status_label = QLabel("")
+                layout.addWidget(self.status_label)
+
+            def dragEnterEvent(self, event):
+                if event.mimeData().hasUrls():
+                    for url in event.mimeData().urls():
+                        if url.toLocalFile().lower().endswith(('.evtc', '.zevtc')):
+                            event.acceptProposedAction()
+                            self.drop_label.setStyleSheet(
+                                "border: 2px dashed #4CAF50; border-radius: 8px; "
+                                "padding: 20px; font-size: 14px; color: #4CAF50;"
+                            )
+                            return
+                event.ignore()
+
+            def dragLeaveEvent(self, event):
+                self.drop_label.setStyleSheet(
+                    "border: 2px dashed #666; border-radius: 8px; "
+                    "padding: 20px; font-size: 14px; color: #999;"
+                )
+
+            def dropEvent(self, event):
+                self.dragLeaveEvent(event)
+                for url in event.mimeData().urls():
+                    path = url.toLocalFile()
+                    if path.lower().endswith(('.evtc', '.zevtc')):
+                        self._add_file(path)
+
+            def _browse_files(self):
+                # Default to the first configured log folder
+                start_dir = ""
+                log_folders = self.config.get_log_folders()
+                if log_folders:
+                    folder = str(log_folders[0])
+                    if P(folder).exists():
+                        start_dir = folder
+
+                files, _ = QFileDialog.getOpenFileNames(
+                    self, "Select Log Files", start_dir,
+                    "ArcDPS Logs (*.evtc *.zevtc);;All Files (*)"
+                )
+                for f in files:
+                    self._add_file(f)
+
+            def _add_file(self, path: str):
+                # Avoid duplicates
+                for i in range(self.file_list.count()):
+                    if self.file_list.item(i).data(Qt.ItemDataRole.UserRole) == path:
+                        return
+                item = QListWidgetItem(P(path).name)
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                item.setToolTip(path)
+                self.file_list.addItem(item)
+                self.process_btn.setEnabled(True)
+
+            def _remove_selected(self):
+                for item in self.file_list.selectedItems():
+                    self.file_list.takeItem(self.file_list.row(item))
+                self.process_btn.setEnabled(self.file_list.count() > 0)
+
+            def _process(self):
+                paths = []
+                for i in range(self.file_list.count()):
+                    item = self.file_list.item(i)
+                    paths.append(Path(item.data(Qt.ItemDataRole.UserRole)))
+                if paths:
+                    self.process_requested.emit(paths)
+
+        # Create and return the widget
+        self.process_files_widget = ProcessFilesWidget(self.config)
+        return self.process_files_widget
+
     def _create_about_tab(self) -> QWidget:
         """Create about tab"""
         widget = QWidget()
-        layout = QVBoxLayout(widget)
+        outer_layout = QVBoxLayout(widget)
 
-        layout.addSpacing(20)
-
-        title = QLabel("<b>SparkyBot</b>")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 18px;")
-        layout.addWidget(title)
-
-        version_label = QLabel(f"Version {VERSION}")
-        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(version_label)
+        # Inner widget with fixed content — doesn't grow with window
+        inner = QWidget()
+        inner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         layout.addSpacing(10)
 
-        github_link = QLabel(
-            '<a href="https://github.com/SimpleHonors/SparkyBot">'
-            '<b>View on GitHub</b></a>'
-        )
-        github_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        github_link.setTextFormat(Qt.TextFormat.RichText)
-        github_link.setOpenExternalLinks(True)
-        layout.addWidget(github_link)
+        title = QLabel("<b>SparkyBot</b>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
 
-        layout.addSpacing(20)
+        version_row = QHBoxLayout()
+        version_label = QLabel(f"Version {VERSION}")
+        version_label.setStyleSheet("font-size: 11px; color: #aaa;")
+        github_link = QLabel('<a href="https://github.com/SimpleHonors/SparkyBot" style="color: #5bc0de;">View on GitHub</a>')
+        github_link.setOpenExternalLinks(True)
+        github_link.setStyleSheet("font-size: 11px;")
+        version_row.addStretch()
+        version_row.addWidget(version_label)
+        version_row.addWidget(QLabel("  •  "))
+        version_row.addWidget(github_link)
+        version_row.addStretch()
+        layout.addLayout(version_row)
+
+        layout.addSpacing(12)
 
         # "Built on the shoulders of giants" section
-        inspired_label = QLabel("<b>Built on the shoulders of giants:</b>")
-        inspired_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(inspired_label)
+        credits_header = QLabel("<b>Built on the shoulders of giants:</b>")
+        credits_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits_header.setStyleSheet("font-size: 13px; font-weight: bold;")
+        layout.addWidget(credits_header)
 
-        layout.addSpacing(5)
+        layout.addSpacing(10)
 
-        mz_link = QLabel(
+        # Helper to add a credit row: name link + optional byline + description
+        def add_credit(name_html, desc, url):
+            name_label = QLabel(name_html)
+            name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            name_label.setTextFormat(Qt.TextFormat.RichText)
+            name_label.setOpenExternalLinks(True)
+            name_label.setStyleSheet("font-size: 12px;")
+            layout.addWidget(name_label)
+            if desc:
+                desc_label = QLabel(desc)
+                desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                desc_label.setStyleSheet("font-size: 11px; color: #aaa;")
+                layout.addWidget(desc_label)
+            layout.addSpacing(5)
+
+        add_credit(
             '<a href="https://github.com/Swedemon/MzFightReporter">'
-            '<b>MzFightReporter</b></a> by Swedemon<br>'
-            '<small>The original Java WvW fight reporter that inspired this project</small>'
+            '<b>MzFightReporter</b></a> by Swedemon',
+            "The original Java WvW fight reporter that inspired this project",
+            "https://github.com/Swedemon/MzFightReporter"
         )
-        mz_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mz_link.setTextFormat(Qt.TextFormat.RichText)
-        mz_link.setOpenExternalLinks(True)
-        layout.addWidget(mz_link)
 
-        layout.addSpacing(5)
-
-        ei_link = QLabel(
+        add_credit(
             '<a href="https://github.com/baaron4/GW2-Elite-Insights-Parser">'
-            '<b>GW2 Elite Insights</b></a> by baaron4<br>'
-            '<small>The parser that powers all log analysis</small>'
+            '<b>GW2 Elite Insights</b></a> by baaron4',
+            "The parser that powers all log analysis",
+            "https://github.com/baaron4/GW2-Elite-Insights-Parser"
         )
-        ei_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ei_link.setTextFormat(Qt.TextFormat.RichText)
-        ei_link.setOpenExternalLinks(True)
-        layout.addWidget(ei_link)
 
-        layout.addSpacing(5)
-
-        arcdps_link = QLabel(
+        add_credit(
             '<a href="https://www.deltaconnected.com/arcdps/">'
-            '<b>ArcDPS</b></a> by deltaconnected<br>'
-            '<small>The combat logging addon that makes all of this possible</small>'
+            '<b>ArcDPS</b></a> by deltaconnected',
+            "The combat logging addon that makes all of this possible",
+            "https://www.deltaconnected.com/arcdps/"
         )
-        arcdps_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        arcdps_link.setTextFormat(Qt.TextFormat.RichText)
-        arcdps_link.setOpenExternalLinks(True)
-        layout.addWidget(arcdps_link)
 
-        layout.addSpacing(5)
-
-        plenbot_link = QLabel(
+        add_credit(
             '<a href="https://github.com/Plenyx/PlenBotLogUploader">'
-            '<b>PlenBot Log Uploader</b></a> by Plenyx<br>'
-            '<small>Log uploader and Discord reporter for GW2</small>'
+            '<b>PlenBot Log Uploader</b></a> by Plenyx',
+            "Log uploader and Discord reporter for GW2",
+            "https://github.com/Plenyx/PlenBotLogUploader"
         )
-        plenbot_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        plenbot_link.setTextFormat(Qt.TextFormat.RichText)
-        plenbot_link.setOpenExternalLinks(True)
-        layout.addWidget(plenbot_link)
 
-        layout.addSpacing(5)
-
-        evtc_link = QLabel(
+        add_credit(
             '<a href="https://github.com/Drevarr/EVTC_parser">'
-            '<b>EVTC Parser</b></a> by Drevarr<br>'
-            '<small>Python EVTC parser and WvW stats aggregator</small>'
+            '<b>EVTC Parser</b></a> by Drevarr',
+            "Python EVTC parser and WvW stats aggregator",
+            "https://github.com/Drevarr/EVTC_parser"
         )
-        evtc_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        evtc_link.setTextFormat(Qt.TextFormat.RichText)
-        evtc_link.setOpenExternalLinks(True)
-        layout.addWidget(evtc_link)
 
-        layout.addStretch()
+        layout.addSpacing(15)
 
-        credits = QLabel(
-            "<small>SparkyBot is a community-built alternative for users who prefer "
-            "a Python-based solution with a focus on reliability and ease of deployment.</small>"
+        tagline = QLabel(
+            "SparkyBot is a community-built alternative for users who prefer "
+            "a Python-based solution with a focus on reliability and ease of deployment."
         )
-        credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        credits.setWordWrap(True)
-        layout.addWidget(credits)
+        tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tagline.setWordWrap(True)
+        tagline.setStyleSheet("font-size: 11px; color: #888;")
+        layout.addWidget(tagline)
+
+        # Add the inner widget to the outer layout with stretches on both sides
+        outer_layout.addStretch()
+        outer_layout.addWidget(inner)
+        outer_layout.addStretch()
 
         return widget

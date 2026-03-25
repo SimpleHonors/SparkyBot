@@ -111,39 +111,40 @@ class LogFileHandler(FileSystemEventHandler):
                 if thread in self._active_threads:
                     self._active_threads.remove(thread)
 
-    def _wait_for_file_stable(self, file_path: Path, timeout: float = 100.0, interval: float = 0.5) -> bool:
+    def _wait_for_file_stable(self, file_path: Path, timeout: float = 100.0, interval: float = 0.5, stable_count: int = 3) -> bool:
         """Wait for file to stop changing (finished writing)"""
         if not file_path.exists():
             return False
 
         try:
-            initial_size = file_path.stat().st_size
-            initial_mtime = file_path.stat().st_mtime
-
+            consecutive_stable = 0
+            last_size = -1
             elapsed = 0.0
+
             while elapsed < timeout:
-                # Check cancellation flag before each sleep
                 with self._lock:
                     if self._stopping:
                         return False
-                time.sleep(interval)
-                elapsed += interval
 
                 if not file_path.exists():
                     logger.info(f"File was removed: {file_path.name}")
                     return False
 
                 current_size = file_path.stat().st_size
-                current_mtime = file_path.stat().st_mtime
 
-                if current_size == initial_size and current_mtime == initial_mtime:
-                    return True
+                if current_size == last_size and current_size > 0:
+                    consecutive_stable += 1
+                    if consecutive_stable >= stable_count:
+                        return True
+                else:
+                    consecutive_stable = 0
 
-                initial_size = current_size
-                initial_mtime = current_mtime
+                last_size = current_size
+                time.sleep(interval)
+                elapsed += interval
 
             logger.warning(f"File still changing after {timeout}s: {file_path.name}")
-            return False  # Treat as unstable after timeout
+            return False
 
         except OSError as e:
             logger.error(f"Error waiting for file stability: {e}")

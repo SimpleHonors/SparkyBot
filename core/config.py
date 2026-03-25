@@ -25,6 +25,7 @@ class Config:
         'Paths': {
             'logFolder': '',
             'gw2eiExe': 'GuildWars2EliteInsights-CLI.exe',
+            'pollInterval': '5',
         },
         'Thresholds': {
             'minFightDuration': '10',
@@ -38,10 +39,10 @@ class Config:
             'showHeals': 'true',
             'showDefense': 'true',
             'showCCs': 'true',
+            'showStrips': 'true',
             'showCleanses': 'true',
             'showDownsKills': 'true',
             'showBurstDmg': 'true',
-            'showSpikeDmg': 'true',
             'showTopEnemySkills': 'true',
             'showOffensiveBoons': 'true',
             'showDefensiveBoons': 'true',
@@ -55,6 +56,7 @@ class Config:
             'startWatcherOnStartup': 'false',
             'hideConsole': 'false',
             'maxParseMemory': '4096',
+            'checkUpdatesOnLaunch': 'true',
         },
         'AI': {
             'enableAiAnalysis': 'false',
@@ -68,7 +70,7 @@ class Config:
     }
 
     def __init__(self, config_path: Optional[Union[str, Path]] = None):
-        self._config = configparser.ConfigParser()
+        self._config = configparser.ConfigParser(interpolation=None)
         # Establish all sections and keys as guaranteed fallbacks before reading user file
         self._config.read_dict(self._DEFAULTS)
 
@@ -125,6 +127,7 @@ class Config:
         # Paths - support both new 'logFolder' and legacy 'defaultLogFolder'
         self.log_folder = self._config.get('Paths', 'logFolder', fallback='')
         self.gw2ei_exe = self._config.get('Paths', 'gw2eiExe')
+        self.poll_interval = self._get_int('Paths', 'pollInterval', 5)
 
         # Thresholds
         self.min_fight_duration = self._config.getint('Thresholds', 'minFightDuration')
@@ -138,10 +141,10 @@ class Config:
         self.show_heals = self._config.getboolean('UI', 'showHeals')
         self.show_defense = self._config.getboolean('UI', 'showDefense')
         self.show_ccs = self._config.getboolean('UI', 'showCCs')
+        self.show_strips = self._config.getboolean('UI', 'showStrips')
         self.show_cleanses = self._config.getboolean('UI', 'showCleanses')
         self.show_downs_kills = self._config.getboolean('UI', 'showDownsKills')
         self.show_burst_dmg = self._config.getboolean('UI', 'showBurstDmg')
-        self.show_spike_dmg = self._config.getboolean('UI', 'showSpikeDmg')
         self.show_top_enemy_skills = self._config.getboolean('UI', 'showTopEnemySkills')
         self.show_offensive_boons = self._config.getboolean('UI', 'showOffensiveBoons')
         self.show_defensive_boons = self._config.getboolean('UI', 'showDefensiveBoons')
@@ -155,6 +158,7 @@ class Config:
         self.start_watcher_on_startup = self._config.getboolean('Behavior', 'startWatcherOnStartup')
         self.hide_console = self._config.getboolean('Behavior', 'hideConsole')
         self.max_parse_memory = self._config.getint('Behavior', 'maxParseMemory')
+        self.check_updates_on_launch = self._config.getboolean('Behavior', 'checkUpdatesOnLaunch')
 
         # AI Analysis settings
         self.enable_ai_analysis = self._config.getboolean('AI', 'enableAiAnalysis')

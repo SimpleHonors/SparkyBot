@@ -41,6 +41,8 @@ class PlayerStats:
     invulned: int = 0
     boon_strips: int = 0
     downed_damage: int = 0  # downContribution from statsAll[0]
+    stab_uptime: float = 0.0
+    aegis_uptime: float = 0.0
 
 
 @dataclass
@@ -70,8 +72,8 @@ class FightReport:
     """Parses GW2EI JSON and generates formatted strings for Discord"""
 
     LF = "\n"
-    NAME_WIDTH = 13
-    TABLE_WIDTH = 50
+    NAME_WIDTH = 20
+    TABLE_WIDTH = 52
     EMBED_COLOR = 0x00A86B  # Jade Green default
     AUTHOR_ICON_URL = "https://i.imgur.com/f7t0fAe.png"
 
@@ -170,8 +172,36 @@ class FightReport:
         - healing: extHealingStats.outgoingHealingAllies[][0].healing (summed)
         - barrier: extBarrierStats.outgoingBarrierAllies[][0].barrier (summed)
         - evadedCount/blockedCount/invulnedCount/downCount/deadCount: defenses[0]
-        - soft_cc/immob_cc: from statsAll[0] fields (debug logged for verification)
+        - soft_cc/immob_cc: extracted from target buffs (buffs[] on enemy targets)
         """
+        # Soft CC and immobilize come from target buffs, not statsAll
+        IMMOB_ID = 727
+        SOFT_CC_IDS = {722, 721, 720, 833, 742, 26766}  # chill, cripple, blind, daze, weakness, slow
+
+        soft_cc_counts: Dict[str, int] = {}
+        immob_counts: Dict[str, int] = {}
+
+        for target in self.data.get('targets', []):
+            for buff in target.get('buffs', []):
+                buff_id = buff.get('id', 0)
+                if buff_id != IMMOB_ID and buff_id not in SOFT_CC_IDS:
+                    continue
+                buff_data = buff.get('buffData', [])
+                if not buff_data or not isinstance(buff_data[0], dict):
+                    continue
+                generated = buff_data[0].get('generated', {})
+                if not isinstance(generated, dict):
+                    continue
+                for player_name, value in generated.items():
+                    try:
+                        val = int(value) if value else 1
+                    except (ValueError, TypeError):
+                        val = 1
+                    if buff_id == IMMOB_ID:
+                        immob_counts[player_name] = immob_counts.get(player_name, 0) + val
+                    elif buff_id in SOFT_CC_IDS:
+                        soft_cc_counts[player_name] = soft_cc_counts.get(player_name, 0) + val
+
         players = []
         for p in self.data.get('players', []):
             is_ally = p.get('notInSquad', False)
@@ -221,20 +251,28 @@ class FightReport:
                         if isinstance(b, dict):
                             barrier += b.get('barrier', 0)
 
+            stab_uptime = 0.0
+            aegis_uptime = 0.0
+            for buff in p.get('buffUptimes', []):
+                if not isinstance(buff, dict):
+                    continue
+                bid = buff.get('id', 0)
+                if bid in (1122, 743):
+                    data = buff.get('buffData', [{}])
+                    if data and isinstance(data[0], dict):
+                        if bid == 1122:
+                            stab_uptime = data[0].get('uptime', 0.0)
+                        elif bid == 743:
+                            aegis_uptime = data[0].get('uptime', 0.0)
+
             damage = stats.get('totalDmg', 0)
             dps = self._calc_dps(damage)
 
-            # CC fields — debug log to find actual keys in GW2EI JSON
-            cc_keys = [k for k in stats.keys()
-                       if 'crowd' in k.lower() or 'cc' in k.lower() or 'immob' in k.lower()]
-            logger.debug(
-                f"statsAll[0] CC fields for {p.get('name')}: "
-                f"appliedCrowdControl={stats.get('appliedCrowdControl')}, "
-                f"CC keys={cc_keys}"
-            )
+            # CC fields — hard_cc from statsAll, soft_cc/immob_cc from target buffs
             hard_cc = stats.get('appliedCrowdControl', 0)
-            soft_cc = stats.get('appliedCrowdControlAll', stats.get('softCc', 0))
-            immob_cc = stats.get('appliedImmobilize', 0)
+            player_name = p.get('name', '')
+            soft_cc = soft_cc_counts.get(player_name, 0)
+            immob_cc = immob_counts.get(player_name, 0)
 
             stats_obj = PlayerStats(
                 name=p.get('name', 'Unknown'),
@@ -261,6 +299,8 @@ class FightReport:
                 invulned=def_data.get('invulnedCount', 0),
                 boon_strips=boon_strips,
                 downed_damage=stats.get('downContribution', 0),
+                stab_uptime=stab_uptime,
+                aegis_uptime=aegis_uptime,
             )
 
             if is_ally:
@@ -683,8 +723,8 @@ class FightReport:
         (26980, "Resi"), (873, "Reso"), (30328, "Alac"), (1187, "Quik"),
     ]
     OFFENSIVE_BOONS = [
-        (740, "Mght"), (725, "Fury"), (726, "Vigr"),
-        (719, "Swif"), (30328, "Alac"), (1187, "Quik"),
+        (740, "Might"), (725, "Fury"), (726, "Vigor"),
+        (719, "Swift"), (30328, "Alac"), (1187, "Quick"),
     ]
 
     def _get_boon_uptime_by_party(self, boon_list: list) -> str:
@@ -708,14 +748,14 @@ class FightReport:
             return ""
         short_names = [s for _, s in boon_list]
         lines = [
-            f" # {' '.join(f'{s:>4}' for s in short_names)}",
+            f" # {' '.join(f'{s:>5}' for s in short_names)}",
         ]
         for group_id in sorted(groups.keys()):
             count = group_counts.get(group_id, 0)
             if count == 0:
                 continue
             row = f"{group_id:>2} " + " ".join(
-                f"{int(groups[group_id][bid] / count):>4}" for bid, _ in boon_list
+                f"{int(groups[group_id][bid] / count):>5}" for bid, _ in boon_list
             )
             lines.append(row)
         return self._fmt_table(lines)
@@ -827,13 +867,13 @@ class FightReport:
             return ""
 
         lines = [
-            f" #  {'Prof':<4}  {'Dmg':<6}   #  {'Prof':<4}  {'Dmg':<6}",
+            f" #  {'Profession':<13}  {'Dmg':<6}   #  {'Profession':<13}  {'Dmg':<6}",
         ]
 
         for team_name, profs in teams.items():
             total_count = sum(v['count'] for v in profs.values())
             lines.append(f">>> {team_name}: {total_count}")
-            sorted_profs = sorted(profs.items(), key=lambda x: x[1]['dmg'], reverse=True)
+            sorted_profs = sorted(profs.items(), key=lambda x: x[1]['count'], reverse=True)
             mid = (len(sorted_profs) + 1) // 2
             left = sorted_profs[:mid]
             right = sorted_profs[mid:]
@@ -841,15 +881,17 @@ class FightReport:
                 lp, ld = left[j]
                 lc = ld['count']
                 ldmg = self._fmt_num(ld['dmg'])
+                lp_name = self._get_full_profession_name(lp)
                 if j < len(right):
                     rp, rd = right[j]
                     rc = rd['count']
                     rdmg = self._fmt_num(rd['dmg'])
+                    rp_name = self._get_full_profession_name(rp)
                     lines.append(
-                        f"{lc:>2}  {lp:<4}  {ldmg:<6}   {rc:>2}  {rp:<4}  {rdmg:<6}"
+                        f"{lc:>2}  {lp_name:<13}  {ldmg:<6}   {rc:>2}  {rp_name:<13}  {rdmg:<6}"
                     )
                 else:
-                    lines.append(f"{lc:>2}  {lp:<4}  {ldmg:<6}")
+                    lines.append(f"{lc:>2}  {lp_name:<13}  {ldmg:<6}")
 
         return self._fmt_table(lines)
 
@@ -969,6 +1011,8 @@ class FightReport:
     def get_ai_summary(self) -> Dict[str, Any]:
         """Export fight data as a structured dict for AI analysis."""
         squad_dead = sum(p.dead for p in self.players)
+        ally_dead = sum(a.dead for a in self._allies)
+        ally_damage = sum(a.damage for a in self._allies)
         squad_kdr = self.total_kills / squad_dead if squad_dead > 0 else float(self.total_kills)
         enemy_dead = sum(e.dead for e in self.enemies)
 
@@ -985,6 +1029,9 @@ class FightReport:
             outcome = "Decisive Loss"
 
         top_damage = sorted(self.players, key=lambda p: p.damage, reverse=True)[:5]
+        top_cleanses = sorted([p for p in self.players if p.cleanse > 0], key=lambda p: p.cleanse, reverse=True)[:3]
+        top_strips = sorted([p for p in self.players if p.boon_strips > 0], key=lambda p: p.boon_strips, reverse=True)[:3]
+        top_healers = sorted([p for p in self.players if p.healing > 0], key=lambda p: p.healing, reverse=True)[:3]
 
         # Aggregate squad stats for WvW-specific metrics
         total_strips = sum(p.boon_strips for p in self.players)
@@ -1001,21 +1048,96 @@ class FightReport:
             enemy_profs[full_name]["count"] += 1
             enemy_profs[full_name]["damage"] += e.damage
 
+        top_enemy_profs = dict(sorted(enemy_profs.items(), key=lambda item: item[1]["damage"], reverse=True)[:5])
+
         enemy_total_damage = sum(e.damage for e in self.enemies)
+
+        friendly_count = len(self.players) + len(self._allies)
+        is_outnumbered = friendly_count < len(self.enemies)
+        squad_outdamaged_enemy = self.total_damage > enemy_total_damage
 
         enemy_teams = {}
         for e in self.enemies:
             team = e.team or "Unknown"
             enemy_teams[team] = enemy_teams.get(team, 0) + 1
 
+        # Parse Burst Windows
+        all_bursts = self._parse_burst_windows()
+        top_bursts = sorted([w for w in all_bursts if w.dmg_4s > 0], key=lambda w: w.dmg_4s, reverse=True)[:3]
+
+        # Parse CC and Interrupts
+        top_cc = sorted([p for p in self.players if (p.outgoing_cc + p.interrupts) > 0], key=lambda p: (p.outgoing_cc + p.interrupts), reverse=True)[:3]
+
+        # Parse Enemy Top Skills
+        skill_map = self.data.get('skillMap', {})
+        skill_totals: Dict[int, int] = {}
+        for t in self.data.get('targets', []):
+            dist = t.get('totalDamageDist', [])
+            if not dist:
+                continue
+            phase_dist = dist[0] if dist else []
+            if not isinstance(phase_dist, list):
+                continue
+            for entry in phase_dist:
+                if not isinstance(entry, dict):
+                    continue
+                skill_id = entry.get('id', 0)
+                dmg = entry.get('totalDamage', 0)
+                skill_totals[skill_id] = skill_totals.get(skill_id, 0) + dmg
+
+        top_enemy_skills = []
+        for skill_id, dmg in sorted(skill_totals.items(), key=lambda x: x[1], reverse=True)[:10]:
+            if len(top_enemy_skills) >= 5:
+                break
+            skill_key = f"s{skill_id}"
+            skill_info = skill_map.get(skill_key, {})
+            skill_name = skill_info.get('name', f'Skill {skill_id}') if isinstance(skill_info, dict) else f'Skill {skill_id}'
+
+            # Skip unmapped ArcDPS skills
+            if skill_name.startswith("Skill "):
+                continue
+
+            top_enemy_skills.append({"name": skill_name, "damage": dmg})
+
+        # Calculate outliers — players who beat second place by at least 1.5x
+        def get_outlier(items, key_func, min_val):
+            valid = [x for x in items if key_func(x) >= min_val]
+            if not valid:
+                return None
+            sorted_items = sorted(valid, key=key_func, reverse=True)
+            name_attr = getattr(sorted_items[0], 'name', getattr(sorted_items[0], 'player_name', 'Unknown'))
+            if len(sorted_items) == 1:
+                return {"name": name_attr, "value": key_func(sorted_items[0])}
+            if key_func(sorted_items[0]) >= key_func(sorted_items[1]) * 1.5:
+                return {"name": name_attr, "value": key_func(sorted_items[0])}
+            return None
+
+        outliers = {}
+        if val := get_outlier(self.players, lambda p: p.downed_damage, 50000): outliers["down_contribution"] = {**val, "unit": "down damage"}
+        if val := get_outlier(self.players, lambda p: p.boon_strips, 20): outliers["boon_strips"] = {**val, "action": "boons stripped"}
+        if val := get_outlier(self.players, lambda p: p.downs, 5): outliers["outgoing_downs"] = {**val, "unit": "downs"}
+        if val := get_outlier(self.players, lambda p: p.kills, 5): outliers["outgoing_kills"] = {**val, "unit": "kills"}
+        if val := get_outlier(self.players, lambda p: p.cleanse, 50): outliers["cleanses"] = {**val, "unit": "cleanses"}
+        if val := get_outlier(self.players, lambda p: p.healing, 100000): outliers["healing"] = {**val, "unit": "healing"}
+        if val := get_outlier(self.players, lambda p: p.stab_uptime, 20.0): outliers["stability_uptime"] = {**val, "unit": "stability uptime"}
+        if val := get_outlier(self.players, lambda p: p.aegis_uptime, 5.0): outliers["aegis_uptime"] = {**val, "unit": "aegis uptime"}
+
+        all_bursts = self._parse_burst_windows()
+        if val := get_outlier(all_bursts, lambda w: w.dmg_4s, 20000): outliers["burst_damage_4s"] = {**val, "unit": "burst damage (4s)"}
+
         return {
+            "outliers": outliers,
             "outcome": outcome,
             "zone": self.zone,
+            "commander": self.commander,
             "duration": self._format_duration(),
             "duration_seconds": self.total_seconds,
             "kdr": round(squad_kdr, 2),
             "squad_count": len(self.players),
             "ally_count": len(self._allies),
+            "friendly_count": friendly_count,
+            "is_outnumbered": is_outnumbered,
+            "squad_outdamaged_enemy": squad_outdamaged_enemy,
             "squad_damage": self.total_damage,
             "squad_dps": self._calc_dps(self.total_damage),
             "squad_downs": self.total_downs,
@@ -1033,13 +1155,40 @@ class FightReport:
                  "damage": p.damage, "downs": p.downs, "kills": p.kills}
                 for p in top_damage
             ],
+            "top_cleanses": [
+                {"name": p.name, "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "cleanses": p.cleanse}
+                for p in top_cleanses
+            ],
+            "top_strips": [
+                {"name": p.name, "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "strips": p.boon_strips}
+                for p in top_strips
+            ],
+            "top_healers": [
+                {"name": p.name, "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "healing": p.healing}
+                for p in top_healers
+            ],
+            "top_bursts": [
+                {"name": w.player_name, "profession": self._get_full_profession_name(w.profession[:4].upper()),
+                 "dmg_4s": w.dmg_4s, "time_s": w.time_s}
+                for w in top_bursts
+            ],
+            "top_cc": [
+                {"name": p.name, "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "hard_cc": p.outgoing_cc, "interrupts": p.interrupts}
+                for p in top_cc
+            ],
+            "top_enemy_skills": top_enemy_skills,
             "enemy_breakdown": {
                 prof: {
                     "count": data["count"],
                     "damage": data["damage"],
                     "damage_per_player": data["damage"] // data["count"] if data["count"] > 0 else 0,
                 }
-                for prof, data in enemy_profs.items()
+                for prof, data in top_enemy_profs.items()
             },
             "enemy_teams": enemy_teams,
+            "outliers": outliers,
         }
