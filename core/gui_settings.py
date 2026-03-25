@@ -44,6 +44,7 @@ class SettingsWindow(QWidget):
     sig_sparkybot_status = pyqtSignal(str)
     sig_sparkybot_button_state = pyqtSignal(str, bool)
     sig_sparkybot_latest = pyqtSignal(str)
+    sig_update_complete = pyqtSignal(str)  # version string
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -985,6 +986,7 @@ class SettingsWindow(QWidget):
                 f"Please restart SparkyBot for changes to take effect."
             )
             self.sig_sparkybot_button_state.emit("Restart Required", False)
+            self.sig_update_complete.emit(version)
 
         except Exception as e:
             self.sig_sparkybot_status.emit(f"Update failed: {e}")

@@ -86,6 +86,7 @@ All settings are accessible through the GUI (right-click the system tray icon �
 |---------|-------------|
 | Log Folder | Path to your ArcDPS WvW log folder |
 | CLI Executable | Path to GW2EI CLI (auto-detected if installed via wizard) |
+| Network Poll Interval | How often to check for new files on network shares (1-30 seconds, default 5). Does not affect local folder monitoring. |
 
 ### Thresholds
 | Setting | Description |
@@ -97,15 +98,21 @@ All settings are accessible through the GUI (right-click the system tray icon �
 
 ### Display
 
-Toggle individual report sections on or off: Quick Report, Damage, Heals, Defense, CCs, Cleanses, Downs/Kills, Burst Damage, Enemy Skills, Boon Uptimes, Enemy Breakdown.
+Toggle individual report sections on or off: Quick Report, Damage, Heals, Defense, CCs, Cleanses, Strips, Downs/Kills, Burst Damage, Enemy Skills, Boon Uptimes, Enemy Breakdown.
 
 ### Behavior
 | Setting | Description |
 |---------|-------------|
+| Start with Windows | Launch SparkyBot automatically when Windows boots (adds registry entry) |
+| Hide Console Window | Use `pythonw.exe` instead of `python.exe` — no console window. Also respected by `SparkyBot.bat` |
 | Close to System Tray | Closing the window hides to tray instead of quitting |
 | Minimize to System Tray | Minimizing hides to tray |
 | Start Minimized | Launch directly to system tray |
 | Start Watcher on Startup | Begin monitoring as soon as SparkyBot opens |
+
+**Tip:** For fully hands-off operation, enable Start with Windows + Hide Console Window + Start Minimized + Start Watcher on Startup. SparkyBot will boot silently to the system tray and start watching for fight logs automatically.
+
+**Note:** Changes to Start with Windows and Hide Console Window require a relaunch to take effect.
 
 ### Updates
 
@@ -123,10 +130,10 @@ Optional AI-powered fight commentary powered by any OpenAI-compatible API.
 | API Key | Your API key (blank for local models like Ollama/LM Studio) |
 | Model | Model name — select from dropdown or type manually |
 | Refresh Models | Fetch available models from the API (falls back to preset list) |
-| Max Tokens | Response length limit (default 350) |
-| System Prompt | Custom instructions for the AI — leave blank for default |
+| Max Tokens | Response length limit (default 350, increase to 500+ for thinking models) |
+| System Prompt | Custom instructions for the AI — click "Edit System Prompt..." for a full-size editor with a Reset to Default button |
 
-When enabled, a brief fight commentary is posted as a separate Discord message immediately after the fight report. The fight report is never delayed by the AI — stats go out first, commentary follows.
+When enabled, a brief fight commentary is posted as a separate Discord message immediately after the fight report under the header "[YourBotName] Hot Take and Bad Advice!" — the header pulls from your Webhook Label in the Discord tab, so it matches whatever you've named your bot. The fight report is never delayed by the AI — stats go out first, commentary follows.
 
 #### Tested Providers
 
@@ -177,6 +184,7 @@ python bootstrap.py [options]
 | `--verbose`, `-v` | Enable debug logging |
 | `--headless` | Run without GUI (CLI mode, no system tray) |
 | `--config PATH` | Use a custom config file path |
+| `--debug-ai-prompt` | Save AI analysis prompts to JSON files in the current directory for debugging |
 
 ---
 
@@ -184,7 +192,7 @@ python bootstrap.py [options]
 
 ### File Watching
 - **Local folders** — uses OS-native file system events via `watchdog` for instant detection
-- **Network shares** — automatically falls back to polling (5-second interval) since OS events don't work reliably over SMB/CIFS
+- **Network shares** — automatically falls back to polling since OS events don't work reliably over SMB/CIFS. Polling interval is configurable in Settings → Paths (default 5 seconds).
 
 Files are only processed once. Existing files when the watcher starts are skipped. New files are held until they stop growing before parsing begins.
 
@@ -211,6 +219,7 @@ SparkyBot/
 │   ├── sbtray.png          # Icon source (PNG format)
 │   └── wvw_icon.png        # Default guild icon for Discord thumbnail
 ├── core/
+│   ├── __init__.py
 │   ├── version.py          # Single source of truth for version number
 │   ├── config.py           # Configuration management
 │   ├── file_watcher.py     # File monitoring (native + polling fallback)

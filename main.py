@@ -11,6 +11,7 @@ Features:
 """
 
 import argparse
+import os
 import sys
 import logging
 import threading
@@ -34,6 +35,33 @@ from core.gw2ei_invoker import GW2EIInvoker
 from core.tray_manager import TrayManager
 from core.gui_settings import SettingsWindow
 from core.fight_report import FightReport
+
+
+class FileProcessorWorker(QThread):
+    """Background worker for processing log files."""
+    file_started = pyqtSignal(int, int, str)    # index, total, filename
+    file_finished = pyqtSignal(object, bool)     # file_path, success
+    all_done = pyqtSignal(int)                   # total processed
+
+    def __init__(self, file_paths: list, config, parent=None):
+        super().__init__(parent)
+        self.file_paths = file_paths
+        self.config = config
+
+    def run(self):
+        gw2ei = GW2EIInvoker(self.config)
+        discord = DiscordWebhookManager(self.config)
+
+        for i, file_path in enumerate(self.file_paths, 1):
+            self.file_started.emit(i, len(self.file_paths), file_path.name)
+            try:
+                process_log_file(file_path, self.config, gw2ei, discord)
+                self.file_finished.emit(file_path, True)
+            except Exception as e:
+                logger.error(f"Failed to process {file_path.name}: {e}")
+                self.file_finished.emit(file_path, False)
+
+        self.all_done.emit(len(self.file_paths))
 
 
 def setup_logging(verbose: bool = False):
@@ -124,7 +152,7 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker, disco
             'showEnemySummary': config.show_defense,
             'showDamage': config.show_damage,
             'showBurstDmg': config.show_burst_dmg,
-            'showStrips': config.show_ccs,
+            'showStrips': config.show_strips,
             'showCleanses': config.show_cleanses,
             'showHeals': config.show_heals,
             'showDefense': config.show_defense,
@@ -240,7 +268,7 @@ class WatcherWorker(QObject):
                 result = process_log_file(file_path, self.config, gw2ei, discord)
                 self.file_processed.emit(str(file_path), result.value)
 
-            watcher = FileWatcher(self.config, on_new_file)
+            watcher = FileWatcher(self.config, on_new_file, poll_interval=getattr(self.config, 'poll_interval', 5))
 
         # Emit after releasing lock to avoid deadlock
         self.status_changed.emit("Starting watcher...")
@@ -291,6 +319,8 @@ class WatcherWorker(QObject):
 class SparkyBotApp(QApplication):
     """Main application class with GUI and system tray"""
 
+    sig_show_update = pyqtSignal(str, object)  # latest_version, release_data
+
     def __init__(self, args, config):
         super().__init__(args)
 
@@ -302,6 +332,9 @@ class SparkyBotApp(QApplication):
 
         self.config = config
         self.logger = logging.getLogger("SparkyBot")
+
+        # Connect cross-thread signal for update dialog
+        self.sig_show_update.connect(self._show_update_dialog)
 
         # Setup components
         self.watcher_thread: Optional[QThread] = None
@@ -420,6 +453,8 @@ class SparkyBotApp(QApplication):
             self.settings_window.watcher_toggled.connect(self.toggle_watcher)
             self.settings_window.settings_changed.connect(self._on_settings_changed)
             self.settings_window.destroyed.connect(self._on_settings_window_destroyed)
+            self.settings_window.process_files_widget.process_requested.connect(self._process_manual_files)
+            self.settings_window.sig_update_complete.connect(self._on_update_complete)
             # Connect to watcher if running
             if self.watcher_worker is not None:
                 self.watcher_worker.running_state_changed.connect(
@@ -439,9 +474,193 @@ class SparkyBotApp(QApplication):
         # Could restart watcher with new settings if needed
         self.logger.info("Settings updated")
 
+    def _process_manual_files(self, file_paths: list):
+        """Process manually selected files on a background thread."""
+        # Disable the Process button while running
+        self.settings_window.process_files_widget.process_btn.setEnabled(False)
+
+        self._file_worker = FileProcessorWorker(file_paths, self.config)
+        self._file_worker.file_started.connect(self._on_file_started)
+        self._file_worker.file_finished.connect(self._on_file_finished)
+        self._file_worker.all_done.connect(self._on_all_files_done)
+        self._file_worker.start()
+
+    def _on_file_started(self, index: int, total: int, filename: str):
+        self.logger.info(f"Manual processing ({index}/{total}): {filename}")
+        self.settings_window.process_files_widget.status_label.setText(
+            f"Processing {index} of {total}: {filename}"
+        )
+
+    def _on_file_finished(self, file_path, success: bool):
+        self._mark_file_status(file_path, success=success)
+
+    def _on_all_files_done(self, total: int):
+        tab = self.settings_window.process_files_widget
+        tab.status_label.setText(f"Done — processed {total} file(s)")
+
+        # Remove successfully processed files, keep failures
+        rows_to_remove = []
+        for i in range(tab.file_list.count()):
+            item = tab.file_list.item(i)
+            if item and item.text().startswith("✓"):
+                rows_to_remove.append(i)
+
+        # Remove in reverse order so indices don't shift
+        for row in reversed(rows_to_remove):
+            tab.file_list.takeItem(row)
+
+        # Disable process button if list is now empty
+        tab.process_btn.setEnabled(tab.file_list.count() > 0)
+
+    def _mark_file_status(self, file_path, success: bool):
+        """Update the file's display in the Process Files tab queue."""
+        tab = self.settings_window.process_files_widget
+        # Normalize to resolve slash differences between Path objects and stored strings
+        target = str(Path(str(file_path)).resolve())
+        for i in range(tab.file_list.count()):
+            item = tab.file_list.item(i)
+            stored = str(Path(item.data(Qt.ItemDataRole.UserRole)).resolve())
+            if stored == target:
+                prefix = "✓ " if success else "✗ "
+                item.setText(prefix + Path(str(file_path)).name)
+                break
+
     def _shutdown(self):
         """Clean shutdown - stop watcher and wait for thread"""
         self.stop_watcher()
+
+    def _check_updates_on_launch(self):
+        """Check for updates on startup if enabled."""
+        if not self.config.check_updates_on_launch:
+            return
+
+        import threading
+
+        def _check():
+            try:
+                import requests
+                from core.version import VERSION
+                from core.ei_updater import EIUpdater
+
+                # Check SparkyBot version
+                response = requests.get(
+                    "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    latest = data.get("tag_name", "").lstrip("v").strip()
+
+                    def _parse(v):
+                        try:
+                            return tuple(int(x) for x in v.split('.')[:3])
+                        except (ValueError, AttributeError):
+                            return (0, 0, 0)
+
+                    if _parse(latest) > _parse(VERSION):
+                        self._update_info = data
+                        self.sig_show_update.emit(latest, data)
+
+                # Silently check and update EI
+                from core.gw2ei_invoker import GW2EIInvoker
+                invoker = GW2EIInvoker(self.config)
+                ei = EIUpdater(invoker.get_gw2ei_folder())
+                available, version, url = ei.check_for_update()
+                if available and url:
+                    self.logger.info(f"Auto-updating Elite Insights to {version}")
+                    ei.download_and_update(url)
+
+            except Exception as e:
+                self.logger.debug(f"Launch update check failed: {e}")
+
+        thread = threading.Thread(target=_check, daemon=True)
+        thread.start()
+
+    def _show_update_dialog(self, latest_version: str, release_data: dict):
+        """Show update prompt to user."""
+        from PyQt6.QtWidgets import QMessageBox
+        from core.version import VERSION
+
+        msg = QMessageBox()
+        msg.setWindowTitle("SparkyBot Update Available")
+        msg.setText(f"A new version of SparkyBot is available.\n\n"
+                    f"Current: v{VERSION}\n"
+                    f"Latest: v{latest_version}\n\n"
+                    f"Would you like to update now?")
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        update_btn = msg.addButton("Update Now", QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = msg.addButton("Skip This Time", QMessageBox.ButtonRole.RejectRole)
+        never_btn = msg.addButton("Don't Ask Again", QMessageBox.ButtonRole.DestructiveRole)
+
+        msg.exec()
+
+        if msg.clickedButton() == update_btn:
+            self._trigger_sparkybot_update(release_data)
+        elif msg.clickedButton() == never_btn:
+            self.config.update('Behavior', 'checkUpdatesOnLaunch', 'false')
+            self.config.save()
+
+    def _on_update_complete(self, version: str):
+        """Show restart dialog after successful update."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        msg = QMessageBox()
+        msg.setWindowTitle("Update Installed")
+        msg.setText(f"SparkyBot has been updated to v{version}.\n\n"
+                    f"The application needs to restart for changes to take effect.")
+        msg.setIcon(QMessageBox.Icon.Information)
+
+        restart_btn = msg.addButton("Restart Now", QMessageBox.ButtonRole.AcceptRole)
+        later_btn = msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec()
+
+        if msg.clickedButton() == restart_btn:
+            self._restart_app()
+
+    def _restart_app(self):
+        """Restart the application."""
+        import sys
+        import os
+
+        self.logger.info("Restarting SparkyBot after update...")
+
+        # Stop the watcher cleanly
+        self.stop_watcher()
+
+        # Get the command that launched us
+        python = sys.executable
+        script = os.path.abspath(sys.argv[0])
+        args = sys.argv[1:]
+
+        # Filter out --test-update if present
+        args = [a for a in args if a != '--test-update']
+
+        # Launch new process
+        os.execv(python, [python, script] + args)
+
+    def _trigger_sparkybot_update(self, release_data: dict):
+        """Trigger the SparkyBot update flow from release data."""
+        assets = release_data.get("assets", [])
+        download_url = None
+        for asset in assets:
+            if asset.get("name", "").endswith(".zip"):
+                download_url = asset.get("browser_download_url")
+                break
+        if not download_url:
+            download_url = release_data.get("zipball_url")
+
+        if download_url and download_url != "None":
+            # Store on the settings window and trigger its existing update handler
+            if hasattr(self, 'settings_window') and self.settings_window:
+                self.settings_window._sparkybot_update_url = download_url
+                self.settings_window._sparkybot_latest_version = release_data.get("tag_name", "").lstrip("v")
+                self.settings_window._on_update_sparkybot_clicked()
+            else:
+                self.logger.error("Settings window not available for update")
+        else:
+            self.logger.warning("No download URL found for SparkyBot update")
 
     def run(self):
         """Run the application"""
@@ -454,6 +673,9 @@ class SparkyBotApp(QApplication):
 
         if self.config.start_watcher_on_startup:
             QTimer.singleShot(600, self.toggle_watcher)
+
+        # Check for updates after GUI is ready
+        QTimer.singleShot(2000, self._check_updates_on_launch)
 
         return self.exec()
 
@@ -478,9 +700,18 @@ def main():
         metavar="PATH",
         help="Path to config.properties file"
     )
+    parser.add_argument(
+        "--debug-ai-prompt",
+        action="store_true",
+        help="Save AI analysis prompts to JSON files for debugging"
+    )
 
     args = parser.parse_args()
     setup_logging(args.verbose)
+
+    # Set debug flag for AI prompt logging if requested
+    if args.debug_ai_prompt:
+        os.environ["SPARKY_DEBUG_AI_PROMPT"] = "1"
 
     # Load configuration
     config = Config(args.config) if args.config else Config()
@@ -518,7 +749,7 @@ def run_headless(config: Config) -> int:
         result = process_log_file(file_path, config, gw2ei, discord)
         logger.info(f"Processed {file_path.name}: {result.value}")
 
-    watcher = FileWatcher(config, on_new_file)
+    watcher = FileWatcher(config, on_new_file, poll_interval=getattr(config, 'poll_interval', 5))
 
     try:
         watcher.run_until_stopped()
