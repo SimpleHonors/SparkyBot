@@ -66,6 +66,11 @@ class Config:
             'aiModel': '',
             'aiSystemPrompt': '',
             'aiMaxTokens': '350',
+        },
+        'Twitch': {
+            'enableTwitchBot': 'false',
+            'twitchChannelName': '',
+            'twitchBotToken': '',
         }
     }
 
@@ -168,6 +173,11 @@ class Config:
         self.ai_model = self._config.get('AI', 'aiModel')
         self.ai_system_prompt = self._config.get('AI', 'aiSystemPrompt')
         self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 350)
+
+        # Twitch settings
+        self.enable_twitch = self._config.getboolean('Twitch', 'enableTwitchBot')
+        self.twitch_channel = self._config.get('Twitch', 'twitchChannelName')
+        self.twitch_token = self._config.get('Twitch', 'twitchBotToken')
 
     def get_thumbnail_path(self):
         if not self.guild_icon:

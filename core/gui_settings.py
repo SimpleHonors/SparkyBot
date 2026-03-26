@@ -78,7 +78,7 @@ class SettingsWindow(QWidget):
         tabs = self.tab_widget
 
         # Add tabs
-        tabs.addTab(self._create_discord_tab(), "Discord")
+        tabs.addTab(self._create_messaging_tab(), "Messaging")
         tabs.addTab(self._create_paths_tab(), "Paths")
         tabs.addTab(self._create_thresholds_tab(), "Thresholds")
         tabs.addTab(self._create_display_tab(), "Display")
@@ -114,8 +114,8 @@ class SettingsWindow(QWidget):
 
         layout.addLayout(button_layout)
 
-    def _create_discord_tab(self) -> QWidget:
-        """Create Discord settings tab"""
+    def _create_messaging_tab(self) -> QWidget:
+        """Create Messaging settings tab (Discord + Twitch)"""
         scroll = QScrollArea()
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -181,6 +181,41 @@ class SettingsWindow(QWidget):
         options_layout.addWidget(self.enable_discord)
 
         layout.addWidget(options_group)
+
+        # Twitch Integration group box
+        twitch_group = QGroupBox("Twitch Integration")
+        twitch_layout = QFormLayout(twitch_group)
+
+        self.enable_twitch = QCheckBox("Enable Twitch Bot")
+        self.enable_twitch.setToolTip("Post fight summaries and AI commentary to a Twitch chat channel.")
+        twitch_layout.addRow("", self.enable_twitch)
+
+        self.twitch_channel = QLineEdit()
+        self.twitch_channel.setPlaceholderText("your_channel_name")
+        self.twitch_channel.setToolTip("The Twitch channel name to post messages to.")
+        twitch_layout.addRow("Channel Name:", self.twitch_channel)
+
+        self.twitch_token = QLineEdit()
+        self.twitch_token.setPlaceholderText("oauth:...")
+        self.twitch_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.twitch_token.setToolTip("OAuth token for the Twitch bot account.")
+        twitch_layout.addRow("Bot Token:", self.twitch_token)
+
+        twitch_help = QLabel(
+            'Get a token at <a href="https://twitchtokengenerator.com" style="color: #5bc0de;">twitchtokengenerator.com</a>'
+        )
+        twitch_help.setOpenExternalLinks(True)
+        twitch_help.setStyleSheet("font-size: 11px; color: #aaa;")
+        twitch_layout.addRow("", twitch_help)
+
+        self.twitch_test_btn = QPushButton("Test Connection")
+        self.twitch_test_btn.clicked.connect(self._test_twitch_connection)
+        self.twitch_test_status = QLabel("")
+        self.twitch_test_status.setWordWrap(True)
+        twitch_layout.addRow("", self.twitch_test_btn)
+        twitch_layout.addRow("", self.twitch_test_status)
+
+        layout.addWidget(twitch_group)
         layout.addStretch()
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
@@ -202,6 +237,33 @@ class SettingsWindow(QWidget):
                 self.guild_icon.setText(str(rel.name))
             except ValueError:
                 self.guild_icon.setText(file_path)
+
+    def _test_twitch_connection(self):
+        """Test Twitch IRC connection."""
+        channel = self.twitch_channel.text().strip()
+        token = self.twitch_token.text().strip()
+
+        if not channel or not token:
+            self.twitch_test_status.setText("Enter a channel name and bot token first.")
+            return
+
+        self.twitch_test_status.setText("Connecting...")
+        self.twitch_test_btn.setEnabled(False)
+
+        import threading
+        def _test():
+            try:
+                from core.twitch_bot import TwitchBot
+                bot = TwitchBot(token, channel)
+                bot.send_message("SparkyBot Twitch connection test — if you see this, it works!")
+                bot.close()
+                self.twitch_test_status.setText("✓ Message sent successfully!")
+            except Exception as e:
+                self.twitch_test_status.setText(f"✗ Connection failed: {e}")
+            finally:
+                self.twitch_test_btn.setEnabled(True)
+
+        threading.Thread(target=_test, daemon=True).start()
 
     def _update_color_preview(self):
         """Update the color preview button's background."""
@@ -1290,6 +1352,11 @@ class SettingsWindow(QWidget):
             from core.ai_analyst import FightAnalyst
             self.ai_system_prompt.setPlainText(FightAnalyst._default_system_prompt())
 
+        # Twitch
+        self.enable_twitch.setChecked(self.config.enable_twitch)
+        self.twitch_channel.setText(self.config.twitch_channel)
+        self.twitch_token.setText(self.config.twitch_token)
+
     def _on_save_clicked(self):
         """Save settings from UI to config"""
         cfg = self.config.update
@@ -1354,6 +1421,11 @@ class SettingsWindow(QWidget):
         cfg('AI', 'aiModel', self.ai_model.currentText())
         cfg('AI', 'aiMaxTokens', str(self.ai_max_tokens.value()))
         cfg('AI', 'aiSystemPrompt', self.ai_system_prompt.toPlainText())
+
+        # Twitch
+        cfg('Twitch', 'enableTwitchBot', str(self.enable_twitch.isChecked()).lower())
+        cfg('Twitch', 'twitchChannelName', self.twitch_channel.text().strip())
+        cfg('Twitch', 'twitchBotToken', self.twitch_token.text().strip())
 
         # Write to file and reload attributes
         if self.config.save():

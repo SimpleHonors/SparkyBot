@@ -917,6 +917,27 @@ class FightReport:
         ]
         return self._fmt_table(lines)
 
+    def get_twitch_summary(self) -> str:
+        """Return a plain-text one-liner suitable for Twitch chat (no code blocks, no formatting)."""
+        squad_dead = sum(p.dead for p in self.players)
+        enemy_dead = sum(e.dead for e in self.enemies)
+        ally_count = len(self._allies)
+
+        squad_dmg = self._fmt_num(self.total_damage)
+        enemy_dmg = self._fmt_num(sum(e.damage for e in self.enemies))
+
+        summary = (
+            f"[Report] Squad: {len(self.players)}"
+            f" (Dmg: {squad_dmg}, Down/Dead: {self.total_downs}/{squad_dead})"
+        )
+        if ally_count > 0:
+            summary += f" +{ally_count} Allies"
+        summary += (
+            f" | Enemy: {len(self.enemies)}"
+            f" (Dmg: {enemy_dmg}, Down/Dead: {sum(e.down_count for e in self.enemies)}/{enemy_dead})"
+        )
+        return summary
+
     def get_map_icon(self) -> str:
         for map_key, icon_url in self.MAP_ICONS.items():
             if self.zone.startswith(map_key):

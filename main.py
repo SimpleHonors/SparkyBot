@@ -177,6 +177,7 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker, disco
         success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
 
         # AI analysis runs AFTER report is already posted
+        ai_text = None
         if config.enable_ai_analysis and config.ai_base_url and config.ai_model:
             try:
                 from core.ai_analyst import FightAnalyst
@@ -192,8 +193,7 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker, disco
                 if analysis:
                     # Truncate to last complete sentence within Discord's 4096-char description limit
                     if len(analysis) > 4096:
-                        truncated = analysis[:4093]  # leave room for "..."
-                        # Find the last sentence-ending punctuation
+                        truncated = analysis[:4093]
                         last_period = max(truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?'))
                         if last_period > 0:
                             analysis = truncated[:last_period + 1]
@@ -209,10 +209,27 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker, disco
                         },
                         "description": analysis[:4096],
                     }
-                    # Send AI analysis as a separate follow-up message (no icon attachment)
                     discord.send_to_all(embeds=[ai_embed])
+                    ai_text = analysis  # Save for Twitch
             except Exception as e:
                 logger.warning(f"AI analysis failed: {e}")
+
+        # Send to Twitch if configured (after Discord and AI are done)
+        if config.enable_twitch and config.twitch_token and config.twitch_channel:
+            try:
+                from core.twitch_bot import TwitchBot
+                twitch = TwitchBot(config.twitch_token, config.twitch_channel)
+                # Send Quick Report
+                quick_text = report.get_twitch_summary()
+                if quick_text:
+                    twitch.send_message(quick_text)
+                # Send AI commentary if available
+                if ai_text:
+                    bot_label = config.discord_webhook_label or "SparkyBot"
+                    twitch.send_message(f"[{bot_label}] Hot Take and Bad Advice! — {ai_text}")
+                twitch.close()
+            except Exception as e:
+                logger.warning(f"Twitch send failed: {e}")
 
         # success_count can be: 0 (all failed), 1+ (webhooks succeeded), or True (single, deprecated)
         if isinstance(success_count, bool):
