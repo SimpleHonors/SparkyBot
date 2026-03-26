@@ -1,8 +1,10 @@
 # SparkyBot
 
-**A Guild Wars 2 WvW fight log reporter for Discord and Twitch.**
+**A Guild Wars 2 WvW AI-Powered fight log reporter for Discord and Twitch.**
 
-SparkyBot monitors your ArcDPS combat log folder, automatically parses new WvW fight logs using [GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser), and posts rich, detailed fight reports to your Discord server or Twitch via webhooks — all without leaving the game.
+SparkyBot monitors your ArcDPS combat log folder, automatically parses new WvW fight logs using GW2 Elite Insights, and posts rich, detailed fight reports to your Discord server or Twitch — with optional AI-Powered fight analysis.  Python is required to run this application. 
+
+The AI-Analysis is a little unhinged and crazy at times.  It's just as likely to roast your squad performance as it is to compliment you.  I'm sure the prompting can still use some work, but you have the ability to edit and use your own prompts and AI LLM models as you wish.   If you have suggestions on how to improve or add features, lets talk!
 
 ---
 
