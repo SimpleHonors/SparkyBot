@@ -6,6 +6,11 @@ SparkyBot monitors your ArcDPS combat log folder, automatically parses new WvW f
 
 ---
 
+![Discord & Twitch Integration](https://github.com/user-attachments/assets/bdc56ce6-0fff-401c-b3f7-d00d3c34aea9)
+![Report Display Settings](https://github.com/user-attachments/assets/110f02ef-8fa0-40a9-b7a3-007eff019b1e)
+![SparkyBot Behavior Settings](https://github.com/user-attachments/assets/fff4b5c4-f879-42b5-b8b8-fa9a4866a158)
+![AI Powered Fight Analysis](https://github.com/user-attachments/assets/2d243ab1-7f1e-434d-9006-05b2710d330c)
+
 ## What It Does
 
 After a WvW fight ends and ArcDPS writes a log file, SparkyBot picks it up within seconds and delivers a full combat report to Discord and optionally Twitch including:
