@@ -300,9 +300,7 @@ class FightAnalyst:
             "  2. 'Rallybot': If it's a Loss/Draw and 'ally_count' is high, use this to insult the feeding PUGs.\n"
             "  3. 'Bags': If it's a Win, describe turning the enemy push into loot bags on the ground.\n"
             "  4. 'Police the Rosters': If we Win, mock the enemy for needing to kick bad players. If we Lose, tell our commander to kick the feeding PUGs.\n"
-            "  5. 'Mudda Fucka': Use to express extreme commander frustration during a bad loss.\n"
-            "  6. 'On Peen' or 'On Tag': Praise the squad for stacking tight when healing and cleanses are exceptionally high.\n"
-            "  7. 'Blob' or 'Zerg': Describe a massive, uncoordinated enemy group.\n"
+            "  5. 'Blob' or 'Zerg': Describe a massive, uncoordinated enemy group.\n"
             "- Once you have chosen your ONE term, ignore the rest of this list.\n\n"
 
             "RULES:\n"
