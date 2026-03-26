@@ -1,0 +1,49 @@
+---
+name: Unmapped Team ID
+description: Report an "Unmapped teamID" warning from SparkyBot
+title: "[Team ID] Unmapped teamID: "
+labels: ["team-id"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        SparkyBot sometimes encounters new WvW team IDs that aren't in the mapping table yet. If you see "Unmapped teamID" in the console output, please report it here so we can add it.
+
+  - type: input
+    id: team_id
+    attributes:
+      label: Team ID
+      description: The numeric team ID from the warning message
+      placeholder: "e.g., 1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: expected_color
+    attributes:
+      label: Expected Team Color
+      description: What color was your team in this matchup?
+      options:
+        - Red
+        - Blue
+        - Green
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: SparkyBot Version
+      placeholder: "e.g., 1.6.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log Output
+      description: Paste the relevant "Unmapped teamID" warning line
+      render: shell
+    validations:
+      required: false
