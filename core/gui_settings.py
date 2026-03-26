@@ -1049,6 +1049,7 @@ class SettingsWindow(QWidget):
 
             # Paths to protect during the update
             PROTECTED_PATHS = {'config.properties', 'GW2EI'}
+            SKIP_PATHS = {'.github', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', '.gitignore'}
 
             # Extract only files that are new or changed
             with zipfile.ZipFile(tmp_path, 'r') as zf:
@@ -1072,6 +1073,10 @@ class SettingsWindow(QWidget):
                     # Skip protected paths
                     top_level = relative_path.split('/')[0]
                     if top_level in PROTECTED_PATHS:
+                        continue
+
+                    # Skip repo-only files (not needed on user machines)
+                    if top_level in SKIP_PATHS or member in SKIP_PATHS:
                         continue
 
                     target = app_dir / relative_path
