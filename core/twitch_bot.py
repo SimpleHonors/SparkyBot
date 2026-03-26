@@ -10,16 +10,28 @@ logger = logging.getLogger(__name__)
 class TwitchBot:
     """Sends messages to a Twitch chat channel via IRC."""
 
-    def __init__(self, token: str, channel: str):
+    def __init__(self, token: str, channel: str, use_tls: bool = True):
         self.token = token if token.startswith("oauth:") else f"oauth:{token}"
         self.channel = channel.lower().lstrip("#")
+        self.use_tls = use_tls
         self._sock = None
 
     def _connect(self):
         """Connect to Twitch IRC."""
-        self._sock = socket.socket()
-        self._sock.settimeout(10)
-        self._sock.connect(("irc.chat.twitch.tv", 6667))
+        if self.use_tls:
+            import ssl
+            raw_sock = socket.socket()
+            raw_sock.settimeout(10)
+            context = ssl.create_default_context()
+            self._sock = context.wrap_socket(raw_sock, server_hostname="irc.chat.twitch.tv")
+            self._sock.connect(("irc.chat.twitch.tv", 6697))
+            logger.info("Twitch IRC connected via TLS (port 6697)")
+        else:
+            self._sock = socket.socket()
+            self._sock.settimeout(10)
+            self._sock.connect(("irc.chat.twitch.tv", 6667))
+            logger.warning("Twitch IRC connected via plaintext (port 6667) — OAuth token is NOT encrypted")
+
         self._sock.send(f"PASS {self.token}\r\n".encode("utf-8"))
         self._sock.send(f"NICK sparkybot\r\n".encode("utf-8"))
         self._sock.send(f"JOIN #{self.channel}\r\n".encode("utf-8"))

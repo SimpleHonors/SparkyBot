@@ -71,6 +71,7 @@ class Config:
             'enableTwitchBot': 'false',
             'twitchChannelName': '',
             'twitchBotToken': '',
+            'twitchUseTLS': 'true',
         }
     }
 
@@ -178,6 +179,7 @@ class Config:
         self.enable_twitch = self._config.getboolean('Twitch', 'enableTwitchBot')
         self.twitch_channel = self._config.get('Twitch', 'twitchChannelName')
         self.twitch_token = self._config.get('Twitch', 'twitchBotToken')
+        self.twitch_use_tls = self._config.getboolean('Twitch', 'twitchUseTLS', fallback=True)
 
     def get_thumbnail_path(self):
         if not self.guild_icon:

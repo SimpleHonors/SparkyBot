@@ -218,7 +218,7 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker, disco
         if config.enable_twitch and config.twitch_token and config.twitch_channel:
             try:
                 from core.twitch_bot import TwitchBot
-                twitch = TwitchBot(config.twitch_token, config.twitch_channel)
+                twitch = TwitchBot(config.twitch_token, config.twitch_channel, use_tls=config.twitch_use_tls)
                 # Send Quick Report
                 quick_text = report.get_twitch_summary()
                 if quick_text:

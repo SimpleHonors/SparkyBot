@@ -201,6 +201,21 @@ class SettingsWindow(QWidget):
         self.twitch_token.setToolTip("OAuth token for the Twitch bot account.")
         twitch_layout.addRow("Bot Token:", self.twitch_token)
 
+        self.twitch_use_tls = QCheckBox("Use secure connection (TLS)")
+        self.twitch_use_tls.setChecked(True)
+        self.twitch_use_tls.setToolTip(
+            "Encrypts your OAuth token in transit. Disable only if you have connection issues."
+        )
+        twitch_layout.addRow("", self.twitch_use_tls)
+
+        twitch_tls_note = QLabel(
+            "⚠ Disabling TLS sends your OAuth token in plaintext over port 6667. "
+            "Only disable this if TLS connections fail due to firewall or network restrictions."
+        )
+        twitch_tls_note.setWordWrap(True)
+        twitch_tls_note.setStyleSheet("font-size: 10px; color: #888; padding-left: 4px;")
+        twitch_layout.addRow("", twitch_tls_note)
+
         twitch_help = QLabel(
             'Get a token at <a href="https://twitchtokengenerator.com" style="color: #5bc0de;">twitchtokengenerator.com</a>'
         )
@@ -254,7 +269,7 @@ class SettingsWindow(QWidget):
         def _test():
             try:
                 from core.twitch_bot import TwitchBot
-                bot = TwitchBot(token, channel)
+                bot = TwitchBot(token, channel, use_tls=self.twitch_use_tls.isChecked())
                 bot.send_message("SparkyBot Twitch connection test — if you see this, it works!")
                 bot.close()
                 self.twitch_test_status.setText("✓ Message sent successfully!")
@@ -1356,6 +1371,7 @@ class SettingsWindow(QWidget):
         self.enable_twitch.setChecked(self.config.enable_twitch)
         self.twitch_channel.setText(self.config.twitch_channel)
         self.twitch_token.setText(self.config.twitch_token)
+        self.twitch_use_tls.setChecked(self.config.twitch_use_tls)
 
     def _on_save_clicked(self):
         """Save settings from UI to config"""
@@ -1426,6 +1442,7 @@ class SettingsWindow(QWidget):
         cfg('Twitch', 'enableTwitchBot', str(self.enable_twitch.isChecked()).lower())
         cfg('Twitch', 'twitchChannelName', self.twitch_channel.text().strip())
         cfg('Twitch', 'twitchBotToken', self.twitch_token.text().strip())
+        cfg('Twitch', 'twitchUseTLS', str(self.twitch_use_tls.isChecked()).lower())
 
         # Write to file and reload attributes
         if self.config.save():

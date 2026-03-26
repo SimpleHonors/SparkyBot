@@ -8,6 +8,7 @@ implements the /v1/chat/completions endpoint.
 import json
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 import requests
@@ -179,40 +180,40 @@ class FightAnalyst:
                 json.dump(debug_data, f, indent=2, ensure_ascii=False)
             logger.info(f"[DEBUG] AI prompt saved to {debug_file}")
 
-        try:
-            logger.info(f"Requesting AI analysis from {self.base_url} using {model_name}")
-            response = requests.post(
-                endpoint,
-                headers=headers,
-                json=payload,
-                timeout=timeout,
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                choice = data.get("choices", [{}])[0]
-                finish_reason = choice.get("finish_reason")
-                if finish_reason == "length":
-                    logger.warning(f"AI response was truncated due to max_tokens limit ({self.max_tokens})")
-                content = (
-                    data.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(f"Requesting AI analysis from {self.base_url} using {model_name}"
+                             + (f" (retry {attempt})" if attempt > 0 else ""))
+                response = requests.post(
+                    endpoint,
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
                 )
-                if content:
-                    import re
 
-                    # Remove everything between <think> and </think> (including tags)
+                if response.status_code == 200:
+                    data = response.json()
+                    choice = data.get('choices', [{}])[0]
+                    finish_reason = choice.get('finish_reason')
+                    if finish_reason == 'length':
+                        logger.warning(f"AI response was truncated due to max_tokens limit ({self.max_tokens})")
+                    content = (
+                        data.get('choices', [{}])[0]
+                        .get('message', {})
+                        .get('content', '')
+                    )
+
                     stripped = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
 
                     # Also handle unclosed <think> tag (model ran out of tokens mid-thought)
                     stripped = re.sub(r'<think>.*', '', stripped, flags=re.DOTALL).strip()
 
-                    # Clean up any remaining stray </think> tags
-                    stripped = re.sub(r'</think>', '', stripped).strip()
+                    # Clean up any remaining stray close-think tags
+                    stripped = re.sub(r'</?think>', '', stripped).strip()
 
                     if stripped:
-                        logger.info("AI analysis generated successfully")
+                        logger.info('AI analysis generated successfully')
                         return stripped
 
                     # FALLBACK: everything was inside think tags
@@ -225,24 +226,35 @@ class FightAnalyst:
                         elif sentences:
                             return '. '.join(sentences) + '.'
 
-                    logger.warning("AI response was empty after stripping think tags")
+                    logger.warning('AI response was empty after stripping think tags')
                     return None
+                elif response.status_code >= 500 and attempt < max_retries:
+                    logger.warning(f"AI API returned {response.status_code}, retrying in 3s...")
+                    time.sleep(3)
+                    continue
                 else:
-                    logger.warning("AI response was empty")
+                    logger.error(f"AI API error: {response.status_code} - {response.text[:300]}")
                     return None
-            else:
-                logger.error(f"AI API error: {response.status_code} - {response.text[:300]}")
-                return None
 
-        except requests.Timeout:
-            logger.error(f"AI API timed out after {timeout}s")
-            return None
-        except requests.ConnectionError:
-            logger.error(f"AI API connection failed — is {self.base_url} reachable?")
-            return None
-        except Exception as e:
-            logger.error(f"AI analysis failed: {e}")
-            return None
+            except requests.Timeout:
+                if attempt < max_retries:
+                    logger.warning(f"AI API timed out after {timeout}s, retrying in 3s... (attempt {attempt + 1}/{max_retries + 1})")
+                    time.sleep(3)
+                    continue
+                else:
+                    logger.error(f"AI API timed out after {timeout}s — all retries exhausted")
+                    return None
+            except requests.ConnectionError:
+                if attempt < max_retries:
+                    logger.warning(f"AI API connection failed, retrying in 3s...")
+                    time.sleep(3)
+                    continue
+                else:
+                    logger.error(f"AI API connection failed — is {self.base_url} reachable?")
+                    return None
+            except Exception as e:
+                logger.error(f"AI analysis failed: {e}")
+                return None
 
     @staticmethod
     def _default_system_prompt() -> str:
