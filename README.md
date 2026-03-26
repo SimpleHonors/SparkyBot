@@ -1,8 +1,8 @@
 # SparkyBot
 
-**A Guild Wars 2 WvW fight log reporter for Discord.**
+**A Guild Wars 2 WvW fight log reporter for Discord and Twitch.**
 
-SparkyBot monitors your ArcDPS combat log folder, automatically parses new WvW fight logs using [GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser), and posts rich, detailed fight reports to your Discord server via webhooks — all without leaving the game.
+SparkyBot monitors your ArcDPS combat log folder, automatically parses new WvW fight logs using [GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser), and posts rich, detailed fight reports to your Discord server or Twitch via webhooks — all without leaving the game.
 
 ---
 
@@ -231,7 +231,6 @@ SparkyBot/
 │   ├── sbtray.png          # Icon source (PNG format)
 │   └── wvw_icon.png        # Default guild icon for Discord thumbnail
 ├── core/
-│   ├── __init__.py
 │   ├── version.py          # Single source of truth for version number
 │   ├── config.py           # Configuration management
 │   ├── file_watcher.py     # File monitoring (native + polling fallback)
@@ -338,3 +337,5 @@ SOFTWARE.
 ---
 
 *SparkyBot is not affiliated with or endorsed by ArenaNet, NCSOFT, or any of their partners. Guild Wars 2 and all associated logos and designs are trademarks or registered trademarks of NCSOFT Corporation. All third-party trademarks are the property of their respective owners.*
+
+**Full Changelog**: https://github.com/SimpleHonors/SparkyBot/compare/v1.5.2...v1.6
