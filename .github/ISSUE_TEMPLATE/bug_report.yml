@@ -1,0 +1,106 @@
+---
+name: Bug Report
+description: Something isn't working correctly
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the sections below so we can reproduce and fix the issue.
+
+  - type: input
+    id: version
+    attributes:
+      label: SparkyBot Version
+      description: Check Settings → About tab for your version number
+      placeholder: "e.g., 1.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: ei_version
+    attributes:
+      label: Elite Insights Version
+      description: Check Settings → Updates tab
+      placeholder: "e.g., 3.20.0.0"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: What area is affected?
+      options:
+        - File Watcher (log detection)
+        - GW2EI Parsing
+        - Discord Reports
+        - Twitch Integration
+        - AI Commentary
+        - Auto-Updater
+        - GUI / Settings
+        - Process Files Tab
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug
+      placeholder: Tell us what went wrong
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Tell us what you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Open SparkyBot
+        2. Go to '...'
+        3. Click on '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log Output
+      description: |
+        Run SparkyBot with `--verbose` and paste relevant log lines here.
+        **Remove any API keys, webhook URLs, or tokens before pasting.**
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: log_source
+    attributes:
+      label: Where are your log files stored?
+      description: This helps us understand if network share issues are involved
+      options:
+        - Local drive (C:\, D:\, etc.)
+        - Network share (\\server\, Z:\, etc.)
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Screenshots, config details, or anything else that might help
+    validations:
+      required: false
