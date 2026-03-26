@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/SimpleHonors/SparkyBot/security/advisories/new
+    about: Report security vulnerabilities privately — do NOT open a public issue
+  - name: GW2 Elite Insights Issue
+    url: https://github.com/baaron4/GW2-Elite-Insights-Parser/issues
+    about: For GW2EI parsing bugs or crashes, report directly to the Elite Insights project
+  - name: ArcDPS Issue
+    url: https://www.deltaconnected.com/arcdps/
+    about: For ArcDPS addon issues, visit deltaconnected.com
