@@ -155,8 +155,8 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
             return ProcessResult.ERROR_DISCORD
 
         display_config = {
-            'showSquadSummary': config.show_damage,
-            'showEnemySummary': config.show_defense,
+            'showSquadSummary': True,
+            'showEnemySummary': True,
             'showDamage': config.show_damage,
             'showBurstDmg': config.show_burst_dmg,
             'showStrips': config.show_strips,
@@ -230,11 +230,11 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                         except Exception as tts_err:
                             logger.warning(f"TTS audio generation failed: {tts_err}")
 
-                    # Send AI embed to Discord, with audio attached if requested
-                    if config.tts_discord_attach and audio_bytes:
-                        discord.send_ai_commentary(ai_embed, audio_bytes=audio_bytes)
-                    else:
-                        discord.send_to_all(embeds=[ai_embed])
+                    # Send AI embed to Discord — audio posted separately so the player renders below the embed
+                    discord.send_to_all(
+                        embeds=[ai_embed],
+                        audio_bytes=audio_bytes if config.tts_discord_attach else None,
+                    )
 
                     ai_text = analysis  # Save for Twitch
 

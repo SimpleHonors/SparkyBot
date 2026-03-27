@@ -1,14 +1,5 @@
 # Security Policy
 
-## Supported Versions
-
-| Version | Supported          |
-|---------|--------------------|
-| 1.6.1   | ✅ Current release  |
-| 1.6.0   | ⚠️ Critical fixes only |
-| 1.5.x   | ⚠️ Critical fixes only |
-| < 1.5   | ❌ No longer supported |
-
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in SparkyBot, please report it responsibly.
@@ -59,6 +50,7 @@ SparkyBot stores the following sensitive data in `config.properties` (plaintext)
 - Discord webhook URLs
 - Twitch OAuth token
 - AI provider API key
+- ElevenLabs API key (if TTS enabled with ElevenLabs provider)
 
 Users should protect this file with appropriate filesystem permissions. SparkyBot does not transmit these credentials to any server other than their intended destination (Discord API, Twitch IRC, configured AI provider).
 
@@ -68,9 +60,11 @@ SparkyBot communicates with the following external services:
 
 | Service | Purpose | Protocol |
 |---------|---------|----------|
-| Discord API (`discord.com`) | Posting fight reports | HTTPS |
+| Discord API (`discord.com`) | Posting fight reports and audio | HTTPS |
 | Twitch IRC (`irc.chat.twitch.tv`) | Posting chat messages | TLS (port 6697, default) or plaintext (port 6667, optional) |
 | AI Provider (user-configured) | Fight commentary | HTTPS |
+| ElevenLabs API (`api.elevenlabs.io`) | TTS voice generation (optional) | HTTPS |
+| Microsoft Edge TTS (`speech.platform.bing.com`) | TTS voice generation (optional) | WebSocket (TLS) |
 | GitHub API (`api.github.com`) | Update checks | HTTPS |
 | GitHub Releases (`github.com`) | Downloading updates | HTTPS |
 
@@ -78,4 +72,4 @@ Note: Twitch IRC defaults to TLS on port 6697, encrypting the OAuth token in tra
 
 ### Auto-Updater
 
-The self-updater downloads release zips from GitHub over HTTPS. Downloads are validated by checking that the zip contains expected files before extraction. The updater only overwrites files that differ in content from the zip (verified by hash), and protects `config.properties` and the `GW2EI/` directory from modification.
+The self-updater downloads release zips from GitHub over HTTPS. Downloads are not cryptographically verified beyond the HTTPS transport layer. The updater protects `config.properties` and the `GW2EI/` directory during updates

@@ -91,55 +91,35 @@ class DiscordBot:
             logger.error(f"Failed to send file: {e}")
             return False
 
-    def send_with_audio(self, embeds: list, audio_bytes: bytes,
-                        audio_filename: str = "commentary.mp3",
-                        icon_path: str = None) -> bool:
-        """Send embeds with an MP3 audio attachment in the same message.
+    def send_audio(self, audio_bytes: bytes,
+                   audio_filename: str = "commentary.mp3") -> bool:
+        """Send an audio file as a standalone message (no embeds).
 
-        On Discord desktop the audio renders as an inline player directly
-        beneath the embed. On mobile it renders as a downloadable attachment.
+        Intended to be posted immediately after the AI commentary embed
+        so the audio player renders below it in Discord.
         """
         if not self.webhook_url:
             logger.warning("No Discord webhook configured")
             return False
 
-        payload: dict = {"embeds": embeds}
-
-        # Build attachments metadata list — index 0 is always the audio.
-        # If an icon is also being sent it gets a separate files[N] slot.
-        attachment_id = 0
-        attachments_meta = [{"id": str(attachment_id), "filename": audio_filename}]
-        files: dict = {}
-        files["files[0]"] = (audio_filename, io.BytesIO(audio_bytes), "audio/mpeg")
-
-        if icon_path and Path(icon_path).exists():
-            icon_p = Path(icon_path)
-            attachment_id += 1
-            attachments_meta.append({
-                "id": str(attachment_id),
-                "filename": icon_p.name,
-            })
-            # Read icon bytes now so we can keep the file handle open safely
-            icon_bytes = icon_p.read_bytes()
-            files[f"files[{attachment_id}]"] = (icon_p.name, io.BytesIO(icon_bytes), "image/png")
-
-        payload["attachments"] = attachments_meta
-        files["payload_json"] = (None, json.dumps(payload), "application/json")
+        files = {
+            "file": (audio_filename, io.BytesIO(audio_bytes), "audio/mpeg"),
+        }
 
         try:
             response = requests.post(
                 self.webhook_url,
                 files=files,
-                timeout=self.timeout + 15,  # audio upload needs more headroom
+                timeout=self.timeout + 15,
             )
             if response.status_code in (200, 204):
-                logger.info(f"Discord message with audio sent successfully ({len(audio_bytes):,} bytes)")
+                logger.info(f"Discord audio sent successfully ({len(audio_bytes):,} bytes)")
                 return True
             else:
                 logger.error(f"Discord audio send error: {response.status_code} - {response.text[:300]}")
                 return False
         except requests.RequestException as e:
-            logger.error(f"Failed to send Discord message with audio: {e}")
+            logger.error(f"Failed to send Discord audio: {e}")
             return False
 
 
@@ -174,8 +154,15 @@ class DiscordWebhookManager:
             return self.config.discord_webhook3
         return ""
 
-    def send_to_all(self, message: str = "", embeds=None, icon_path=None) -> int:
-        """Send embeds batched to stay under Discord's 6000 char total limit per POST."""
+    def send_to_all(self, message: str = "", embeds=None, icon_path=None,
+                    audio_bytes: bytes = None, audio_filename: str = "sparkybot-commentary.mp3") -> int:
+        """Send embeds batched to stay under Discord's 6000 char total limit per POST.
+
+        When audio_bytes is provided, the AI commentary embed is sent first
+        via a normal embed POST, then the audio file is sent as a separate
+        follow-up message so the player renders below the embed in Discord.
+        The guild icon is attached only to the first stats batch.
+        """
         webhook_urls = [self._get_webhook_url(self.config.active_discord_webhook)]
         if not webhook_urls:
             return 0
@@ -220,14 +207,28 @@ class DiscordWebhookManager:
 
             bot = DiscordBot(webhook_url)
             batch_success = True
+            last_batch_idx = len(batches) - 1
 
             for i, batch in enumerate(batches):
                 if i > 0:
                     time.sleep(0.5)
+
                 chunk_icon = icon_path if i == 0 else None
+
+                # Send the embed batch normally
                 if not bot.send_message(message if i == 0 else "", batch, icon_path=chunk_icon):
                     batch_success = False
                     break
+
+                # After the last batch, send audio as a separate message
+                # so the player renders below the AI commentary embed.
+                if audio_bytes and i == last_batch_idx:
+                    time.sleep(1.0)
+                    if not bot.send_audio(
+                            audio_bytes=audio_bytes,
+                            audio_filename=audio_filename):
+                        batch_success = False
+                        break
 
             if batch_success:
                 success_count += 1
@@ -235,27 +236,3 @@ class DiscordWebhookManager:
             time.sleep(0.5)
 
         return success_count
-
-    def send_ai_commentary(self, embed: dict, audio_bytes: bytes = None,
-                           icon_path: str = None) -> int:
-        """Send the AI commentary embed, optionally with an audio attachment.
-
-        Returns count of webhooks that succeeded.
-        """
-        webhook_url = self._get_webhook_url(self.config.active_discord_webhook)
-        if not webhook_url:
-            return 0
-
-        bot = DiscordBot(webhook_url)
-
-        if audio_bytes:
-            success = bot.send_with_audio(
-                embeds=[embed],
-                audio_bytes=audio_bytes,
-                audio_filename="sparkybot-commentary.mp3",
-                icon_path=icon_path,
-            )
-        else:
-            success = bot.send_message(embeds=[embed])
-
-        return 1 if success else 0

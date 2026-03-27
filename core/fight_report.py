@@ -486,11 +486,11 @@ class FightReport:
         return self._fmt_table(lines) if len(lines) > 1 else "No enemy data"
 
     def get_damage(self) -> str:
-        """Top 10 damage dealers with profession, DPS and downed contribution."""
+        """Top 5 damage dealers with profession, DPS and downed contribution."""
         if not self.players:
             return ""
 
-        sorted_players = sorted(self.players, key=lambda p: p.damage, reverse=True)[:10]
+        sorted_players = sorted(self.players, key=lambda p: p.damage, reverse=True)[:5]
         lines = [
             f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Dmg':>6} {'DPS':>5} {'DownC':>5}",
         ]
@@ -588,7 +588,7 @@ class FightReport:
         top = sorted(
             [w for w in all_windows if w.dmg_4s > 0],
             key=lambda w: w.dmg_4s, reverse=True
-        )[:10]
+        )[:5]
 
         if not top:
             return ""
@@ -613,7 +613,7 @@ class FightReport:
         if not strippers:
             return ""
 
-        sorted_s = sorted(strippers, key=lambda p: p.boon_strips, reverse=True)[:10]
+        sorted_s = sorted(strippers, key=lambda p: p.boon_strips, reverse=True)[:5]
 
         lines = [
             f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Total':>5}  {'SPS':>4}",
@@ -633,7 +633,7 @@ class FightReport:
         if not cleansers:
             return ""
 
-        sorted_c = sorted(cleansers, key=lambda p: p.cleanse, reverse=True)[:10]
+        sorted_c = sorted(cleansers, key=lambda p: p.cleanse, reverse=True)[:5]
 
         lines = [
             f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Total':>5}  {'CPS':>4}",
@@ -650,7 +650,7 @@ class FightReport:
     def get_healers(self) -> str:
         sections = []
 
-        # Table 1: Heals
+        # Heals
         healers = sorted([p for p in self.players if p.healing > 0],
                          key=lambda p: p.healing, reverse=True)[:5]
         if healers:
@@ -665,36 +665,6 @@ class FightReport:
                 )
             sections.append(self._fmt_table(lines))
 
-        # Table 2: Barrier
-        barriers = sorted([p for p in self.players if p.barrier > 0],
-                         key=lambda p: p.barrier, reverse=True)[:5]
-        if barriers:
-            lines = [
-                f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Barrier':>7}  {'BPS':>5}",
-            ]
-            for i, p in enumerate(barriers, 1):
-                bps = p.barrier / self.total_seconds if self.total_seconds else 0
-                lines.append(
-                    f"{i:>2}  {p.name[:self.NAME_WIDTH]:<{self.NAME_WIDTH}} {p.profession[:4].upper():<4} "
-                    f"{self._fmt_num(p.barrier):>7}  {self._fmt_num(int(bps)):>5}"
-                )
-            sections.append(self._fmt_table(lines))
-
-        # Table 3: Downed Heals
-        downed = sorted([p for p in self.players if p.downed_healing > 0],
-                        key=lambda p: p.downed_healing, reverse=True)[:5]
-        if downed:
-            lines = [
-                f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'D-Heals':>7}  {'HPS':>5}",
-            ]
-            for i, p in enumerate(downed, 1):
-                hps = p.downed_healing / self.total_seconds if self.total_seconds else 0
-                lines.append(
-                    f"{i:>2}  {p.name[:self.NAME_WIDTH]:<{self.NAME_WIDTH}} {p.profession[:4].upper():<4} "
-                    f"{self._fmt_num(p.downed_healing):>7}  {self._fmt_num(int(hps)):>5}"
-                )
-            sections.append(self._fmt_table(lines))
-
         return (self.LF + self.LF).join(sections)
 
     def get_defense(self) -> str:
@@ -704,7 +674,7 @@ class FightReport:
 
         sorted_p = sorted(
             self.players, key=lambda p: p.dead + p.down_count, reverse=True
-        )[:10]
+        )[:5]
 
         lines = [
             f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Invuln':>6} {'Evade':>5} {'Block':>5}",
@@ -750,7 +720,7 @@ class FightReport:
         lines = [
             f" # {' '.join(f'{s:>5}' for s in short_names)}",
         ]
-        for group_id in sorted(groups.keys()):
+        for group_id in sorted(groups.keys())[:5]:
             count = group_counts.get(group_id, 0)
             if count == 0:
                 continue
@@ -772,7 +742,7 @@ class FightReport:
         if not ccs:
             return ""
 
-        sorted_c = sorted(ccs, key=lambda p: p.outgoing_cc + p.interrupts, reverse=True)[:10]
+        sorted_c = sorted(ccs, key=lambda p: p.outgoing_cc + p.interrupts, reverse=True)[:5]
 
         lines = [
             f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Hard':>4} {'Soft':>4} {'Immob':>5} {'Int':>3}",
@@ -790,7 +760,7 @@ class FightReport:
         if not self.players:
             return ""
 
-        sorted_p = sorted(self.players, key=lambda p: p.downs + p.kills, reverse=True)[:10]
+        sorted_p = sorted(self.players, key=lambda p: p.downs + p.kills, reverse=True)[:5]
 
         lines = [
             f" #  {'Player':<{self.NAME_WIDTH}} {'Prof':<4} {'Downs':>5} {'Kills':>5}",
@@ -826,7 +796,7 @@ class FightReport:
         if not skill_totals:
             return ""
 
-        top = sorted(skill_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+        top = sorted(skill_totals.items(), key=lambda x: x[1], reverse=True)[:5]
 
         lines = [
             f" #  {'Skill':<21} {'Dmg':>6}",
@@ -998,7 +968,7 @@ class FightReport:
             ('showBurstDmg', 'Burst Damage', self.get_bursters),
             ('showStrips', 'Strips', self.get_strips),
             ('showCleanses', 'Cleanses', self.get_cleanses),
-            ('showHeals', 'Heals & Barrier (heal addon required)', self.get_healers),
+            ('showHeals', 'Heals', self.get_healers),
             ('showDefense', 'Defense', self.get_defense),
             ('showCCs', 'Outgoing CCs & Interrupts', self.get_ccs),
             ('showDownsKills', 'Outgoing Downs & Kills', self.get_downs_kills),
