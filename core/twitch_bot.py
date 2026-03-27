@@ -23,6 +23,7 @@ class TwitchBot:
             raw_sock = socket.socket()
             raw_sock.settimeout(10)
             context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             self._sock = context.wrap_socket(raw_sock, server_hostname="irc.chat.twitch.tv")
             self._sock.connect(("irc.chat.twitch.tv", 6697))
             logger.info("Twitch IRC connected via TLS (port 6697)")

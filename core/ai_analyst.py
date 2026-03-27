@@ -12,6 +12,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 import requests
 from typing import Optional, Dict, Any
 
@@ -161,11 +162,12 @@ class FightAnalyst:
         }
 
         # MiniMax-specific: suppress chain-of-thought output
-        if "minimaxi" in self.base_url:
+        _parsed_host = urlparse(self.base_url).hostname or ""
+        if _parsed_host == "api.minimaxi.chat" or _parsed_host.endswith(".minimaxi.chat"):
             payload["think_enable"] = False
 
         # Gemini-specific: disable thinking to preserve tokens for output
-        if "googleapis.com" in self.base_url:
+        if _parsed_host == "generativelanguage.googleapis.com" or _parsed_host.endswith(".googleapis.com"):
             payload["reasoning_effort"] = "none"
 
         # Debug: dump full AI prompt if SPARKY_DEBUG_AI_PROMPT is set

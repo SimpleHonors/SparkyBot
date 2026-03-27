@@ -72,6 +72,21 @@ class Config:
             'twitchChannelName': '',
             'twitchBotToken': '',
             'twitchUseTLS': 'true',
+        },
+        'TTS': {
+            'enableTts': 'false',
+            'ttsProvider': 'edge',
+            'ttsEdgeVoice': 'en-GB-RyanNeural',
+            'ttsVolume': '80',
+            'ttsDiscordAttach': 'false',
+            'ttsElevenLabsApiKey': '',
+            'ttsElevenLabsVoiceId': 'JBFqnCBsd6RMkjVDRZzb',
+            'ttsElevenLabsModel': 'eleven_multilingual_v2',
+            'ttsElevenLabsStability': '0.35',
+            'ttsElevenLabsSimilarityBoost': '0.75',
+            'ttsElevenLabsStyle': '0.15',
+            'ttsElevenLabsSpeakerBoost': 'true',
+            'ttsElevenLabsSpeed': '1.0',
         }
     }
 
@@ -180,6 +195,31 @@ class Config:
         self.twitch_channel = self._config.get('Twitch', 'twitchChannelName')
         self.twitch_token = self._config.get('Twitch', 'twitchBotToken')
         self.twitch_use_tls = self._config.getboolean('Twitch', 'twitchUseTLS', fallback=True)
+
+        # TTS settings
+        self.tts_enabled = self._config.getboolean('TTS', 'enableTts')
+        self.tts_provider = self._config.get('TTS', 'ttsProvider')
+        self.tts_edge_voice = self._config.get('TTS', 'ttsEdgeVoice')
+        self.tts_volume = self._get_int('TTS', 'ttsVolume', 80)
+        self.tts_discord_attach = self._config.getboolean('TTS', 'ttsDiscordAttach')
+        self.tts_elevenlabs_api_key = self._config.get('TTS', 'ttsElevenLabsApiKey')
+        self.tts_elevenlabs_voice_id = self._config.get('TTS', 'ttsElevenLabsVoiceId')
+        self.tts_elevenlabs_model = self._config.get('TTS', 'ttsElevenLabsModel')
+        self.tts_elevenlabs_stability = float(
+            self._config.get('TTS', 'ttsElevenLabsStability', fallback='0.35')
+        )
+        self.tts_elevenlabs_similarity_boost = float(
+            self._config.get('TTS', 'ttsElevenLabsSimilarityBoost', fallback='0.75')
+        )
+        self.tts_elevenlabs_style = float(
+            self._config.get('TTS', 'ttsElevenLabsStyle', fallback='0.15')
+        )
+        self.tts_elevenlabs_speaker_boost = self._config.getboolean(
+            'TTS', 'ttsElevenLabsSpeakerBoost', fallback=True
+        )
+        self.tts_elevenlabs_speed = float(
+            self._config.get('TTS', 'ttsElevenLabsSpeed', fallback='1.0')
+        )
 
     def get_thumbnail_path(self):
         if not self.guild_icon:

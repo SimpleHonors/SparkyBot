@@ -6,7 +6,7 @@ import threading
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
-    QLabel, QLineEdit, QSpinBox, QCheckBox, QPushButton,
+    QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
     QGroupBox, QFormLayout, QScrollArea, QSizePolicy,
     QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog,
     QTextEdit, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem
@@ -85,6 +85,7 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._create_behavior_tab(), "Behavior")
         tabs.addTab(self._create_updates_tab(), "Updates")
         tabs.addTab(self._create_ai_tab(), "AI")
+        tabs.addTab(self._create_tts_tab(), "TTS")
         tabs.addTab(self._create_process_files_tab(), "Process Files")
         tabs.addTab(self._create_about_tab(), "About")
 
@@ -572,6 +573,294 @@ class SettingsWindow(QWidget):
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
+
+    def _create_tts_tab(self) -> QWidget:
+        """Create TTS (local audio playback + Discord attachment) tab"""
+        scroll = QScrollArea()
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # -- General --
+        general_group = QGroupBox("General")
+        general_form = QFormLayout(general_group)
+
+        self.enable_tts = QCheckBox("Play AI commentary through speakers")
+        self.enable_tts.setToolTip(
+            "Generates speech from the AI fight commentary after each fight "
+            "and plays it locally on this machine using the selected TTS provider."
+        )
+        general_form.addRow("", self.enable_tts)
+
+        self.tts_discord_attach = QCheckBox("Attach audio file to Discord post")
+        self.tts_discord_attach.setToolTip(
+            "Uploads the generated audio alongside the AI commentary embed.\n"
+            "On Discord desktop it renders as an inline audio player.\n"
+            "On Discord mobile it appears as a downloadable attachment (Discord limitation)."
+        )
+        general_form.addRow("", self.tts_discord_attach)
+
+        discord_attach_note = QLabel(
+            "⚠ Discord mobile does not support inline audio playback for file attachments."
+        )
+        discord_attach_note.setWordWrap(True)
+        discord_attach_note.setStyleSheet("font-size: 10px; color: #888; padding-left: 4px;")
+        general_form.addRow("", discord_attach_note)
+
+        self.tts_volume = QSpinBox()
+        self.tts_volume.setRange(0, 100)
+        self.tts_volume.setSuffix("%")
+        self.tts_volume.setValue(80)
+        self.tts_volume.setToolTip("Local playback volume (0 = muted, 100 = full).")
+        general_form.addRow("Volume:", self.tts_volume)
+
+        layout.addWidget(general_group)
+
+        # -- Provider --
+        provider_group = QGroupBox("Provider")
+        provider_form = QFormLayout(provider_group)
+
+        self.tts_provider = QComboBox()
+        self.tts_provider.addItems(["edge", "elevenlabs"])
+        self.tts_provider.setToolTip(
+            "edge: Microsoft neural voices via edge-tts (free, no API key, online)\n"
+            "elevenlabs: ElevenLabs API (highest quality, API key required)"
+        )
+        self.tts_provider.currentTextChanged.connect(self._on_tts_provider_changed)
+        provider_form.addRow("Provider:", self.tts_provider)
+
+        # edge voice row
+        self.tts_edge_voice = QComboBox()
+        self.tts_edge_voice.setEditable(True)
+        self.tts_edge_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.tts_edge_voice.setPlaceholderText("e.g. en-GB-RyanNeural")
+        self.tts_refresh_voices_btn = QPushButton("Refresh Voices")
+        self.tts_refresh_voices_btn.setFixedWidth(110)
+        self.tts_refresh_voices_btn.clicked.connect(self._refresh_tts_voices)
+        edge_row = QHBoxLayout()
+        edge_row.addWidget(self.tts_edge_voice, 1)
+        edge_row.addWidget(self.tts_refresh_voices_btn)
+        self.tts_edge_voice_label = QLabel("Edge Voice:")
+        provider_form.addRow(self.tts_edge_voice_label, edge_row)
+
+        # ElevenLabs fields
+        self.tts_el_api_key_label = QLabel("API Key:")
+        self.tts_elevenlabs_api_key = QLineEdit()
+        self.tts_elevenlabs_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tts_elevenlabs_api_key.setPlaceholderText("sk_...")
+        provider_form.addRow(self.tts_el_api_key_label, self.tts_elevenlabs_api_key)
+
+        self.tts_el_voice_id_label = QLabel("Voice ID:")
+        self.tts_elevenlabs_voice_id = QLineEdit()
+        self.tts_elevenlabs_voice_id.setPlaceholderText("JBFqnCBsd6RMkjVDRZzb  (George)")
+        self.tts_elevenlabs_voice_id.setToolTip(
+            "ElevenLabs voice ID. Browse voices at elevenlabs.io/app/voice-library."
+        )
+        provider_form.addRow(self.tts_el_voice_id_label, self.tts_elevenlabs_voice_id)
+
+        self.tts_el_model_label = QLabel("Model:")
+        self.tts_elevenlabs_model = QComboBox()
+        self.tts_elevenlabs_model.addItems([
+            "eleven_multilingual_v2",
+            "eleven_v3",
+            "eleven_turbo_v2_5",
+            "eleven_turbo_v2",
+            "eleven_monolingual_v1",
+        ])
+        self.tts_elevenlabs_model.setEditable(True)
+        provider_form.addRow(self.tts_el_model_label, self.tts_elevenlabs_model)
+
+        # Stability slider
+        self.tts_el_stability_label = QLabel("Stability:")
+        self.tts_el_stability = QSpinBox()
+        self.tts_el_stability.setRange(0, 100)
+        self.tts_el_stability.setSuffix("%")
+        self.tts_el_stability.setValue(35)
+        self.tts_el_stability.setToolTip(
+            "0% = widest emotional range (expressive, unpredictable)\n"
+            "100% = most consistent (monotone at extremes)\n"
+            "Recommended for SparkyBot's commentator voice: 30-40%"
+        )
+        provider_form.addRow(self.tts_el_stability_label, self.tts_el_stability)
+
+        # Similarity boost slider
+        self.tts_el_similarity_label = QLabel("Similarity:")
+        self.tts_el_similarity = QSpinBox()
+        self.tts_el_similarity.setRange(0, 100)
+        self.tts_el_similarity.setSuffix("%")
+        self.tts_el_similarity.setValue(75)
+        self.tts_el_similarity.setToolTip(
+            "How closely the output adheres to the original voice recording.\n"
+            "High values are cleaner but may reproduce recording artifacts.\n"
+            "Recommended: 70-80%"
+        )
+        provider_form.addRow(self.tts_el_similarity_label, self.tts_el_similarity)
+
+        # Style exaggeration slider
+        self.tts_el_style_label = QLabel("Style:")
+        self.tts_el_style = QSpinBox()
+        self.tts_el_style.setRange(0, 100)
+        self.tts_el_style.setSuffix("%")
+        self.tts_el_style.setValue(15)
+        self.tts_el_style.setToolTip(
+            "Amplifies the voice's characteristic style.\n"
+            "Non-zero values increase latency and reduce stability slightly.\n"
+            "Recommended: 10-20% for dramatic delivery, 0% for neutral."
+        )
+        provider_form.addRow(self.tts_el_style_label, self.tts_el_style)
+
+        # Speaker boost checkbox
+        self.tts_el_speaker_boost_label = QLabel("")
+        self.tts_el_speaker_boost = QCheckBox("Use Speaker Boost")
+        self.tts_el_speaker_boost.setChecked(True)
+        self.tts_el_speaker_boost.setToolTip(
+            "Boosts similarity to the original speaker at a minor latency cost.\n"
+            "Generally recommended to keep enabled."
+        )
+        provider_form.addRow(self.tts_el_speaker_boost_label, self.tts_el_speaker_boost)
+
+        self.tts_el_speed_label = QLabel("Speed:")
+        self.tts_el_speed = QDoubleSpinBox()
+        self.tts_el_speed.setRange(0.7, 1.2)
+        self.tts_el_speed.setSingleStep(0.05)
+        self.tts_el_speed.setDecimals(2)
+        self.tts_el_speed.setValue(1.0)
+        self.tts_el_speed.setToolTip(
+            "Speech rate multiplier. 1.0 = normal speed.\n"
+            "0.7 = slowest (30% slower), 1.2 = fastest (20% faster).\n"
+            "For fight commentary, 1.05–1.15 suits an energetic delivery."
+        )
+        provider_form.addRow(self.tts_el_speed_label, self.tts_el_speed)
+
+        layout.addWidget(provider_group)
+
+        # -- Test --
+        test_group = QGroupBox("Test")
+        test_form = QFormLayout(test_group)
+        self.tts_test_btn = QPushButton("Test TTS")
+        self.tts_test_btn.clicked.connect(self._test_tts)
+        self.tts_test_status = QLabel("")
+        self.tts_test_status.setWordWrap(True)
+        test_form.addRow("", self.tts_test_btn)
+        test_form.addRow("", self.tts_test_status)
+        layout.addWidget(test_group)
+
+        layout.addStretch()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+
+        self._on_tts_provider_changed(self.tts_provider.currentText())
+        return scroll
+
+    def _on_tts_provider_changed(self, provider: str):
+        is_edge = provider.lower() == "edge"
+        is_el = provider.lower() == "elevenlabs"
+        self.tts_edge_voice_label.setVisible(is_edge)
+        self.tts_edge_voice.setVisible(is_edge)
+        self.tts_refresh_voices_btn.setVisible(is_edge)
+        self.tts_el_api_key_label.setVisible(is_el)
+        self.tts_elevenlabs_api_key.setVisible(is_el)
+        self.tts_el_voice_id_label.setVisible(is_el)
+        self.tts_elevenlabs_voice_id.setVisible(is_el)
+        self.tts_el_model_label.setVisible(is_el)
+        self.tts_elevenlabs_model.setVisible(is_el)
+        self.tts_el_stability_label.setVisible(is_el)
+        self.tts_el_stability.setVisible(is_el)
+        self.tts_el_similarity_label.setVisible(is_el)
+        self.tts_el_similarity.setVisible(is_el)
+        self.tts_el_style_label.setVisible(is_el)
+        self.tts_el_style.setVisible(is_el)
+        self.tts_el_speaker_boost_label.setVisible(is_el)
+        self.tts_el_speaker_boost.setVisible(is_el)
+        self.tts_el_speed_label.setVisible(is_el)
+        self.tts_el_speed.setVisible(is_el)
+
+    def _refresh_tts_voices(self):
+        self.tts_refresh_voices_btn.setEnabled(False)
+        self.tts_refresh_voices_btn.setText("Fetching...")
+        self.tts_test_status.setText("")
+        import threading
+
+        def _fetch():
+            try:
+                import asyncio, edge_tts
+
+                async def _list():
+                    return await edge_tts.list_voices()
+
+                loop = asyncio.new_event_loop()
+                try:
+                    voices = loop.run_until_complete(_list())
+                finally:
+                    loop.close()
+
+                en_voices = sorted(
+                    [v["ShortName"] for v in voices if v["ShortName"].startswith("en-")]
+                )
+                all_voices = sorted([v["ShortName"] for v in voices])
+                ordered = en_voices + [v for v in all_voices if v not in en_voices]
+                current = self.tts_edge_voice.currentText().strip()
+                self.tts_edge_voice.blockSignals(True)
+                self.tts_edge_voice.clear()
+                self.tts_edge_voice.addItems(ordered)
+                if current and current in ordered:
+                    self.tts_edge_voice.setCurrentText(current)
+                elif current:
+                    self.tts_edge_voice.setEditText(current)
+                self.tts_edge_voice.blockSignals(False)
+                self.tts_test_status.setText(f"✓ {len(ordered)} voices loaded.")
+            except ImportError:
+                self.tts_test_status.setText("edge-tts is not installed.")
+            except Exception as e:
+                self.tts_test_status.setText(f"Failed to fetch voices: {e}")
+            finally:
+                self.tts_refresh_voices_btn.setEnabled(True)
+                self.tts_refresh_voices_btn.setText("Refresh Voices")
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _test_tts(self):
+        self.tts_test_btn.setEnabled(False)
+        self.tts_test_status.setText("Generating audio...")
+        import threading
+
+        def _run():
+            try:
+                from core.tts import generate_tts_bytes
+
+                class _Cfg:
+                    tts_provider = self.tts_provider.currentText()
+                    tts_edge_voice = self.tts_edge_voice.currentText().strip() or "en-GB-RyanNeural"
+                    tts_elevenlabs_api_key = self.tts_elevenlabs_api_key.text().strip()
+                    tts_elevenlabs_voice_id = self.tts_elevenlabs_voice_id.text().strip() or "JBFqnCBsd6RMkjVDRZzb"
+                    tts_elevenlabs_model = self.tts_elevenlabs_model.currentText().strip() or "eleven_multilingual_v2"
+                    tts_elevenlabs_stability = self.tts_el_stability.value() / 100.0
+                    tts_elevenlabs_similarity_boost = self.tts_el_similarity.value() / 100.0
+                    tts_elevenlabs_style = self.tts_el_style.value() / 100.0
+                    tts_elevenlabs_speaker_boost = self.tts_el_speaker_boost.isChecked()
+                    tts_elevenlabs_speed = self.tts_el_speed.value()
+
+                audio_bytes = generate_tts_bytes(
+                    "SparkyBot TTS is working. Let's get those bags.", _Cfg()
+                )
+                if not audio_bytes:
+                    self.tts_test_status.setText("✗ Audio generation failed — check logs.")
+                    return
+
+                client = getattr(self, '_tts_client', None)
+                if client is not None:
+                    client.update_volume(self.tts_volume.value())
+                    client.speak_from_bytes(audio_bytes)
+                    self.tts_test_status.setText("✓ Audio queued — check your speakers.")
+                else:
+                    self.tts_test_status.setText(
+                        "✓ Audio generated successfully. Save & restart to enable local playback."
+                    )
+            except Exception as e:
+                self.tts_test_status.setText(f"Test failed: {e}")
+            finally:
+                self.tts_test_btn.setEnabled(True)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _on_ai_provider_changed(self, provider_name: str):
         """Fill in base URL and model from preset, then refresh model list."""
@@ -1378,6 +1667,22 @@ class SettingsWindow(QWidget):
         self.twitch_token.setText(self.config.twitch_token)
         self.twitch_use_tls.setChecked(self.config.twitch_use_tls)
 
+        # TTS
+        self.tts_provider.setCurrentText(self.config.tts_provider)
+        self.tts_edge_voice.setEditText(self.config.tts_edge_voice)
+        self.tts_volume.setValue(self.config.tts_volume)
+        self.enable_tts.setChecked(self.config.tts_enabled)
+        self.tts_discord_attach.setChecked(self.config.tts_discord_attach)
+        self.tts_elevenlabs_api_key.setText(self.config.tts_elevenlabs_api_key)
+        self.tts_elevenlabs_voice_id.setText(self.config.tts_elevenlabs_voice_id)
+        self.tts_elevenlabs_model.setCurrentText(self.config.tts_elevenlabs_model)
+        self.tts_el_stability.setValue(int(self.config.tts_elevenlabs_stability * 100))
+        self.tts_el_similarity.setValue(int(self.config.tts_elevenlabs_similarity_boost * 100))
+        self.tts_el_style.setValue(int(self.config.tts_elevenlabs_style * 100))
+        self.tts_el_speaker_boost.setChecked(self.config.tts_elevenlabs_speaker_boost)
+        self.tts_el_speed.setValue(self.config.tts_elevenlabs_speed)
+        self._on_tts_provider_changed(self.config.tts_provider)
+
     def _on_save_clicked(self):
         """Save settings from UI to config"""
         cfg = self.config.update
@@ -1448,6 +1753,21 @@ class SettingsWindow(QWidget):
         cfg('Twitch', 'twitchChannelName', self.twitch_channel.text().strip())
         cfg('Twitch', 'twitchBotToken', self.twitch_token.text().strip())
         cfg('Twitch', 'twitchUseTLS', str(self.twitch_use_tls.isChecked()).lower())
+
+        # TTS
+        cfg('TTS', 'enableTts', str(self.enable_tts.isChecked()).lower())
+        cfg('TTS', 'ttsProvider', self.tts_provider.currentText())
+        cfg('TTS', 'ttsEdgeVoice', self.tts_edge_voice.currentText().strip())
+        cfg('TTS', 'ttsVolume', str(self.tts_volume.value()))
+        cfg('TTS', 'ttsDiscordAttach', str(self.tts_discord_attach.isChecked()).lower())
+        cfg('TTS', 'ttsElevenLabsApiKey', self.tts_elevenlabs_api_key.text().strip())
+        cfg('TTS', 'ttsElevenLabsVoiceId', self.tts_elevenlabs_voice_id.text().strip())
+        cfg('TTS', 'ttsElevenLabsModel', self.tts_elevenlabs_model.currentText().strip())
+        cfg('TTS', 'ttsElevenLabsStability', str(self.tts_el_stability.value() / 100.0))
+        cfg('TTS', 'ttsElevenLabsSimilarityBoost', str(self.tts_el_similarity.value() / 100.0))
+        cfg('TTS', 'ttsElevenLabsStyle', str(self.tts_el_style.value() / 100.0))
+        cfg('TTS', 'ttsElevenLabsSpeakerBoost', str(self.tts_el_speaker_boost.isChecked()).lower())
+        cfg('TTS', 'ttsElevenLabsSpeed', str(self.tts_el_speed.value()))
 
         # Write to file and reload attributes
         if self.config.save():
