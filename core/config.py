@@ -66,6 +66,11 @@ class Config:
             'aiModel': '',
             'aiSystemPrompt': '',
             'aiMaxTokens': '350',
+            'aiPromptVersion': '0',
+            'aiVocabWeightShock': '33',
+            'aiVocabWeightPositive': '33',
+            'aiVocabWeightNegative': '33',
+            'aiVocabWeightGates': '33',
         },
         'Twitch': {
             'enableTwitchBot': 'false',
@@ -103,10 +108,14 @@ class Config:
         else:
             config_path = Path(config_path)
 
+        self.is_new_config = not config_path.exists()
+
         if config_path.exists():
             self._config.read(config_path)
         else:
-            self._create_default_config(config_path)
+            # Do NOT write to disk here. Just use in-memory defaults.
+            # The file will only be created when save() is explicitly called.
+            pass
 
         self._load_values()
 
@@ -189,6 +198,11 @@ class Config:
         self.ai_model = self._config.get('AI', 'aiModel')
         self.ai_system_prompt = self._config.get('AI', 'aiSystemPrompt')
         self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 350)
+        self.ai_prompt_version = self._get_int('AI', 'aiPromptVersion', 0)
+        self.ai_vocab_weight_shock = self._get_int('AI', 'aiVocabWeightShock', 33) / 100.0
+        self.ai_vocab_weight_positive = self._get_int('AI', 'aiVocabWeightPositive', 33) / 100.0
+        self.ai_vocab_weight_negative = self._get_int('AI', 'aiVocabWeightNegative', 33) / 100.0
+        self.ai_vocab_weight_gates = self._get_int('AI', 'aiVocabWeightGates', 33) / 100.0
 
         # Twitch settings
         self.enable_twitch = self._config.getboolean('Twitch', 'enableTwitchBot')

@@ -5,9 +5,10 @@ import sys
 import importlib.metadata
 from PyQt6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox, QProgressBar, QFrame
+    QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox,
+    QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout
 )
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot, Q_ARG, QMetaObject, QUrl
 from PyQt6.QtGui import QColor, QPalette, QIcon
 from pathlib import Path
 
@@ -17,7 +18,7 @@ class SetupWizard(QWizard):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("SparkyBot Setup")
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(700, 620)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
         # Set window icon to sbtray.ico
@@ -64,6 +65,14 @@ class SetupWizard(QWizard):
         self.addPage(GW2EIPage(config))
         self.addPage(LogFolderPage(config))
         self.addPage(DiscordPage(config))
+        self.twitch_page = TwitchPage(config)
+        self.ai_page = AIAnalysisPage(config)
+        self.tts_page = TTSVoicePage(config)
+        self.behavior_page = BehaviorPage(config)
+        self.addPage(self.twitch_page)
+        self.addPage(self.ai_page)
+        self.addPage(self.tts_page)
+        self.addPage(self.behavior_page)
         self.addPage(CompletePage())
 
     def accept(self):
@@ -78,6 +87,42 @@ class SetupWizard(QWizard):
         webhook = self.field("webhook")
         if webhook:
             cfg('Discord', 'discordWebhook', webhook)
+
+        # Twitch
+        if hasattr(self.twitch_page, 'enable_twitch'):
+            cfg('Twitch', 'enableTwitchBot', str(self.twitch_page.enable_twitch.isChecked()).lower())
+            cfg('Twitch', 'twitchChannelName', self.twitch_page.twitch_channel.text().strip())
+            cfg('Twitch', 'twitchBotToken', self.twitch_page.twitch_token.text().strip())
+            cfg('Twitch', 'twitchUseTLS', str(self.twitch_page.twitch_use_tls.isChecked()).lower())
+
+        # AI
+        if hasattr(self.ai_page, 'enable_ai'):
+            cfg('AI', 'enableAiAnalysis', str(self.ai_page.enable_ai.isChecked()))
+            cfg('AI', 'aiProvider', self.ai_page.ai_provider.currentText())
+            cfg('AI', 'aiBaseUrl', self.ai_page.ai_base_url.text().strip())
+            cfg('AI', 'aiApiKey', self.ai_page.ai_api_key.text().strip())
+            cfg('AI', 'aiModel', self.ai_page.ai_model.currentText().strip())
+
+        # TTS
+        if hasattr(self.tts_page, 'enable_tts'):
+            cfg('TTS', 'enableTts', str(self.tts_page.enable_tts.isChecked()).lower())
+            cfg('TTS', 'ttsDiscordAttach', str(self.tts_page.tts_discord_attach.isChecked()).lower())
+            cfg('TTS', 'ttsProvider', self.tts_page.tts_provider.currentText())
+            el_key = self.tts_page.tts_el_api_key.text().strip()
+            if el_key:
+                cfg('TTS', 'ttsElevenLabsApiKey', el_key)
+            el_voice = self.tts_page.tts_el_voice_id.text().strip()
+            if el_voice:
+                cfg('TTS', 'ttsElevenLabsVoiceId', el_voice)
+
+        # Behavior
+        if hasattr(self.behavior_page, 'start_watcher_on_startup'):
+            cfg('Behavior', 'startWatcherOnStartup', str(self.behavior_page.start_watcher_on_startup.isChecked()))
+            cfg('Behavior', 'startMinimized', str(self.behavior_page.start_minimized.isChecked()))
+            cfg('Behavior', 'closeToTray', str(self.behavior_page.close_to_tray.isChecked()))
+            cfg('Behavior', 'minimizeToTray', str(self.behavior_page.minimize_to_tray.isChecked()))
+            cfg('Behavior', 'checkUpdatesOnLaunch', str(self.behavior_page.check_updates_on_launch.isChecked()))
+
         self.config.save()
         super().accept()
 
@@ -245,7 +290,12 @@ class WelcomePage(QWizardPage):
             "<ul>"
             "<li>GuildWars2EliteInsights-CLI.exe (GW2EI parser)</li>"
             "<li>Your ArcDPS log folder path</li>"
-            "<li>A Discord webhook URL</li>"
+            "<li>A Discord webhook URL <b>or</b> a Twitch bot token (at least one required)</li>"
+            "</ul>"
+            "<p>Optional features configured in this wizard:</p>"
+            "<ul>"
+            "<li>AI-powered fight commentary</li>"
+            "<li>Text-to-speech / voice commentary</li>"
             "</ul>"
             "<p>Click <b>Next</b> to begin.</p>"
         )
@@ -705,6 +755,763 @@ class DiscordPage(QWizardPage):
         if not url:
             return True
         return True
+
+
+class TwitchPage(QWizardPage):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.setTitle("Twitch Integration (Optional)")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        desc = QLabel(
+            "SparkyBot can post fight summaries and AI commentary to your Twitch chat "
+            "in real time. This requires a Twitch OAuth token for a bot account."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addSpacing(6)
+
+        self.enable_twitch = QCheckBox("Enable Twitch Bot")
+        layout.addWidget(self.enable_twitch)
+
+        layout.addSpacing(8)
+
+        # Channel name
+        LABEL_WIDTH = 100
+
+        def _make_row(label_text, widget):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setFixedWidth(LABEL_WIDTH)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            return row
+
+        self.twitch_channel = QLineEdit()
+        self.twitch_channel.setPlaceholderText("your_channel_name")
+        layout.addLayout(_make_row("Channel Name:", self.twitch_channel))
+
+        # Bot token
+        self.twitch_token = QLineEdit()
+        self.twitch_token.setPlaceholderText("oauth:...")
+        self.twitch_token.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addLayout(_make_row("Bot Token:", self.twitch_token))
+
+        self.twitch_use_tls = QCheckBox("Use secure connection (TLS)")
+        self.twitch_use_tls.setChecked(True)
+        tls_row = QHBoxLayout()
+        tls_label = QLabel("")
+        tls_label.setFixedWidth(LABEL_WIDTH)
+        tls_row.addWidget(tls_label)
+        tls_row.addWidget(self.twitch_use_tls, 1, Qt.AlignmentFlag.AlignLeft)
+        layout.addLayout(tls_row)
+
+        layout.addSpacing(10)
+
+        # Help link
+        help_link = QLabel(
+            'Get a free token at <a href="https://twitchtokengenerator.com">twitchtokengenerator.com</a>'
+        )
+        help_link.setTextFormat(Qt.TextFormat.RichText)
+        help_link.setOpenExternalLinks(True)
+        layout.addWidget(help_link)
+
+        help_note = QLabel(
+            "Select 'Bot Chat Token' when generating. The token starts with oauth: "
+            "and gives SparkyBot permission to send messages to your channel."
+        )
+        help_note.setWordWrap(True)
+        help_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(help_note)
+
+        layout.addStretch()
+
+        layout.addSpacing(12)
+
+        self.skip_check = QCheckBox("Skip Twitch setup for now")
+        layout.addWidget(self.skip_check)
+
+        self.registerField("twitch_channel", self.twitch_channel)
+        self.registerField("twitch_token", self.twitch_token)
+
+        # Prefill from config
+        if config.twitch_channel:
+            self.twitch_channel.setText(config.twitch_channel)
+        if config.twitch_token:
+            self.twitch_token.setText(config.twitch_token)
+
+    def validatePage(self):
+        return True
+
+
+class AIAnalysisPage(QWizardPage):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.setTitle("AI Fight Commentary (Optional)")
+
+        # Scroll area wrapper for content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        desc = QLabel(
+            "SparkyBot can use an AI language model to generate entertaining fight commentary "
+            "after each battle. This works with cloud APIs (OpenAI, Google Gemini, Groq, and others) "
+            "or local models (Ollama, LM Studio)."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addSpacing(8)
+
+        # Quick Start subsection
+        quick_label = QLabel("<b>Quick Start (Recommended)</b>")
+        quick_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(quick_label)
+
+        quick_desc = QLabel(
+            "The easiest free option is Google Gemini. Create a free API key, select Gemini below, "
+            "paste the key, and you're done."
+        )
+        quick_desc.setWordWrap(True)
+        quick_desc.setStyleSheet("color: #aaa;")
+        layout.addWidget(quick_desc)
+
+        layout.addSpacing(8)
+
+        self.enable_ai = QCheckBox("Enable AI Fight Analysis")
+        layout.addWidget(self.enable_ai)
+
+        layout.addSpacing(6)
+
+        # Provider selection using manual label+field rows
+        LABEL_WIDTH = 100
+
+        from core.ai_analyst import PRESETS
+
+        def _make_row(label_text, widget):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setFixedWidth(LABEL_WIDTH)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            return row
+
+        self.ai_provider = QComboBox()
+        self.ai_provider.blockSignals(True)
+        self.ai_provider.addItems(list(PRESETS.keys()))
+        self.ai_provider.blockSignals(False)
+        self.ai_provider.currentTextChanged.connect(self._on_provider_changed)
+        layout.addLayout(_make_row("Provider:", self.ai_provider))
+
+        self.ai_base_url = QLineEdit()
+        self.ai_base_url.setPlaceholderText("https://api.example.com/v1")
+        layout.addLayout(_make_row("Base URL:", self.ai_base_url))
+
+        self.ai_api_key = QLineEdit()
+        self.ai_api_key.setPlaceholderText("sk-... (leave blank for local models)")
+        self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addLayout(_make_row("API Key:", self.ai_api_key))
+
+        self.ai_model = QComboBox()
+        self.ai_model.setEditable(True)
+        self.ai_model.setPlaceholderText("model name")
+        layout.addLayout(_make_row("Model:", self.ai_model))
+
+        layout.addSpacing(12)
+
+        # Model fetch status (compact hint)
+        self.model_status = QLabel("")
+        self.model_status.setStyleSheet("font-size: 10px; color: #888;")
+        layout.addWidget(self.model_status)
+
+        layout.addSpacing(8)
+
+        # Help links
+        links_label = QLabel()
+        links_label.setTextFormat(Qt.TextFormat.RichText)
+        links_label.setOpenExternalLinks(True)
+        links_label.setWordWrap(True)
+        links_label.setStyleSheet("font-size: 11px; color: #aaa;")
+        links_label.setText(
+            "Google Gemini (free tier): <a href='https://aistudio.google.com/apikey'>Get API Key</a><br>"
+            "OpenAI: <a href='https://platform.openai.com/api-keys'>Get API Key</a><br>"
+            "Groq (free tier): <a href='https://console.groq.com/keys'>Get API Key</a><br>"
+            "OpenRouter: <a href='https://openrouter.ai/keys'>Get API Key</a><br>"
+            "Ollama (local, free): <a href='https://ollama.com'>Download Ollama</a> — no API key needed"
+        )
+        layout.addWidget(links_label)
+
+        layout.addSpacing(10)
+
+        # Test Connection button
+        self.ai_test_btn = QPushButton("Test Connection")
+        self.ai_test_btn.setStyleSheet("""
+            QPushButton { background-color: #555; color: white; border-radius: 3px; padding: 6px 16px; }
+            QPushButton:pressed { background-color: #666; }
+            QPushButton:disabled { background-color: #444; color: #888; }
+        """)
+        self.ai_test_btn.clicked.connect(self._test_ai_connection)
+        self.ai_test_status = QLabel("")
+        self.ai_test_status.setWordWrap(True)
+        layout.addWidget(self.ai_test_btn)
+        layout.addWidget(self.ai_test_status)
+
+        layout.addStretch()
+
+        layout.addSpacing(12)
+
+        self.skip_check = QCheckBox("Skip AI setup for now")
+        layout.addWidget(self.skip_check)
+
+        scroll.setWidget(widget)
+
+        # Set the scroll area as the page's main layout
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+
+        self.registerField("ai_provider", self.ai_provider)
+        self.registerField("ai_base_url", self.ai_base_url)
+        self.registerField("ai_api_key", self.ai_api_key)
+        self.registerField("ai_model", self.ai_model)
+
+        # Fetch generation counter for discarding stale results
+        self._fetch_generation = 0
+
+        # Prefill from config — block signals to prevent triple-fire
+        self.ai_provider.blockSignals(True)
+
+        if config.ai_base_url:
+            self.ai_base_url.setText(config.ai_base_url)
+        if config.ai_api_key:
+            self.ai_api_key.setText(config.ai_api_key)
+        if config.ai_model:
+            self.ai_model.setEditText(config.ai_model)
+        if config.ai_provider and config.ai_provider in list(PRESETS.keys()):
+            self.ai_provider.setCurrentText(config.ai_provider)
+
+        self.ai_provider.blockSignals(False)
+
+        # Now fire once for the current provider
+        self._on_provider_changed(self.ai_provider.currentText())
+
+    def _on_provider_changed(self, provider_name: str):
+        from core.ai_analyst import PRESETS
+        preset = PRESETS.get(provider_name, {})
+
+        # Update base URL
+        if preset.get("base_url"):
+            self.ai_base_url.setText(preset["base_url"])
+        else:
+            self.ai_base_url.setText("")
+
+        # Save current user selection before clearing
+        previous_model = self.ai_model.currentText()
+
+        self.ai_model.clear()
+
+        preset_models = preset.get("models", [])
+        if preset_models:
+            self.ai_model.addItems(preset_models)
+
+        default_model = preset.get("default_model", "")
+        if default_model:
+            idx = self.ai_model.findText(default_model)
+            if idx >= 0:
+                self.ai_model.setCurrentIndex(idx)
+            else:
+                self.ai_model.setEditText(default_model)
+        elif previous_model:
+            self.ai_model.setEditText(previous_model)
+
+    def _fetch_models(self):
+        """Fetch available models from the configured API endpoint."""
+        base_url = self.ai_base_url.text().strip()
+        api_key = self.ai_api_key.text().strip()
+
+        if not base_url:
+            return
+
+        self.model_status.setText("Fetching models...")
+        generation = self._fetch_generation  # capture current generation
+
+        import threading
+        def _fetch():
+            from core.ai_analyst import FightAnalyst, PRESETS
+            models = FightAnalyst.fetch_models(base_url, api_key)
+            if not models:
+                provider = self.ai_provider.currentText()
+                preset = PRESETS.get(provider, {})
+                models = preset.get("models", [])
+
+            from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+            QMetaObject.invokeMethod(
+                self, "_apply_models",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(int, generation),
+                Q_ARG(list, models)
+            )
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    @pyqtSlot(int, list)
+    def _apply_models(self, generation: int, models: list):
+        """Apply fetched model list to the combo box."""
+        # Discard stale results from a previous provider selection
+        if generation != self._fetch_generation:
+            return
+
+        if not models:
+            self.model_status.setText("No models found — type a model name manually")
+            return
+
+        current = self.ai_model.currentText()
+        self.ai_model.clear()
+        self.ai_model.addItems(models)
+        idx = self.ai_model.findText(current)
+        if idx >= 0:
+            self.ai_model.setCurrentIndex(idx)
+        elif current:
+            self.ai_model.setEditText(current)
+        self.model_status.setText(f"Loaded {len(models)} models")
+
+    def _test_ai_connection(self):
+        base_url = self.ai_base_url.text().strip()
+        api_key = self.ai_api_key.text().strip()
+        model = self.ai_model.currentText().strip() if isinstance(self.ai_model, QComboBox) else self.ai_model.text().strip()
+
+        if not base_url or not model:
+            self.ai_test_status.setStyleSheet("color: #ffaa00;")
+            self.ai_test_status.setText("Enter a Base URL and Model first.")
+            return
+
+        self.ai_test_btn.setEnabled(False)
+        self.ai_test_status.setStyleSheet("color: #ffffff;")
+        self.ai_test_status.setText("Testing...")
+
+        import threading
+        def _run():
+            try:
+                from core.ai_analyst import FightAnalyst
+                analyst = FightAnalyst(
+                    base_url=base_url,
+                    api_key=api_key,
+                    model=model,
+                    max_tokens=350,
+                )
+                test_summary = {
+                    "zone": "Eternal Battlegrounds",
+                    "duration": "05m 30s",
+                    "duration_seconds": 330,
+                    "outcome": "Decisive Win",
+                    "friendly_count": 35,
+                    "enemy_count": 50,
+                    "squad_count": 35,
+                    "ally_count": 10,
+                    "enemy_deaths": 27,
+                    "squad_damage": 5000000,
+                    "squad_dps": 15000,
+                    "squad_downs": 40,
+                    "squad_kills": 27,
+                    "squad_deaths": 6,
+                    "squad_healing": 8000000,
+                    "squad_barrier": 0,
+                    "enemy_total_damage": 6000000,
+                    "squad_strips": 45,
+                    "top_strips": [{"name": "TestPlayer", "profession": "Guardian", "boon_strips": 15}],
+                    "squad_cleanses": 30,
+                    "top_damage": [{"name": "TestPlayer", "profession": "Guardian", "damage": 800000}],
+                    "enemy_breakdown": {
+                        "Guardian": {"count": 8, "damage_per_player": 75000},
+                        "Necromancer": {"count": 6, "damage_per_player": 82000},
+                    },
+                    "top_enemy_skills": [
+                        {"name": "Meteor Shower", "damage": 120000},
+                    ],
+                    "enemy_teams": {"Red": 30, "Blue": 20},
+                }
+                result = analyst.analyze(test_summary, timeout=15)
+
+                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                if result:
+                    preview = result[:150].replace('\n', ' ')
+                    QMetaObject.invokeMethod(self, "_set_ai_test_result", Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, f"Success! Response: {preview}..."), Q_ARG(str, "#4CAF50"))
+                else:
+                    QMetaObject.invokeMethod(self, "_set_ai_test_result", Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, "No response. Check URL, API key, and model name."), Q_ARG(str, "#ff4444"))
+            except Exception as e:
+                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(self, "_set_ai_test_result", Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, f"Error: {e}"), Q_ARG(str, "#ff4444"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    @pyqtSlot(str, str)
+    def _set_ai_test_result(self, text, color):
+        self.ai_test_status.setStyleSheet(f"color: {color};")
+        self.ai_test_status.setText(text)
+        self.ai_test_btn.setEnabled(True)
+
+    def validatePage(self):
+        return True
+
+
+class TTSVoicePage(QWizardPage):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.setTitle("Voice / Text-to-Speech (Optional)")
+
+        # Scroll area wrapper for content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        desc = QLabel(
+            "SparkyBot can read the AI fight commentary out loud using text-to-speech. "
+            "Audio can play locally through your speakers and/or be attached to the Discord post "
+            "as an inline audio player."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addSpacing(6)
+
+        self.enable_tts = QCheckBox("Play AI commentary through speakers")
+        layout.addWidget(self.enable_tts)
+
+        layout.addSpacing(6)
+
+        self.tts_discord_attach = QCheckBox("Attach audio to Discord post")
+        layout.addWidget(self.tts_discord_attach)
+
+        layout.addSpacing(8)
+
+        # Provider
+        LABEL_WIDTH = 100
+
+        def _make_row(label_text, widget):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setFixedWidth(LABEL_WIDTH)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            return row
+
+        self.tts_provider = QComboBox()
+        self.tts_provider.addItems(["edge", "elevenlabs"])
+        self.tts_provider.currentTextChanged.connect(self._on_provider_changed)
+        layout.addLayout(_make_row("Provider:", self.tts_provider))
+
+        provider_note = QLabel(
+            "Edge: Free Microsoft neural voices, no API key needed (recommended). "
+            "ElevenLabs: Premium quality voices, requires a paid API key."
+        )
+        provider_note.setWordWrap(True)
+        provider_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(provider_note)
+
+        layout.addSpacing(8)
+
+        # ElevenLabs fields (visible only when elevenlabs selected)
+        self.el_fields_widget = QFrame()
+
+        def _make_el_row(label_text, widget):
+            row = QHBoxLayout()
+            label = QLabel(label_text)
+            label.setFixedWidth(LABEL_WIDTH)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            return row
+
+        el_layout = QVBoxLayout(self.el_fields_widget)
+        el_layout.setSpacing(8)
+
+        self.tts_el_api_key = QLineEdit()
+        self.tts_el_api_key.setPlaceholderText("sk_...")
+        self.tts_el_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        el_layout.addLayout(_make_el_row("API Key:", self.tts_el_api_key))
+
+        self.tts_el_voice_id = QLineEdit()
+        self.tts_el_voice_id.setPlaceholderText("JBFqnCBsd6RMkjVDRZzb (George)")
+        el_layout.addLayout(_make_el_row("Voice ID:", self.tts_el_voice_id))
+
+        layout.addWidget(self.el_fields_widget)
+
+        layout.addSpacing(10)
+
+        # Test Voice button
+        self.tts_test_btn = QPushButton("Test Voice")
+        self.tts_test_btn.setStyleSheet("""
+            QPushButton { background-color: #555; color: white; border-radius: 3px; padding: 6px 16px; }
+            QPushButton:pressed { background-color: #666; }
+            QPushButton:disabled { background-color: #444; color: #888; }
+        """)
+        self.tts_test_btn.clicked.connect(self._test_tts)
+        self.tts_test_status = QLabel("")
+        self.tts_test_status.setWordWrap(True)
+        layout.addWidget(self.tts_test_btn)
+        layout.addWidget(self.tts_test_status)
+
+        layout.addSpacing(10)
+
+        # Help links
+        edge_help = QLabel("Edge TTS is free and requires no setup — just enable and go.")
+        edge_help.setWordWrap(True)
+        edge_help.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(edge_help)
+
+        elevenlabs_voices = QLabel("ElevenLabs: <a href='https://elevenlabs.io/app/voice-library'>Browse Voices</a>")
+        elevenlabs_voices.setTextFormat(Qt.TextFormat.RichText)
+        elevenlabs_voices.setOpenExternalLinks(True)
+        elevenlabs_voices.setWordWrap(True)
+        elevenlabs_voices.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(elevenlabs_voices)
+
+        elevenlabs_api = QLabel("ElevenLabs: <a href='https://elevenlabs.io/app/settings/api-keys'>Get API Key</a>")
+        elevenlabs_api.setTextFormat(Qt.TextFormat.RichText)
+        elevenlabs_api.setOpenExternalLinks(True)
+        elevenlabs_api.setWordWrap(True)
+        elevenlabs_api.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(elevenlabs_api)
+
+        note = QLabel(
+            "Requires AI Fight Commentary to be enabled. TTS generates audio from the AI commentary text."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(note)
+
+        layout.addStretch()
+
+        layout.addSpacing(12)
+
+        self.skip_check = QCheckBox("Skip voice setup for now")
+        layout.addWidget(self.skip_check)
+
+        scroll.setWidget(widget)
+
+        # Set the scroll area as the page's main layout
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+
+        self.registerField("tts_provider", self.tts_provider)
+        self.registerField("tts_el_api_key", self.tts_el_api_key)
+        self.registerField("tts_el_voice_id", self.tts_el_voice_id)
+
+        # Audio playback for test
+        from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+        self._audio_output = QAudioOutput()
+        self._audio_output.setVolume(0.8)
+        self._player = QMediaPlayer()
+        self._player.setAudioOutput(self._audio_output)
+        self._temp_audio = None
+
+        # Prefill from config
+        if config.tts_provider:
+            self.tts_provider.setCurrentText(config.tts_provider)
+        if config.tts_elevenlabs_api_key:
+            self.tts_el_api_key.setText(config.tts_elevenlabs_api_key)
+        if config.tts_elevenlabs_voice_id:
+            self.tts_el_voice_id.setText(config.tts_elevenlabs_voice_id)
+        self._on_provider_changed(config.tts_provider or "edge")
+
+    def _on_provider_changed(self, provider: str):
+        is_el = provider.lower() == "elevenlabs"
+        self.el_fields_widget.setVisible(is_el)
+
+    def _test_tts(self):
+        self.tts_test_btn.setEnabled(False)
+        self.tts_test_status.setStyleSheet("color: #ffffff;")
+        self.tts_test_status.setText("Generating test audio...")
+
+        import threading
+        def _run():
+            try:
+                from core.tts import generate_tts_bytes
+
+                provider = self.tts_provider.currentText()
+
+                class _Cfg:
+                    tts_provider = provider
+                    tts_edge_voice = "en-GB-RyanNeural"
+                    tts_elevenlabs_api_key = self.tts_el_api_key.text().strip()
+                    tts_elevenlabs_voice_id = self.tts_el_voice_id.text().strip() or "JBFqnCBsd6RMkjVDRZzb"
+                    tts_elevenlabs_model = "eleven_multilingual_v2"
+                    tts_elevenlabs_stability = 0.35
+                    tts_elevenlabs_similarity_boost = 0.75
+                    tts_elevenlabs_style = 0.15
+                    tts_elevenlabs_speaker_boost = True
+                    tts_elevenlabs_speed = 1.0
+
+                audio_bytes = generate_tts_bytes(
+                    "SparkyBot voice test. Let's get those bags.", _Cfg()
+                )
+
+                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                if audio_bytes and self.enable_tts.isChecked():
+                    import tempfile, os
+                    fd, path = tempfile.mkstemp(suffix=".mp3", prefix="sparkybot_test_")
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(audio_bytes)
+                    QMetaObject.invokeMethod(self, "_play_audio", Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, path))
+                    size_kb = len(audio_bytes) / 1024
+                    QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, f"Audio generated — playing through speakers."),
+                        Q_ARG(str, "#4CAF50"))
+                elif audio_bytes:
+                    size_kb = len(audio_bytes) / 1024
+                    QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, f"Audio generated successfully ({size_kb:.1f} KB). Provider is working."),
+                        Q_ARG(str, "#4CAF50"))
+                else:
+                    QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, "Audio generation failed. Check provider settings and logs."),
+                        Q_ARG(str, "#ff4444"))
+            except Exception as e:
+                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, f"Error: {e}"), Q_ARG(str, "#ff4444"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    @pyqtSlot(str, str)
+    def _set_tts_result(self, text, color):
+        self.tts_test_status.setStyleSheet(f"color: {color};")
+        self.tts_test_status.setText(text)
+        self.tts_test_btn.setEnabled(True)
+
+    @pyqtSlot(str)
+    def _play_audio(self, path: str):
+        import os
+        # Clean up previous temp file
+        if self._temp_audio and os.path.exists(self._temp_audio):
+            try:
+                os.remove(self._temp_audio)
+            except OSError:
+                pass
+        self._temp_audio = path
+        self._player.setSource(QUrl.fromLocalFile(os.path.abspath(path)))
+        self._player.play()
+
+    def validatePage(self):
+        return True
+
+
+class BehaviorPage(QWizardPage):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.setTitle("Startup Behavior")
+
+        # Scroll area wrapper for content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        desc = QLabel(
+            "Configure how SparkyBot behaves when it starts and how it interacts with your system tray."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addSpacing(8)
+
+        # Start watcher on startup
+        self.start_watcher_on_startup = QCheckBox("Start watching for logs automatically on launch")
+        self.start_watcher_on_startup.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        start_watcher_note = QLabel(
+            "When enabled, SparkyBot begins monitoring your log folder immediately "
+            "without needing to click Start Watcher."
+        )
+        start_watcher_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(self.start_watcher_on_startup)
+        layout.addWidget(start_watcher_note)
+
+        layout.addSpacing(12)
+
+        # Start minimized
+        self.start_minimized = QCheckBox("Start minimized to system tray")
+        self.start_minimized.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        start_minimized_note = QLabel(
+            "SparkyBot launches silently in the background. Access it from the system tray icon."
+        )
+        start_minimized_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(self.start_minimized)
+        layout.addWidget(start_minimized_note)
+
+        layout.addSpacing(12)
+
+        # Close to tray
+        self.close_to_tray = QCheckBox("Close to system tray instead of quitting")
+        self.close_to_tray.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        close_note = QLabel(
+            "Clicking the X button hides SparkyBot to the tray instead of exiting the application."
+        )
+        close_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(self.close_to_tray)
+        layout.addWidget(close_note)
+
+        layout.addSpacing(12)
+
+        # Minimize to tray
+        self.minimize_to_tray = QCheckBox("Minimize to system tray")
+        self.minimize_to_tray.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        self.minimize_to_tray.setChecked(config.minimize_to_tray)
+        minimize_to_tray_note = QLabel(
+            "When you click the minimize button, SparkyBot goes to the system tray instead of the taskbar."
+        )
+        minimize_to_tray_note.setStyleSheet("font-size: 10px; color: #888;")
+        minimize_to_tray_note.setWordWrap(True)
+        layout.addWidget(self.minimize_to_tray)
+        layout.addWidget(minimize_to_tray_note)
+
+        layout.addSpacing(12)
+
+        # Check updates on launch
+        self.check_updates_on_launch = QCheckBox("Check for updates on launch")
+        self.check_updates_on_launch.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        self.check_updates_on_launch.setChecked(config.check_updates_on_launch)
+        check_updates_note = QLabel(
+            "Automatically checks GitHub for new SparkyBot and Elite Insights versions at startup."
+        )
+        check_updates_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        layout.addWidget(self.check_updates_on_launch)
+        layout.addWidget(check_updates_note)
+
+        layout.addStretch()
+
+        scroll.setWidget(widget)
+
+        # Set the scroll area as the page's main layout
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
 
 
 class CompletePage(QWizardPage):

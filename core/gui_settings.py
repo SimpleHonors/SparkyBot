@@ -1,7 +1,9 @@
 """Main Settings Window for SparkyBot"""
 
+import re
 import sys
 import hashlib
+import logging
 import threading
 
 from PyQt6.QtWidgets import (
@@ -544,19 +546,33 @@ class SettingsWindow(QWidget):
         self.ai_max_tokens.setValue(350)
         form.addRow("Max Tokens:", self.ai_max_tokens)
 
-        # System Prompt — small read-only preview with pop-out editor
+        # System Prompt — mode selector (Default vs Custom) with preview
         prompt_layout = QVBoxLayout()
+
+        self.ai_prompt_mode = QComboBox()
+        self.ai_prompt_mode.addItems(["Default (SparkyBot Analyst)", "Custom"])
+        self.ai_prompt_mode.currentTextChanged.connect(self._on_prompt_mode_changed)
+        prompt_layout.addWidget(self.ai_prompt_mode)
+
+        prompt_note = QLabel(
+            "Default: SparkyBot builds the prompt dynamically each call with vocabulary dice rolls, "
+            "pre-computed fight analysis, and tracker-driven variety. "
+            "Custom: Your prompt is used as-is for the system message. "
+            "Fight data, pre-analysis, and vocabulary are still injected into the user message."
+        )
+        prompt_note.setWordWrap(True)
+        prompt_note.setStyleSheet("font-size: 10px; color: #888; padding: 4px 0;")
+        prompt_layout.addWidget(prompt_note)
+
         self.ai_system_prompt = QTextEdit()
         self.ai_system_prompt.setMaximumHeight(80)
-        self.ai_system_prompt.setReadOnly(True)
-        self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
         self.ai_system_prompt.setPlaceholderText("Using default SparkyBot analyst prompt")
+        prompt_layout.addWidget(self.ai_system_prompt)
 
         edit_prompt_btn = QPushButton("Edit System Prompt...")
         edit_prompt_btn.clicked.connect(self._edit_system_prompt)
-
-        prompt_layout.addWidget(self.ai_system_prompt)
         prompt_layout.addWidget(edit_prompt_btn)
+
         form.addRow("System Prompt:", prompt_layout)
 
         # Test button
@@ -567,6 +583,137 @@ class SettingsWindow(QWidget):
         self.ai_test_status = QLabel("")
         self.ai_test_status.setWordWrap(True)
         form.addRow("", self.ai_test_status)
+
+        # Vocabulary
+        vocab_group = QGroupBox("Vocabulary")
+        vocab_form = QFormLayout()
+
+        vocab_note = QLabel(
+            "These sliders control how often SparkyBot reaches for its predefined catchphrases "
+            "versus making up something original on the fly.\n\n"
+            "Lower = more original freestyle commentary. Higher = more predefined terms.\n"
+            "At 0%, SparkyBot will never use terms from that category and will always improvise. "
+            "At 100%, every available term in the category is offered to the AI each time."
+        )
+        vocab_note.setWordWrap(True)
+        vocab_note.setStyleSheet("font-size: 10px; color: #888; padding-bottom: 4px;")
+        vocab_form.addRow(vocab_note)
+
+        # Shock row: mode + spinbox + edit
+        self.ai_vocab_shock_mode = QComboBox()
+        self.ai_vocab_shock_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_shock_mode.setFixedWidth(80)
+        self.ai_vocab_shock = QSpinBox()
+        self.ai_vocab_shock.setRange(0, 100)
+        self.ai_vocab_shock.setSuffix("%")
+        self.ai_vocab_shock.setValue(33)
+        self.ai_vocab_shock.setEnabled(False)
+        self.ai_vocab_shock.setToolTip(
+            "Shock exclamations like HOLY SHIT, WHAT THE HELL, JESUS CHRIST.\n"
+            "These are dramatic reactions to extreme outcomes."
+        )
+        self.shock_edit_btn = QPushButton("Edit...")
+        self.shock_edit_btn.setFixedWidth(60)
+        self.shock_edit_btn.setEnabled(False)
+        self.shock_edit_btn.clicked.connect(lambda: self._edit_vocabulary("shock"))
+        self.ai_vocab_shock_mode.currentTextChanged.connect(
+            lambda mode: self._on_vocab_mode_changed(
+                "shock", mode, self.ai_vocab_shock, self.shock_edit_btn
+            )
+        )
+        shock_row = QHBoxLayout()
+        shock_row.addWidget(self.ai_vocab_shock_mode)
+        shock_row.addWidget(self.ai_vocab_shock, 1)
+        shock_row.addWidget(self.shock_edit_btn)
+        vocab_form.addRow("Shock Exclamations:", shock_row)
+
+        # Positive row: mode + spinbox + edit
+        self.ai_vocab_positive_mode = QComboBox()
+        self.ai_vocab_positive_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_positive_mode.setFixedWidth(80)
+        self.ai_vocab_positive = QSpinBox()
+        self.ai_vocab_positive.setRange(0, 100)
+        self.ai_vocab_positive.setSuffix("%")
+        self.ai_vocab_positive.setValue(33)
+        self.ai_vocab_positive.setEnabled(False)
+        self.ai_vocab_positive.setToolTip(
+            "Hype terms like ABSOLUTE MONSTERS, YEET YEET DELETE, RIDE 'EM LIKE A PONY.\n"
+            "Used to celebrate wins and standout performances."
+        )
+        self.pos_edit_btn = QPushButton("Edit...")
+        self.pos_edit_btn.setFixedWidth(60)
+        self.pos_edit_btn.setEnabled(False)
+        self.pos_edit_btn.clicked.connect(lambda: self._edit_vocabulary("positive"))
+        self.ai_vocab_positive_mode.currentTextChanged.connect(
+            lambda mode: self._on_vocab_mode_changed(
+                "positive", mode, self.ai_vocab_positive, self.pos_edit_btn
+            )
+        )
+        pos_row = QHBoxLayout()
+        pos_row.addWidget(self.ai_vocab_positive_mode)
+        pos_row.addWidget(self.ai_vocab_positive, 1)
+        pos_row.addWidget(self.pos_edit_btn)
+        vocab_form.addRow("Hype Terms:", pos_row)
+
+        # Negative row: mode + spinbox + edit
+        self.ai_vocab_negative_mode = QComboBox()
+        self.ai_vocab_negative_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_negative_mode.setFixedWidth(80)
+        self.ai_vocab_negative = QSpinBox()
+        self.ai_vocab_negative.setRange(0, 100)
+        self.ai_vocab_negative.setSuffix("%")
+        self.ai_vocab_negative.setValue(33)
+        self.ai_vocab_negative.setEnabled(False)
+        self.ai_vocab_negative.setToolTip(
+            "Negative terms like fed to the wolves, TOIGHT LIKE A TIGER.\n"
+            "Used for losses and when the squad underperforms."
+        )
+        self.neg_edit_btn = QPushButton("Edit...")
+        self.neg_edit_btn.setFixedWidth(60)
+        self.neg_edit_btn.setEnabled(False)
+        self.neg_edit_btn.clicked.connect(lambda: self._edit_vocabulary("negative"))
+        self.ai_vocab_negative_mode.currentTextChanged.connect(
+            lambda mode: self._on_vocab_mode_changed(
+                "negative", mode, self.ai_vocab_negative, self.neg_edit_btn
+            )
+        )
+        neg_row = QHBoxLayout()
+        neg_row.addWidget(self.ai_vocab_negative_mode)
+        neg_row.addWidget(self.ai_vocab_negative, 1)
+        neg_row.addWidget(self.neg_edit_btn)
+        vocab_form.addRow("Negative Terms:", neg_row)
+
+        # Gates row: mode + spinbox + edit
+        self.ai_vocab_gates_mode = QComboBox()
+        self.ai_vocab_gates_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_gates_mode.setFixedWidth(80)
+        self.ai_vocab_gates = QSpinBox()
+        self.ai_vocab_gates.setRange(0, 100)
+        self.ai_vocab_gates.setSuffix("%")
+        self.ai_vocab_gates.setValue(33)
+        self.ai_vocab_gates.setEnabled(False)
+        self.ai_vocab_gates.setToolTip(
+            "Situational slang like Bags, Rallybot, Siege Humping, Mudda Fucka.\n"
+            "These only trigger when specific fight conditions are met,\n"
+            "like a decisive loss, PUGs feeding rallies, or enemy using siege."
+        )
+        self.gates_edit_btn = QPushButton("Edit...")
+        self.gates_edit_btn.setFixedWidth(60)
+        self.gates_edit_btn.setEnabled(False)
+        self.gates_edit_btn.clicked.connect(lambda: self._edit_vocabulary("gates"))
+        self.ai_vocab_gates_mode.currentTextChanged.connect(
+            lambda mode: self._on_vocab_mode_changed(
+                "gates", mode, self.ai_vocab_gates, self.gates_edit_btn
+            )
+        )
+        gates_row = QHBoxLayout()
+        gates_row.addWidget(self.ai_vocab_gates_mode)
+        gates_row.addWidget(self.ai_vocab_gates, 1)
+        gates_row.addWidget(self.gates_edit_btn)
+        vocab_form.addRow("Situational Slang:", gates_row)
+
+        vocab_group.setLayout(vocab_form)
+        layout.addWidget(vocab_group)
 
         layout.addWidget(group)
         layout.addStretch()
@@ -917,8 +1064,6 @@ class SettingsWindow(QWidget):
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-        threading.Thread(target=_fetch, daemon=True).start()
-
     def _test_ai_connection(self):
         """Send a test request to verify the AI connection works."""
         from core.ai_analyst import FightAnalyst
@@ -934,19 +1079,39 @@ class SettingsWindow(QWidget):
         test_summary = {
             "zone": "Eternal Battlegrounds",
             "duration": "05m 30s",
-            "kdr": 4.5,
+            "duration_seconds": 330,
+            "outcome": "Decisive Win",
+            "friendly_count": 35,
+            "enemy_count": 50,
             "squad_count": 35,
             "ally_count": 10,
+            "enemy_deaths": 27,
             "squad_damage": 5000000,
             "squad_dps": 15000,
             "squad_downs": 40,
             "squad_kills": 27,
             "squad_deaths": 6,
-            "enemy_count": 50,
-            "enemy_deaths": 27,
+            "squad_healing": 8000000,
+            "squad_barrier": 0,
+            "enemy_total_damage": 6000000,
+            "squad_strips": 45,
+            "top_strips": [{"name": "TestPlayer", "profession": "Guardian", "boon_strips": 15}],
+            "squad_cleanses": 30,
             "top_damage": [{"name": "TestPlayer", "profession": "Guardian", "damage": 800000}],
-            "enemy_breakdown": {"GUAR": 8, "NECR": 6, "ELEM": 5},
+            "enemy_breakdown": {
+                "Guardian": {"count": 8, "damage_per_player": 75000},
+                "Necromancer": {"count": 6, "damage_per_player": 82000},
+                "Elementalist": {"count": 5, "damage_per_player": 90000},
+            },
+            "top_enemy_skills": [
+                {"name": "Meteor Shower", "damage": 120000},
+                {"name": "Whirlwind", "damage": 95000},
+            ],
             "enemy_teams": {"Red": 30, "Blue": 20},
+            "squad_tag_distance": [
+                {"name": "TestPlayer", "distance": 800.0},
+                {"name": "TestPlayer2", "distance": 1200.0},
+            ],
         }
 
         self.ai_test_status.setText("Testing...")
@@ -962,6 +1127,489 @@ class SettingsWindow(QWidget):
             self.ai_test_btn.setEnabled(True)
 
         threading.Thread(target=_run_test, daemon=True).start()
+
+    def _edit_vocabulary(self, initial_tab: str = "shock"):
+        """Open a structured dialog for editing vocabulary terms.
+
+        Args:
+            initial_tab: Category to pre-select when opening ("shock", "positive", "negative", "gates").
+        """
+        import json
+        from core.ai_analyst import VocabularyConfig
+
+        vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
+        try:
+            raw = json.loads(vocab_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raw = VocabularyConfig._default_vocabulary()
+
+        # --- Dialog shell ---
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Vocabulary")
+        dialog.setMinimumSize(700, 520)
+        dlg_layout = QVBoxLayout(dialog)
+
+        # --- Tab widget, one tab per category ---
+        cat_tabs = QTabWidget()
+        category_map = {}  # tab_index -> category name
+        list_widgets = {}  # category name -> QListWidget
+
+        for cat in ("shock", "positive", "negative", "gates"):
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(4, 4, 4, 4)
+
+            list_widget = QListWidget()
+            list_widget.setAlternatingRowColors(True)
+            list_widget.setWordWrap(True)
+            list_widget.setSpacing(2)
+            list_widgets[cat] = list_widget
+            tab_layout.addWidget(list_widget, stretch=1)
+
+            # Load items — show term + description preview
+            for entry in raw.get(cat, []):
+                display = entry.get("term", "?")
+                if entry.get("alt"):
+                    display += f'  /  {entry["alt"]}'
+
+                # Gates use 'condition' for the description line, others use 'desc'
+                if cat == "gates":
+                    subtitle = entry.get("condition", "")
+                else:
+                    subtitle = entry.get("desc", "")
+
+                if subtitle:
+                    display += f'\n    {subtitle[:80]}'
+
+                item = QListWidgetItem(display)
+                item.setData(Qt.ItemDataRole.UserRole, dict(entry))
+                item.setToolTip(entry.get("condition", "") if cat == "gates" else entry.get("desc", ""))
+                list_widget.addItem(item)
+
+            # Description note for Gates tab
+            if cat == "gates":
+                note = QLabel(
+                    "Slang terms that trigger when specific fight conditions are met "
+                    "(e.g., siege detected, decisive loss, PUGs feeding rallies)"
+                )
+                note.setWordWrap(True)
+                note.setStyleSheet("font-size: 10px; color: #888; padding-bottom: 4px;")
+                tab_layout.addWidget(note)
+
+            # --- Button row ---
+            btn_row = QHBoxLayout()
+
+            btn_add = QPushButton("Add")
+            btn_edit = QPushButton("Edit")
+            btn_remove = QPushButton("Remove")
+            btn_up = QPushButton("▲")
+            btn_down = QPushButton("▼")
+            for btn in (btn_add, btn_edit, btn_remove, btn_up, btn_down):
+                btn.setMaximumWidth(70)
+            btn_row.addWidget(btn_add)
+            btn_row.addWidget(btn_edit)
+            btn_row.addWidget(btn_remove)
+            btn_row.addStretch()
+            btn_row.addWidget(btn_up)
+            btn_row.addWidget(btn_down)
+            tab_layout.addLayout(btn_row)
+
+            tab_label = "Situational Slang" if cat == "gates" else cat.capitalize()
+            idx = cat_tabs.addTab(tab, tab_label)
+            category_map[idx] = cat
+
+            # Wire buttons
+            btn_add.clicked.connect(lambda _, c=cat: self._vocab_add_term(c, list_widgets[c], raw))
+            btn_edit.clicked.connect(lambda _, c=cat: self._vocab_edit_term(c, list_widgets[c], raw))
+            btn_remove.clicked.connect(lambda _, c=cat: self._vocab_remove_term(list_widgets[c], raw))
+            btn_up.clicked.connect(lambda _, c=cat: self._vocab_move_term(list_widgets[c], raw, -1))
+            btn_down.clicked.connect(lambda _, c=cat: self._vocab_move_term(list_widgets[c], raw, 1))
+
+        dlg_layout.addWidget(cat_tabs, stretch=1)
+
+        # Pre-select the requested category tab
+        tab_index = {"shock": 0, "positive": 1, "negative": 2, "gates": 3}.get(initial_tab, 0)
+        cat_tabs.setCurrentIndex(tab_index)
+
+        # --- Bottom buttons ---
+        bottom_row = QHBoxLayout()
+        btn_defaults = QPushButton("Reset to Defaults")
+        btn_defaults.setMaximumWidth(140)
+        bottom_row.addWidget(btn_defaults)
+        bottom_row.addStretch()
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        bottom_row.addWidget(buttons)
+        dlg_layout.addLayout(bottom_row)
+
+        def _reset_to_defaults():
+            defaults = VocabularyConfig._default_vocabulary()
+            raw.clear()
+            raw.update({k: list(v) for k, v in defaults.items()})
+            for cat, lw in list_widgets.items():
+                lw.clear()
+                for entry in raw.get(cat, []):
+                    item = QListWidgetItem()
+                    label = entry.get("term", "?")
+                    if entry.get("alt"):
+                        label += f" / {entry['alt']}"
+                    item.setText(label)
+                    item.setData(Qt.ItemDataRole.UserRole, entry)
+                    lw.addItem(item)
+
+        btn_defaults.clicked.connect(_reset_to_defaults)
+
+        def _save():
+            # Write back to JSON
+            for cat, lw in list_widgets.items():
+                raw[cat] = []
+                for i in range(lw.count()):
+                    entry = lw.item(i).data(Qt.ItemDataRole.UserRole)
+                    if entry:
+                        raw[cat].append(entry)
+            try:
+                vocab_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
+                # Mark user_modified so future updates prompt instead of auto-merging
+                from core.ai_analyst import VocabularyConfig
+                vc = VocabularyConfig(config_path=vocab_path)
+                vc.mark_modified()
+                dialog.accept()
+            except OSError as e:
+                QMessageBox.warning(dialog, "Error", f"Could not write vocabulary file:\n{e}")
+
+        buttons.button(QDialogButtonBox.StandardButton.Save).clicked.connect(_save)
+        buttons.rejected.connect(dialog.reject)
+        dialog.exec()
+
+    def _vocab_add_term(self, category: str, list_widget: QListWidget, raw: dict):
+        """Add a new term to the given category via _vocab_term_dialog."""
+        result = self._vocab_term_dialog(category)
+        if result:
+            entry = dict(result)
+            # Auto-generate pattern from term name
+            term_text = entry.get("term", "")
+            entry["pattern"] = re.escape(term_text).replace(r"\ ", r"\s+")
+            if entry.get("alt"):
+                entry["alt_pattern"] = re.escape(entry["alt"]).replace(r"\ ", r"\s+")
+
+            display = entry["term"]
+            if entry.get("alt"):
+                display += f'  /  {entry["alt"]}'
+            subtitle = entry.get("condition", "") if category == "gates" else entry.get("desc", "")
+            if subtitle:
+                display += f'\n    {subtitle[:80]}'
+            item = QListWidgetItem(display)
+            item.setData(Qt.ItemDataRole.UserRole, entry)
+            item.setToolTip(entry.get("condition", "") if category == "gates" else entry.get("desc", ""))
+            list_widget.addItem(item)
+
+    def _vocab_edit_term(self, category: str, list_widget: QListWidget, raw: dict):
+        """Edit the currently selected term in the given category."""
+        row = list_widget.currentRow()
+        if row < 0:
+            return
+        current = list_widget.item(row).data(Qt.ItemDataRole.UserRole)
+        result = self._vocab_term_dialog(category, current)
+        if result:
+            entry = dict(result)
+            term_text = entry.get("term", "")
+            entry["pattern"] = re.escape(term_text).replace(r"\ ", r"\s+")
+            if entry.get("alt"):
+                entry["alt_pattern"] = re.escape(entry["alt"]).replace(r"\ ", r"\s+")
+
+            list_widget.item(row).setData(Qt.ItemDataRole.UserRole, entry)
+            display = entry["term"]
+            if entry.get("alt"):
+                display += f'  /  {entry["alt"]}'
+            subtitle = entry.get("condition", "") if category == "gates" else entry.get("desc", "")
+            if subtitle:
+                display += f'\n    {subtitle[:80]}'
+            list_widget.item(row).setText(display)
+            list_widget.item(row).setToolTip(entry.get("condition", "") if category == "gates" else entry.get("desc", ""))
+
+    def _vocab_remove_term(self, list_widget: QListWidget, raw: dict):
+        """Remove the currently selected term."""
+        row = list_widget.currentRow()
+        if row >= 0:
+            list_widget.takeItem(row)
+
+    def _vocab_move_term(self, list_widget: QListWidget, raw: dict, direction: int):
+        """Move the selected term up (-1) or down (+1) in the list."""
+        row = list_widget.currentRow()
+        if row < 0:
+            return
+        new_row = row + direction
+        if 0 <= new_row < list_widget.count():
+            item = list_widget.takeItem(row)
+            list_widget.insertItem(new_row, item)
+            list_widget.setCurrentRow(new_row)
+
+    def _vocab_term_dialog(self, category: str, existing: dict = None) -> dict:
+        import re
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Term" if existing else "Add Term")
+        dialog.setMinimumWidth(450)
+        layout = QFormLayout(dialog)
+
+        # Term name
+        term_input = QLineEdit()
+        term_input.setPlaceholderText("e.g. YEET YEET DELETE")
+        if existing:
+            term_input.setText(existing.get("term", ""))
+        layout.addRow("Term:", term_input)
+
+        # Alternate term
+        alt_input = QLineEdit()
+        alt_input.setPlaceholderText("Optional alternate wording")
+        if existing:
+            alt_input.setText(existing.get("alt", ""))
+        layout.addRow("Also matches:", alt_input)
+
+        # Description - this is the key field
+        desc_input = QTextEdit()
+        desc_input.setMaximumHeight(80)
+        desc_input.setPlaceholderText(
+            "Describe when SparkyBot should use this term.\n"
+            "e.g. 'When the squad absolutely steamrolls the enemy'"
+        )
+        if existing:
+            desc_input.setPlainText(existing.get("desc", ""))
+        layout.addRow("When to use it:", desc_input)
+
+        # Caps - simplified labels
+        caps_input = QComboBox()
+        caps_input.addItems(["ALL CAPS always", "Normal (caps optional)"])
+        if existing:
+            if existing.get("caps") == "always":
+                caps_input.setCurrentIndex(0)
+            else:
+                caps_input.setCurrentIndex(1)
+        layout.addRow("Style:", caps_input)
+
+        # Gate-specific fields with friendlier labels
+        condition_input = None
+        instruction_input = None
+        if category == "gates":
+            condition_input = QTextEdit()
+            condition_input.setMaximumHeight(60)
+            condition_input.setPlaceholderText(
+                "What fight conditions trigger this term?\n"
+                "e.g. 'Decisive loss' or 'Enemy used siege weapons'"
+            )
+            if existing:
+                condition_input.setPlainText(existing.get("condition", ""))
+            layout.addRow("Triggers when:", condition_input)
+
+            instruction_input = QTextEdit()
+            instruction_input.setMaximumHeight(60)
+            instruction_input.setPlaceholderText(
+                "What should SparkyBot say or do?\n"
+                "e.g. 'Mock the enemy for hiding behind catapults'"
+            )
+            if existing:
+                instruction_input.setPlainText(existing.get("instruction", ""))
+            layout.addRow("SparkyBot should:", instruction_input)
+
+        # NO pattern field shown - auto-generated from term name
+
+        # Validation
+        validation = QLabel("")
+        validation.setStyleSheet("color: #ff4444;")
+        layout.addRow("", validation)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        layout.addRow(buttons)
+
+        out = {}
+
+        def _on_accept():
+            term = term_input.text().strip()
+            if not term:
+                validation.setText("Term is required.")
+                return
+            if category == "gates" and not condition_input.text().strip():
+                validation.setText("Triggers when is required.")
+                return
+            if category == "gates" and not instruction_input.text().strip():
+                validation.setText("SparkyBot should is required.")
+                return
+
+            result = {
+                "term": term,
+                "caps": "always" if caps_input.currentIndex() == 0 else "optional",
+            }
+            if alt_input.text().strip():
+                result["alt"] = alt_input.text().strip()
+            if desc_input.toPlainText().strip():
+                result["desc"] = desc_input.toPlainText().strip()
+            if category == "gates":
+                result["condition"] = condition_input.text().strip()
+                result["instruction"] = instruction_input.text().strip()
+            out.clear()
+            out.update(result)
+            dialog.accept()
+
+        buttons.button(QDialogButtonBox.StandardButton.Ok).clicked.connect(_on_accept)
+        buttons.rejected.connect(dialog.reject)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted and out:
+            return out
+        return None
+
+    def _prompt_vocab_update(self, vc):
+        """Ask user how to handle an updated default vocabulary."""
+        diff = vc.get_update_diff()
+
+        detail_parts = []
+        if diff["added"]:
+            detail_parts.append(f"New terms: {', '.join(diff['added'])}")
+        if diff["removed"]:
+            detail_parts.append(f"Removed from defaults: {', '.join(diff['removed'])}")
+        detail_text = "\n".join(detail_parts) if detail_parts else "Internal improvements."
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Vocabulary Update Available")
+        msg.setText("SparkyBot learned some new words!")
+        msg.setInformativeText(
+            f"{detail_text}\n\n"
+            "Merge will add them to your vocabulary without touching "
+            "anything you've already customized."
+        )
+
+        merge_btn = msg.addButton("Merge New Terms", QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = msg.addButton("Skip", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(skip_btn)
+        msg.exec()
+
+        if msg.clickedButton() == merge_btn:
+            vc.apply_default_update(merge=True)
+            QMessageBox.information(self, "Vocabulary Updated",
+                f"Merged {len(diff['added'])} new term(s). "
+                "Your existing terms and weights were preserved."
+            )
+
+    def _on_vocab_mode_changed(self, category: str, mode: str, spinbox: QSpinBox, edit_btn: QPushButton):
+        """Handle Default/Custom toggle for a vocabulary category."""
+        if mode == "Default":
+            # Restore default weight and terms for this category
+            from core.ai_analyst import VocabularyConfig
+            vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
+            vc = VocabularyConfig(config_path=vocab_path)
+            defaults = VocabularyConfig._default_vocabulary()
+
+            vc._raw[category] = defaults[category]
+            vc._raw.setdefault("weights", {})[category] = 0.33
+
+            # Remove from custom_categories so update check skips this category
+            custom = vc._raw.get("custom_categories", [])
+            if category in custom:
+                custom.remove(category)
+
+            vc._compile_patterns()
+            vc._write_defaults()
+
+            spinbox.setValue(33)
+            spinbox.setEnabled(False)
+            edit_btn.setEnabled(False)
+        else:
+            # Switching to Custom — mark category as customized
+            from core.ai_analyst import VocabularyConfig
+            vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
+            vc = VocabularyConfig(config_path=vocab_path)
+
+            vc._raw.setdefault("custom_categories", [])
+            if category not in vc._raw["custom_categories"]:
+                vc._raw["custom_categories"].append(category)
+            vc._write_defaults()
+
+            spinbox.setEnabled(True)
+            edit_btn.setEnabled(True)
+
+    def _prompt_system_prompt_update(self):
+        """Notify custom-prompt users that the default prompt has been updated."""
+        from core.ai_analyst import FightAnalyst, DEFAULT_PROMPT_VERSION, DEFAULT_PROMPT_CHANGELOG
+
+        # Build the changelog text from all versions the user missed
+        changelog_parts = []
+        for v in range(self.config.ai_prompt_version + 1, DEFAULT_PROMPT_VERSION + 1):
+            entry = DEFAULT_PROMPT_CHANGELOG.get(v)
+            if entry:
+                changelog_parts.append(entry["title"] + ":")
+                for change in entry["changes"]:
+                    changelog_parts.append(f"  • {change}")
+                if entry.get("reason"):
+                    changelog_parts.append("")
+                    changelog_parts.append(entry["reason"])
+
+        changelog_text = "\n".join(changelog_parts) if changelog_parts else "Various improvements."
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Prompt Update Available")
+        msg.setText("SparkyBot's default prompt has been improved!")
+        msg.setInformativeText(
+            f"{changelog_text}\n\n"
+            "You're using a custom system prompt, so nothing was changed automatically. "
+            "You can switch to the new default or keep yours."
+        )
+
+        switch_btn = msg.addButton("Switch to New Default", QMessageBox.ButtonRole.AcceptRole)
+        view_btn = msg.addButton("View New Default", QMessageBox.ButtonRole.HelpRole)
+        keep_btn = msg.addButton("Keep Mine", QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(keep_btn)
+        msg.exec()
+
+        clicked = msg.clickedButton()
+        if clicked == switch_btn:
+            self.config.update('AI', 'aiSystemPrompt', '')
+            self.config.update('AI', 'aiPromptVersion', str(DEFAULT_PROMPT_VERSION))
+            self.ai_prompt_mode.setCurrentText("Default (SparkyBot Analyst)")
+            new_default = FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
+            self.ai_system_prompt.setPlainText(new_default)
+            self.ai_system_prompt.setReadOnly(True)
+            self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+        elif clicked == view_btn:
+            new_default = FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
+            view_dialog = QDialog(self)
+            view_dialog.setWindowTitle("New Default Prompt")
+            view_dialog.setMinimumSize(600, 400)
+            view_layout = QVBoxLayout(view_dialog)
+            viewer = QTextEdit()
+            viewer.setReadOnly(True)
+            viewer.setPlainText(new_default)
+            view_layout.addWidget(viewer)
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(view_dialog.accept)
+            view_layout.addWidget(close_btn)
+            view_dialog.exec()
+            # After viewing, mark version as seen so we don't nag again
+            self.config.update('AI', 'aiPromptVersion', str(DEFAULT_PROMPT_VERSION))
+        else:
+            # Keep mine — mark version as seen so we don't ask again
+            self.config.update('AI', 'aiPromptVersion', str(DEFAULT_PROMPT_VERSION))
+
+    def _on_prompt_mode_changed(self, mode: str):
+        """Toggle system prompt between default and custom."""
+        if mode.startswith("Default"):
+            self.ai_system_prompt.setReadOnly(True)
+            self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+            from core.ai_analyst import FightAnalyst
+            self.ai_system_prompt.setPlainText(
+                FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
+            )
+        else:
+            self.ai_system_prompt.setReadOnly(False)
+            self.ai_system_prompt.setStyleSheet("")
+            # If switching to custom and the text is still the default, clear it
+            # so the user starts fresh
+            from core.ai_analyst import FightAnalyst
+            default_text = FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
+            if self.ai_system_prompt.toPlainText() == default_text:
+                self.ai_system_prompt.clear()
 
     def _edit_system_prompt(self):
         """Open a larger dialog for editing the system prompt."""
@@ -996,7 +1644,9 @@ class SettingsWindow(QWidget):
 
         def on_reset():
             from core.ai_analyst import FightAnalyst
-            editor.setPlainText(FightAnalyst._default_system_prompt())
+            editor.setPlainText(
+                FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
+            )
 
         reset_btn.clicked.connect(on_reset)
         buttons.accepted.connect(dialog.accept)
@@ -1170,9 +1820,10 @@ class SettingsWindow(QWidget):
             )
             if response.status_code == 200:
                 data = response.json()
-                # Try release name first (e.g., "v1.1.2"), fall back to tag_name
-                raw_version = data.get("name", "") or data.get("tag_name", "")
-                latest_version = raw_version.lstrip("v").strip()
+                # Try tag_name first (most consistent from GitHub), fall back to release name
+                raw_version = data.get("tag_name", "") or data.get("name", "")
+                match = re.search(r'(\d+\.\d+(?:\.\d+)*)', raw_version)
+                latest_version = match.group(1) if match else ""
 
                 # Validate it looks like a version number (digits and dots)
                 if not re.match(r'^\d+\.\d+', latest_version):
@@ -1244,9 +1895,10 @@ class SettingsWindow(QWidget):
                 return
 
             data = response.json()
-            # Try release name first (e.g., "v1.1.2"), fall back to tag_name
-            raw_version = data.get("name", "") or data.get("tag_name", "")
-            latest_version = raw_version.lstrip("v").strip()
+            # Try tag_name first (most consistent from GitHub), fall back to release name
+            raw_version = data.get("tag_name", "") or data.get("name", "")
+            match = re.search(r'(\d+\.\d+(?:\.\d+)*)', raw_version)
+            latest_version = match.group(1) if match else ""
 
             # Validate it looks like a version number (digits and dots)
             if not re.match(r'^\d+\.\d+', latest_version):
@@ -1655,11 +2307,60 @@ class SettingsWindow(QWidget):
         self.ai_model.setEditText(self.config.ai_model)
         self.ai_max_tokens.setValue(self.config.ai_max_tokens)
         if self.config.ai_system_prompt:
+            self.ai_prompt_mode.setCurrentText("Custom")
             self.ai_system_prompt.setPlainText(self.config.ai_system_prompt)
         else:
-            # Show the built-in default so users can see and edit it
+            self.ai_prompt_mode.setCurrentText("Default (SparkyBot Analyst)")
             from core.ai_analyst import FightAnalyst
-            self.ai_system_prompt.setPlainText(FightAnalyst._default_system_prompt())
+            self.ai_system_prompt.setPlainText(
+                FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
+            )
+            self.ai_system_prompt.setReadOnly(True)
+            self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+
+        # AI Vocabulary Weights — load custom_categories and sync mode/weight state
+        from core.ai_analyst import VocabularyConfig
+        vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
+        vc = VocabularyConfig(config_path=vocab_path)
+        custom_cats = vc._raw.get("custom_categories", [])
+
+        for cat, mode_combo, spinbox, edit_btn in [
+            ("shock", self.ai_vocab_shock_mode, self.ai_vocab_shock, self.shock_edit_btn),
+            ("positive", self.ai_vocab_positive_mode, self.ai_vocab_positive, self.pos_edit_btn),
+            ("negative", self.ai_vocab_negative_mode, self.ai_vocab_negative, self.neg_edit_btn),
+            ("gates", self.ai_vocab_gates_mode, self.ai_vocab_gates, self.gates_edit_btn),
+        ]:
+            spinbox.setValue(int(getattr(self.config, f"ai_vocab_weight_{cat}") * 100))
+            if cat in custom_cats:
+                mode_combo.setCurrentText("Custom")
+                spinbox.setEnabled(True)
+                edit_btn.setEnabled(True)
+            else:
+                mode_combo.setCurrentText("Default")
+                spinbox.setEnabled(False)
+                edit_btn.setEnabled(False)
+
+        # Check for vocabulary updates
+        try:
+            from core.ai_analyst import VocabularyConfig
+            vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
+            vc = VocabularyConfig(config_path=vocab_path)
+            if vc.update_available():
+                if vc.is_user_modified():
+                    self._prompt_vocab_update(vc)
+                else:
+                    # User never customized, silently merge
+                    vc.apply_default_update(merge=True)
+        except Exception as e:
+            logging.getLogger(__name__).warning("Could not check vocabulary updates: %s", e)
+
+        # Check if user is on a custom prompt and the default has been updated
+        try:
+            from core.ai_analyst import DEFAULT_PROMPT_VERSION
+            if self.config.ai_system_prompt and self.config.ai_prompt_version < DEFAULT_PROMPT_VERSION:
+                self._prompt_system_prompt_update()
+        except Exception as e:
+            logging.getLogger(__name__).warning("Could not check prompt updates: %s", e)
 
         # Twitch
         self.enable_twitch.setChecked(self.config.enable_twitch)
@@ -1746,7 +2447,16 @@ class SettingsWindow(QWidget):
         cfg('AI', 'aiApiKey', self.ai_api_key.text())
         cfg('AI', 'aiModel', self.ai_model.currentText())
         cfg('AI', 'aiMaxTokens', str(self.ai_max_tokens.value()))
-        cfg('AI', 'aiSystemPrompt', self.ai_system_prompt.toPlainText())
+        if self.ai_prompt_mode.currentText().startswith("Default"):
+            cfg('AI', 'aiSystemPrompt', '')
+            from core.ai_analyst import DEFAULT_PROMPT_VERSION
+            cfg('AI', 'aiPromptVersion', str(DEFAULT_PROMPT_VERSION))
+        else:
+            cfg('AI', 'aiSystemPrompt', self.ai_system_prompt.toPlainText())
+        cfg('AI', 'aiVocabWeightShock', str(self.ai_vocab_shock.value()))
+        cfg('AI', 'aiVocabWeightPositive', str(self.ai_vocab_positive.value()))
+        cfg('AI', 'aiVocabWeightNegative', str(self.ai_vocab_negative.value()))
+        cfg('AI', 'aiVocabWeightGates', str(self.ai_vocab_gates.value()))
 
         # Twitch
         cfg('Twitch', 'enableTwitchBot', str(self.enable_twitch.isChecked()).lower())

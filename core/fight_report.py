@@ -43,6 +43,7 @@ class PlayerStats:
     downed_damage: int = 0  # downContribution from statsAll[0]
     stab_uptime: float = 0.0
     aegis_uptime: float = 0.0
+    dist_to_tag: float = 0.0  # average distance to commander (EI distToCom)
 
 
 @dataclass
@@ -301,6 +302,7 @@ class FightReport:
                 downed_damage=stats.get('downContribution', 0),
                 stab_uptime=stab_uptime,
                 aegis_uptime=aegis_uptime,
+                dist_to_tag=stats.get('distToCom', 0.0),
             )
 
             if is_ally:
@@ -1096,11 +1098,25 @@ class FightReport:
             if not valid:
                 return None
             sorted_items = sorted(valid, key=key_func, reverse=True)
-            name_attr = getattr(sorted_items[0], 'name', getattr(sorted_items[0], 'player_name', 'Unknown'))
+            name1 = getattr(sorted_items[0], 'name', getattr(sorted_items[0], 'player_name', 'Unknown'))
+            val1 = key_func(sorted_items[0])
+
             if len(sorted_items) == 1:
-                return {"name": name_attr, "value": key_func(sorted_items[0])}
-            if key_func(sorted_items[0]) >= key_func(sorted_items[1]) * 1.5:
-                return {"name": name_attr, "value": key_func(sorted_items[0])}
+                return {"name": name1, "value": val1}
+
+            val2 = key_func(sorted_items[1])
+
+            # Clear solo outlier: first place is 1.5x second place
+            if val1 >= val2 * 1.5:
+                return {"name": name1, "value": val1}
+
+            # Co-outlier: top two are close together but both dominate third place
+            if len(sorted_items) >= 3:
+                val3 = key_func(sorted_items[2])
+                if val2 >= val3 * 1.5:
+                    name2 = getattr(sorted_items[1], 'name', getattr(sorted_items[1], 'player_name', 'Unknown'))
+                    return {"name": f"{name1} and {name2}", "value": val1}
+
             return None
 
         outliers = {}
@@ -1181,5 +1197,9 @@ class FightReport:
                 for prof, data in top_enemy_profs.items()
             },
             "enemy_teams": enemy_teams,
+            "squad_tag_distance": [
+                {"name": p.name, "distance": round(p.dist_to_tag, 2)}
+                for p in self.players
+            ],
             "outliers": outliers,
         }

@@ -37,6 +37,20 @@ from core.gui_settings import SettingsWindow
 from core.fight_report import FightReport
 from core.tts import TTSClient
 
+# Persistent AI singletons — created once, reused across all fights
+_vocab_config: Optional['VocabularyConfig'] = None
+_vocab_tracker: Optional['VocabularyTracker'] = None
+
+
+def _get_ai_components():
+    """Lazy-init and return the shared VocabularyConfig and VocabularyTracker."""
+    global _vocab_config, _vocab_tracker
+    if _vocab_config is None:
+        from core.ai_analyst import VocabularyConfig, VocabularyTracker
+        _vocab_config = VocabularyConfig()
+        _vocab_tracker = VocabularyTracker(vocab_config=_vocab_config)
+    return _vocab_config, _vocab_tracker
+
 
 class FileProcessorWorker(QThread):
     """Background worker for processing log files."""
@@ -188,12 +202,21 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
         if config.enable_ai_analysis and config.ai_base_url and config.ai_model:
             try:
                 from core.ai_analyst import FightAnalyst
+                vocab_config, vocab_tracker = _get_ai_components()
                 analyst = FightAnalyst(
                     base_url=config.ai_base_url,
                     api_key=config.ai_api_key,
                     model=config.ai_model,
                     system_prompt=config.ai_system_prompt or None,
                     max_tokens=config.ai_max_tokens,
+                    vocab_tracker=vocab_tracker,
+                    vocab_config=vocab_config,
+                    vocab_weights={
+                        "shock": config.ai_vocab_weight_shock,
+                        "positive": config.ai_vocab_weight_positive,
+                        "negative": config.ai_vocab_weight_negative,
+                        "gates": config.ai_vocab_weight_gates,
+                    },
                 )
                 summary = report.get_ai_summary()
                 analysis = analyst.analyze(summary)
@@ -413,8 +436,8 @@ class SparkyBotApp(QApplication):
         self.aboutToQuit.connect(self._shutdown)
 
     def _is_first_run(self) -> bool:
-        """First run if no log folder and no webhook configured"""
-        return not self.config.log_folder and not self.config.discord_webhook
+        """First run if no config file existed when the app started"""
+        return self.config.is_new_config
 
     def _run_setup_wizard(self):
         from core.setup_wizard import SetupWizard
