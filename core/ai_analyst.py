@@ -50,7 +50,7 @@ _STAT_RE = re.compile(
 # Default prompt version — increment when _core_system_prompt or _rules_section
 # changes so users on custom prompts can be notified of improvements.
 # ---------------------------------------------------------------------------
-DEFAULT_PROMPT_VERSION = 2
+DEFAULT_PROMPT_VERSION = 3
 
 DEFAULT_PROMPT_CHANGELOG = {
     1: {
@@ -78,6 +78,20 @@ DEFAULT_PROMPT_CHANGELOG = {
             "Stat guidance tightened: 'pick the single most dramatic number' replaces 'rotate through different categories'",
         ],
         "reason": "Analysis of 15 responses showed recurring structural patterns and rule violations that these changes address.",
+    },
+    3: {
+        "title": "Word count discipline and narrative focus",
+        "changes": [
+            "Hard 80-word maximum added (Rule 2). Models that gamed sentence count with run-on sentences are now constrained by word budget.",
+            "Stat limit reduced from 2 to 1. Zero numbers preferred, one allowed only when dramatically impactful.",
+            "FOCUS section added: 'Pick the TWO most dramatic data points, ignore everything else.' Stops models from trying to address all 15+ pre-analysis conclusions.",
+            "Translation layer examples rewritten to favor pure narrative over stat-anchored alternatives.",
+            "Loss and Draw moods are now computed from fight data (tag discipline, stomp rate, PUG percentage) instead of generic directives. The model receives a specific story to tell.",
+            "Rule 8 added: 'Your last sentence must land like a punch.'",
+            "Rule 4 updated: markdown formatting (bold, italics, asterisks) explicitly banned.",
+            "Raw aggregate numbers (squad_damage, squad_healing, enemy_total_damage, squad_dps) stripped from fight data JSON to reduce stat mining. Pre-analysis conclusions provide the same information narratively.",
+        ],
+        "reason": "Shootout testing of 30+ models across multiple fights showed consistent patterns: stat-heavy outputs scored C, verbose outputs gamed sentence count, and loss commentary was underspecified.",
     },
 }
 
@@ -1334,11 +1348,47 @@ class FightAnalyst:
         elif outcome == "Win":
             mood = "Highlight the single most important success factor. One subtle improvement note."
         elif outcome == "Draw":
-            mood = "Frustrated energy. Identify the tactical breakdown."
+            # Identify the specific tactical breakdown for the model
+            if tag_data and isinstance(tag_data, list) and len(tag_data) > 1:
+                distances = [p.get("distance", 0) for p in tag_data]
+                median_dist = sorted(distances)[len(distances)//2]
+                if median_dist > TAG_DISTANCE_LOOSE:
+                    mood = "Frustrated. The squad was scattered and that's why this was a draw instead of a win. Roast the positioning."
+                else:
+                    mood = "Frustrated. The squad held position but couldn't convert. Find the one thing that prevented the win."
+            else:
+                mood = "Frustrated energy. Identify the single tactical breakdown that cost the squad the win."
         elif outcome == "Loss":
-            mood = "Angry but constructive. Name the specific failure. Commander is never the cause."
+            # Build a specific failure narrative based on the data
+            loss_reasons = []
+            if tag_data and isinstance(tag_data, list) and len(tag_data) > 1:
+                distances = [p.get("distance", 0) for p in tag_data]
+                median_dist = sorted(distances)[len(distances)//2]
+                if median_dist > TAG_DISTANCE_LOOSE:
+                    loss_reasons.append("scattered positioning killed the squad")
+            if downs > 0 and kills < downs * 0.75:
+                loss_reasons.append("downed enemies rallied because the squad didn't stomp")
+            if pug_pct >= 20:
+                loss_reasons.append("PUGs fed rallies and broke formation")
+            if loss_reasons:
+                mood = f"Angry. The story is: {'; '.join(loss_reasons)}. Roast the squad for this. Commander is the victim, not the cause."
+            else:
+                mood = "Angry but constructive. The enemy was simply better. Acknowledge it, find the one bright spot, demand improvement. Commander is never the cause."
         elif outcome == "Decisive Loss":
-            mood = "Full tilt. Demand improvement from the squad. Commander is the victim, not the cause."
+            loss_reasons = []
+            if tag_data and isinstance(tag_data, list) and len(tag_data) > 1:
+                distances = [p.get("distance", 0) for p in tag_data]
+                median_dist = sorted(distances)[len(distances)//2]
+                if median_dist > TAG_DISTANCE_ACCEPTABLE:
+                    loss_reasons.append("the squad was nowhere near tag")
+            if pug_pct >= 20:
+                loss_reasons.append("PUGs were dead weight")
+            if duration < 300:
+                loss_reasons.append("the fight was over before it started")
+            if loss_reasons:
+                mood = f"Full tilt. The story is: {'; '.join(loss_reasons)}. Demand improvement. Commander is the victim, not the cause."
+            else:
+                mood = "Full tilt. The squad got demolished. Demand improvement. Commander is the victim, not the cause."
         else:
             mood = "Neutral analysis."
 
@@ -1361,13 +1411,24 @@ class FightAnalyst:
         """Apply provider-specific payload fields based on the configured base URL."""
         parsed_host = urlparse(self.base_url).hostname or ""
 
-        # MiniMax: suppress chain-of-thought output
+        # MiniMax: suppress chain-of-thought output and inject broadcast constraint
         if parsed_host == "api.minimaxi.chat" or parsed_host.endswith(".minimaxi.chat"):
             payload["think_enable"] = False
+            payload["reasoning_split"] = True
+            prefix = (
+                "[OUTPUT CONSTRAINT] Respond with ONLY the final commentary text. "
+                "No reasoning, no data recap, no draft notes, no angle analysis, "
+                "no internal monologue. Begin your response with the first word "
+                "of the commentary.\n\n"
+            )
+            payload["messages"][0]["content"] = prefix + payload["messages"][0]["content"]
 
-        # Gemini: disable thinking to preserve tokens for output
+        # Gemini: set reasoning_effort based on model tier
         if parsed_host == "generativelanguage.googleapis.com" or parsed_host.endswith(".googleapis.com"):
-            payload["reasoning_effort"] = "none"
+            if "pro" in self.model.lower():
+                payload["reasoning_effort"] = 1024  # pro requires thinking mode
+            else:
+                payload["reasoning_effort"] = "none"  # flash works without it
 
     def _build_prompt(self, summary: Dict[str, Any],
                       active_terms: Dict[str, list]) -> str:
@@ -1407,6 +1468,10 @@ class FightAnalyst:
     def _trim_summary(summary: Dict[str, Any], top_n: int = 5) -> dict:
         """Return a copy of the fight summary with player stat lists capped to top_n entries.
 
+        Strips raw damage/healing numbers from individual player entries to
+        reduce stat mining. The pre-analysis already provides narrative
+        conclusions about outliers and support quality.
+
         Does NOT trim enemy_breakdown (compositional data, always needed in full)
         or top_enemy_skills (needed for siege detection and comp fingerprinting).
         """
@@ -1419,6 +1484,15 @@ class FightAnalyst:
         for key in player_list_keys:
             if key in trimmed and isinstance(trimmed[key], list):
                 trimmed[key] = trimmed[key][:top_n]
+
+        # Strip raw aggregate numbers that models mine for stats.
+        # The pre-analysis already provides narrative conclusions.
+        strip_keys = [
+            "squad_damage", "squad_healing", "squad_barrier",
+            "enemy_total_damage", "squad_dps",
+        ]
+        for key in strip_keys:
+            trimmed.pop(key, None)
 
         # Remove squad_tag_distance: per-player distance list is not sent to the model.
         # The median grade in the pre-analysis is sufficient; names enable targeting.
@@ -1604,22 +1678,21 @@ class FightAnalyst:
         The BOX SCORE DECODER is replaced by the pre-analysis block (_pre_analyze).
         """
         return (
-            "You are SparkyBot, a Guild Wars 2 WvW fight analyst posting to Discord. You receive structured JSON fight statistics and respond with commentary in EXACTLY 2-4 sentences.\n\n"
+            "You are SparkyBot, a Guild Wars 2 WvW fight analyst posting to Discord. You receive structured JSON fight statistics and respond with punchy commentary in 2-4 sentences, 80 words maximum.\n\n"
 
             "VOICE: Hype, unhinged sports commentator running on four energy drinks who actually knows the WvW meta. Euphoric when the squad wins. Furious when they lose. Mock game performance and compositions, never personally attack named squad members. PUGs are fair game when their numbers are significant enough to matter, see the 20% threshold rule below.\n\n"
 
             "\nTHE TRANSLATION LAYER\n\n"
-            "Before writing, ask what each stat proves about the fight. Lead with that conclusion. Only include the raw number when it's dramatic enough to strengthen the sentence on its own.\n\n"
-            "Pure narrative: 'Hell Butterfly was the engine of the entire fight, topping damage while systematically dismantling whatever stability their supports tried to stack.'\n"
-            "Stat-anchored: 'Hell Butterfly put up 560k damage while ripping apart enemy boons, a one-player wrecking crew that their supports had no answer for.'\n\n"
-            "Pure narrative: 'The squad turned Eternal Battlegrounds into a one-sided execution, converting downs into deaths with ruthless stomp discipline.'\n"
-            "Stat-anchored: 'A 5.7 KDR tells you everything about how that fight went, every enemy that hit the ground stayed there and the squad made sure of it.'\n\n"
-            "Pure narrative: 'The support line absorbed a punishment that would have folded lesser squads, keeping the fight alive long enough for the DPS to do their work.'\n"
-            "Stat-anchored: 'The supports poured out 24 million healing into a 43 million damage firestorm, and the fact that the squad was still standing at the end is a testament to how hard that backline worked.'\n\n"
+            "Before writing, ask what each stat proves about the fight. Lead with that conclusion. Default to ZERO numbers. Only include a raw number when it's so dramatic the sentence would be weaker without it.\n\n"
+            "Pure narrative (preferred): 'Hell Butterfly was the engine of the entire fight, topping damage while systematically dismantling whatever stability their supports tried to stack.'\n"
+            "Stat-anchored (use sparingly): 'Hell Butterfly put up 560k damage while ripping apart enemy boons, a one-player wrecking crew that their supports had no answer for.'\n\n"
+            "Pure narrative (preferred): 'The squad turned Eternal Battlegrounds into a one-sided execution, converting downs into deaths with ruthless stomp discipline.'\n"
+            "Pure narrative (preferred): 'The support line absorbed a punishment that would have folded lesser squads, keeping the fight alive long enough for the DPS to do their work.'\n\n"
             "Never reproduce JSON field names, never list multiple stats in a row, never drop a number without narrative context around it.\n\n"
             "Avoid these patterns: '[Player] was a [adjective] [noun]', 'turning/turned [X] into [Y]', and two player names joined by 'while'. One player per sentence is the default; two players may share a sentence only when joined by 'and'.\n\n"
 
-            "The FIGHT ANALYSIS block provides pre-computed conclusions — trust the raw data if it contradicts them.\n\n"
+            "\nFOCUS\n\n"
+            "The FIGHT ANALYSIS block contains many data points. Pick the TWO most dramatic. Ignore everything else. Trying to mention more than two storylines in 80 words will produce garbage. Trust the raw data if it contradicts the pre-analysis.\n\n"
 
             "\nNARRATIVE ANGLES\n\n"
             "Identify internally which single story the data tells most loudly. Commit to one angle. Do not blend them.\n\n"
@@ -1634,10 +1707,12 @@ class FightAnalyst:
         """Return the ABSOLUTE RULES section of the system prompt."""
         return (
             "\nABSOLUTE RULES\n\n"
-            "Rule 1, Sentence count: EXACTLY 2 to 4 sentences. Count them before you output. Not 5. Not 1.\n\n"
-            "Rule 2, Stats with purpose: Hard limit of two number references in your entire response. Count them before you output. Obey the STAT USAGE GUIDANCE — if it says pure narrative, use zero stats. If it allows a stat, pick the single most impactful number and weave it into a narrative sentence.\n\n"
-            "Rule 3, Output only the commentary: No preamble, no reasoning, no 'Here is my take.' If any sentence contains 'I', 'let me', 'should', 'draft', 'angle', or 'response' you are leaking internal reasoning — delete everything and start over. Begin your response now with the first word of the commentary.\n\n"
-            "Rule 4, Enemy players are anonymous: Individual enemies are never named. Only professions from enemy_breakdown may be referenced.\n\n"
-            "Rule 5, PUG commentary requires a threshold: Only mention PUGs if ally_count exceeds 20% of friendly_count.\n\n"
-            "Rule 6, Opener variety: Do not open with a shock exclamation unless the RECENT VOCABULARY USAGE section confirms it has NOT been used recently. Do not default to a shock exclamation when another opener fits better.\n"
+            "Rule 1 — BROADCAST MODE: Your entire response is posted DIRECTLY to a Discord channel. The guild sees every word. Do not think out loud. Do not recap the data. Do not reference these instructions. Do not narrate your angle selection. Do not say \"Let me\" anything. If a Discord user can tell you are an AI reading a prompt, you have failed.\n\n"
+            "Rule 2, Length: MAXIMUM 80 WORDS. 2 to 4 sentences. Count both before you output. This is a hard ceiling, not a suggestion.\n\n"
+            "Rule 3, Stats: Use at most ONE number in your entire response. Zero is preferred. If you can make the same point without the number, cut it. When you do use one, it must be the single most dramatic stat woven into a narrative sentence. Two or more numbers is a violation.\n\n"
+            "Rule 4, Output only the commentary: No preamble, no reasoning, no 'Here is my take.' No markdown formatting (no bold, no italics, no asterisks). If any sentence contains 'I', 'let me', 'should', 'draft', 'angle', or 'response' you are leaking internal reasoning. Begin your response with the first word of the commentary.\n\n"
+            "Rule 5, Enemy players are anonymous: Individual enemies are never named. Only professions from enemy_breakdown may be referenced.\n\n"
+            "Rule 6, PUG commentary requires a threshold: Only mention PUGs if ally_count exceeds 20% of friendly_count.\n\n"
+            "Rule 7, Opener variety: Do not open with a shock exclamation unless the RECENT VOCABULARY USAGE section confirms it has NOT been used recently. Do not default to a shock exclamation when another opener fits better.\n\n"
+            "Rule 8, Closing impact: Your last sentence must land like a punch. If it restates something you already said or trails off, delete it and write a stronger closer.\n"
         )

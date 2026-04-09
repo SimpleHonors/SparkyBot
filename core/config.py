@@ -66,6 +66,7 @@ class Config:
             'aiModel': '',
             'aiSystemPrompt': '',
             'aiMaxTokens': '350',
+            'aiTimeout': '30',
             'aiPromptVersion': '0',
             'aiVocabWeightShock': '33',
             'aiVocabWeightPositive': '33',
@@ -198,6 +199,7 @@ class Config:
         self.ai_model = self._config.get('AI', 'aiModel')
         self.ai_system_prompt = self._config.get('AI', 'aiSystemPrompt')
         self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 350)
+        self.ai_timeout = self._get_int('AI', 'aiTimeout', 30)
         self.ai_prompt_version = self._get_int('AI', 'aiPromptVersion', 0)
         self.ai_vocab_weight_shock = self._get_int('AI', 'aiVocabWeightShock', 33) / 100.0
         self.ai_vocab_weight_positive = self._get_int('AI', 'aiVocabWeightPositive', 33) / 100.0

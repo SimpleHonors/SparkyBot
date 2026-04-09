@@ -155,15 +155,61 @@ Optional AI-powered fight commentary powered by any OpenAI-compatible API.
 | Setting | Description |
 |---------|-------------|
 | Enable AI Fight Analysis | Toggle AI commentary on or off |
-| Provider | Preset API configurations (see tested providers below) |
+| Provider | Preset API configurations (see AI Model Recommendations below) |
 | API Base URL | The API endpoint URL (auto-filled from provider preset) |
 | API Key | Your API key (blank for local models like Ollama/LM Studio) |
 | Model | Model name — select from dropdown or type manually |
 | Refresh Models | Fetch available models from the API (falls back to preset list) |
 | Max Tokens | Response length limit (default 1000) |
+| API Timeout | Per-attempt timeout in seconds (default 30). With up to 3 attempts, worst-case wall time is roughly 3x this value. |
 | System Prompt | Custom instructions for the AI — click "Edit System Prompt..." for a full-size editor with a Reset to Default button |
 
 When enabled, AI commentary is posted to both Discord and Twitch after each fight. On Discord, it appears as a separate embed under the header "[YourBotName] Hot Take and Bad Advice!" On Twitch, it's sent as a plain-text message prefixed with "[YourBotName] Hot Take and Bad Advice! —". The fight report is never delayed by the AI — stats go out first, commentary follows. If the AI request times out or fails, it retries up to 2 additional times before giving up.
+
+## AI Model Recommendations
+
+SparkyBot works with any OpenAI-compatible API. We tested 50+ models across real WvW fights and graded on rule compliance, narrative quality, and output variety. Cost is per 100 fights based on OpenRouter pricing.
+
+### Best Free
+
+| Model | Provider | Speed | Setup |
+|-------|----------|-------|-------|
+| Gemini 2.5 Flash | Google | ~1.4s | Free tier at [Google AI Studio](https://aistudio.google.com/apikey). Select "Google Gemini" as provider, model `gemini-2.5-flash`. 20/20 perfect score. |
+| Gemini 3 Flash Preview | Google | ~2s | Same setup, model `gemini-3-flash-preview`. 19/20. Currently in preview. |
+| Gemini 3.1 Flash Lite | Google | ~2s | Same setup, model `gemini-3.1-flash-lite-preview`. 19/20. Currently in preview. |
+
+Gemini 2.5 Flash is the best free model available. Google's free tier is generous enough for all-night WvW sessions.
+
+### Best Quality
+
+| Model | Provider | Score | Speed | Why |
+|-------|----------|-------|-------|-----|
+| GPT-5.4 Mini | OpenAI | 20/20 A | ~1.4s | Perfect score. Fast. Best balance of quality, speed, and cost. |
+| Grok 4.20 | xAI | 20/20 A | ~1.1s | Perfect score. Fastest model tested. Zero stat violations. |
+| DeepSeek V3.2 | DeepSeek | 20/20 A | ~4s | Perfect score. Cheapest premium model at $0.09/100 fights. |
+| Gemini 2.5 Flash | Google | 20/20 A | ~1.4s | Perfect score and free. No reason not to start here. |
+| GPT-5.3-Codex | OpenAI | 20/20 A | ~2s | Perfect across 16 live fights. Being replaced by GPT-5.4. |
+| DeepSeek R1 | DeepSeek | 20/20 A | ~16s | Perfect score. Best output variety. Slow but worth the wait. |
+
+### Best Value (via [OpenRouter](https://openrouter.ai/))
+
+| Model | Score | $/100 fights | Fights per $1 |
+|-------|-------|-------------|---------------|
+| Gemini 2.0 Flash | 19/20 A | $0.04 | 2,427 |
+| Gemini 2.5 Flash | 20/20 A | $0.06 | 1,618 |
+| GPT-5.4 Nano | 17/20 A | $0.08 | 1,236 |
+| DeepSeek V3.2 | 20/20 A | $0.09 | 1,098 |
+| Gemini 3.1 Flash Lite | 19/20 A | $0.11 | 935 |
+| Gemini 3 Flash Preview | 19/20 A | $0.20 | 506 |
+| GPT-5.4 Mini | 20/20 A | $0.29 | 339 |
+| DeepSeek R1 | 20/20 A | $0.31 | 318 |
+| Grok 4.20 | 20/20 A | $0.84 | 119 |
+| GPT-5.4 | 19/20 A | $0.99 | 101 |
+| Claude Sonnet 4.6 | 19/20 A | $1.17 | 85 |
+
+A typical WvW night (20 fights) costs less than a penny on Gemini, 2 cents on DeepSeek V3.2, and 6 cents on GPT-5.4 Mini. Cost is effectively irrelevant for all models listed here.
+
+All models above are available through [OpenRouter](https://openrouter.ai/) with a single API key. Select "OpenRouter" as provider and use the full model ID (e.g. `openai/gpt-5.4-mini`, `deepseek/deepseek-v3.2`, `google/gemini-2.5-flash`).
 
 ### TTS (Local Voice Playback + Discord Audio)
 
@@ -193,42 +239,6 @@ Optional local text-to-speech reads AI commentary aloud on your machine after ea
 **Discord audio attachment:** When enabled, the generated audio is posted as a separate message immediately after the AI commentary embed. On Discord desktop it renders as an inline audio player below the commentary. On Discord mobile it appears as a downloadable attachment (Discord limitation).
 
 **Audio generation:** When both local playback and Discord attachment are enabled, audio is generated only once and reused for both — no double-generation or API cost.
-
-#### Tested Providers
-
-AI Fight Analysis has been **tested and confirmed working** with:
-
-- **Google Gemini** — free tier available at [Google AI Studio](https://aistudio.google.com/apikey). Recommended model: `gemini-2.5-flash`
-- **MiniMax** — sign up at [minimaxi.chat](https://www.minimaxi.chat/). Recommended model: `MiniMax-M2.7`
-- **OpenRouter** — sign up at [openrouter.ai](https://openrouter.ai/). Offers dozens of completely free models — no credit card required, just an API key. See recommended free models below.
-
-#### OpenRouter Free Models (Recommended)
-
-[OpenRouter](https://openrouter.ai/) is the easiest way to try AI Fight Analysis at zero cost. They offer 29+ free models from major providers, all accessible through one API key. Free models have rate limits (typically 20 requests/minute, 200 requests/day) but that's more than enough for WvW fight reports.
-
-To use a free model, select "OpenRouter" as your provider in Settings → AI, enter your OpenRouter API key, and type one of these model IDs in the Model field (free model IDs always end with `:free`):
-
-| Model | Why It's Good for SparkyBot |
-|-------|----------------------------|
-| `nvidia/nemotron-3-super-120b-a12b:free` | Large 120B model, great output quality. Tested and confirmed working. |
-| `meta-llama/llama-3.3-70b-instruct:free` | Strong general-purpose model, good at following instructions and staying concise. |
-| `mistralai/mistral-small-3.1-24b-instruct:free` | Fast and instruction-focused. Good at respecting length limits. |
-| `stepfun/step-3.5-flash:free` | Activates only 11B of 196B parameters per token — fast with solid quality. |
-| `openrouter/free` | Auto-router that picks the best available free model for each request. Easiest option. |
-
-Free model availability can change over time. Browse the full list at [openrouter.ai/collections/free-models](https://openrouter.ai/collections/free-models).
-
-#### Untested Providers
-
-The following providers are included as presets but **have not been tested** by the developer. They should work since they all implement the standard OpenAI-compatible chat completions API, but your mileage may vary. If you test one and it works (or doesn't), please [open an issue](https://github.com/SimpleHonors/SparkyBot/issues) to let us know:
-
-- OpenAI (`gpt-4o-mini`)
-- Groq (`llama-3.1-8b-instant`)
-- Together AI (`Llama-3.1-8B-Instruct-Turbo`)
-- Mistral (`mistral-small-latest`)
-- Ollama — local, no API key needed
-- LM Studio — local, no API key needed
-- Custom — any OpenAI-compatible endpoint
 
 ---
 
@@ -336,6 +346,7 @@ SparkyBot/
 - The AI commentary uses Discord's 4096-character embed description limit and truncates at sentence boundaries as a safety net
 
 **AI commentary times out**
+- Increase the API Timeout in Settings → AI (default 30 seconds)
 - SparkyBot retries up to 2 additional times on timeout or server error before giving up
 - If timeouts are frequent, try a different AI provider or model — some models are slower than others
 - Check your internet connection and the AI provider's status page

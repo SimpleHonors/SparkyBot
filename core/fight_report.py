@@ -1004,8 +1004,6 @@ class FightReport:
     def get_ai_summary(self) -> Dict[str, Any]:
         """Export fight data as a structured dict for AI analysis."""
         squad_dead = sum(p.dead for p in self.players)
-        ally_dead = sum(a.dead for a in self._allies)
-        ally_damage = sum(a.damage for a in self._allies)
         squad_kdr = self.total_kills / squad_dead if squad_dead > 0 else float(self.total_kills)
         enemy_dead = sum(e.dead for e in self.enemies)
 
@@ -1129,11 +1127,9 @@ class FightReport:
         if val := get_outlier(self.players, lambda p: p.stab_uptime, 20.0): outliers["stability_uptime"] = {**val, "unit": "stability uptime"}
         if val := get_outlier(self.players, lambda p: p.aegis_uptime, 5.0): outliers["aegis_uptime"] = {**val, "unit": "aegis uptime"}
 
-        all_bursts = self._parse_burst_windows()
         if val := get_outlier(all_bursts, lambda w: w.dmg_4s, 20000): outliers["burst_damage_4s"] = {**val, "unit": "burst damage (4s)"}
 
         return {
-            "outliers": outliers,
             "outcome": outcome,
             "zone": self.zone,
             "commander": self.commander,

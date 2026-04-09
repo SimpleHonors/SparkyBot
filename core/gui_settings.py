@@ -49,6 +49,12 @@ class SettingsWindow(QWidget):
     sig_sparkybot_latest = pyqtSignal(str)
     sig_update_complete = pyqtSignal(str)  # version string
 
+    # Thread-safe UI signals for test/refresh operations
+    _sig_models_result = pyqtSignal(list, str)      # models, source
+    _sig_ai_test_done = pyqtSignal(str, bool)        # message, success
+    _sig_twitch_test_done = pyqtSignal(str, bool)    # message, success
+    _sig_tts_test_done = pyqtSignal(str, bool)       # message, success
+
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
@@ -267,21 +273,25 @@ class SettingsWindow(QWidget):
 
         self.twitch_test_status.setText("Connecting...")
         self.twitch_test_btn.setEnabled(False)
+        use_tls = self.twitch_use_tls.isChecked()
 
         import threading
         def _test():
             try:
                 from core.twitch_bot import TwitchBot
-                bot = TwitchBot(token, channel, use_tls=self.twitch_use_tls.isChecked())
+                bot = TwitchBot(token, channel, use_tls=use_tls)
                 bot.send_message("SparkyBot Twitch connection test — if you see this, it works!")
                 bot.close()
-                self.twitch_test_status.setText("✓ Message sent successfully!")
+                self._sig_twitch_test_done.emit("✓ Message sent successfully!", True)
             except Exception as e:
-                self.twitch_test_status.setText(f"✗ Connection failed: {e}")
-            finally:
-                self.twitch_test_btn.setEnabled(True)
+                self._sig_twitch_test_done.emit(f"✗ Connection failed: {e}", False)
 
         threading.Thread(target=_test, daemon=True).start()
+
+    def _on_twitch_test_done(self, message: str, success: bool):
+        """Slot: display Twitch test result (main thread)."""
+        self.twitch_test_status.setText(message)
+        self.twitch_test_btn.setEnabled(True)
 
     def _update_color_preview(self):
         """Update the color preview button's background."""
@@ -545,6 +555,20 @@ class SettingsWindow(QWidget):
         self.ai_max_tokens.setRange(100, 4000)
         self.ai_max_tokens.setValue(350)
         form.addRow("Max Tokens:", self.ai_max_tokens)
+
+        # API Timeout
+        self.ai_timeout = QSpinBox()
+        self.ai_timeout.setRange(10, 120)
+        self.ai_timeout.setValue(30)
+        self.ai_timeout.setSuffix(" seconds")
+        form.addRow("API Timeout:", self.ai_timeout)
+
+        # API Timeout
+        self.ai_timeout = QSpinBox()
+        self.ai_timeout.setRange(10, 120)
+        self.ai_timeout.setValue(30)
+        self.ai_timeout.setSuffix(" seconds")
+        form.addRow("API Timeout:", self.ai_timeout)
 
         # System Prompt — mode selector (Default vs Custom) with preview
         prompt_layout = QVBoxLayout()
@@ -968,46 +992,62 @@ class SettingsWindow(QWidget):
     def _test_tts(self):
         self.tts_test_btn.setEnabled(False)
         self.tts_test_status.setText("Generating audio...")
-        import threading
 
+        # Capture all widget values on the main thread before spawning background work
+        cfg_provider = self.tts_provider.currentText()
+        cfg_edge_voice = self.tts_edge_voice.currentText().strip() or "en-GB-RyanNeural"
+        cfg_el_api_key = self.tts_elevenlabs_api_key.text().strip()
+        cfg_el_voice_id = self.tts_elevenlabs_voice_id.text().strip() or "JBFqnCBsd6RMkjVDRZzb"
+        cfg_el_model = self.tts_elevenlabs_model.currentText().strip() or "eleven_multilingual_v2"
+        cfg_el_stability = self.tts_el_stability.value() / 100.0
+        cfg_el_similarity = self.tts_el_similarity.value() / 100.0
+        cfg_el_style = self.tts_el_style.value() / 100.0
+        cfg_el_speaker_boost = self.tts_el_speaker_boost.isChecked()
+        cfg_el_speed = self.tts_el_speed.value()
+        cfg_volume = self.tts_volume.value()
+        tts_client = getattr(self, '_tts_client', None)
+
+        import threading
         def _run():
             try:
                 from core.tts import generate_tts_bytes
 
                 class _Cfg:
-                    tts_provider = self.tts_provider.currentText()
-                    tts_edge_voice = self.tts_edge_voice.currentText().strip() or "en-GB-RyanNeural"
-                    tts_elevenlabs_api_key = self.tts_elevenlabs_api_key.text().strip()
-                    tts_elevenlabs_voice_id = self.tts_elevenlabs_voice_id.text().strip() or "JBFqnCBsd6RMkjVDRZzb"
-                    tts_elevenlabs_model = self.tts_elevenlabs_model.currentText().strip() or "eleven_multilingual_v2"
-                    tts_elevenlabs_stability = self.tts_el_stability.value() / 100.0
-                    tts_elevenlabs_similarity_boost = self.tts_el_similarity.value() / 100.0
-                    tts_elevenlabs_style = self.tts_el_style.value() / 100.0
-                    tts_elevenlabs_speaker_boost = self.tts_el_speaker_boost.isChecked()
-                    tts_elevenlabs_speed = self.tts_el_speed.value()
+                    tts_provider = cfg_provider
+                    tts_edge_voice = cfg_edge_voice
+                    tts_elevenlabs_api_key = cfg_el_api_key
+                    tts_elevenlabs_voice_id = cfg_el_voice_id
+                    tts_elevenlabs_model = cfg_el_model
+                    tts_elevenlabs_stability = cfg_el_stability
+                    tts_elevenlabs_similarity_boost = cfg_el_similarity
+                    tts_elevenlabs_style = cfg_el_style
+                    tts_elevenlabs_speaker_boost = cfg_el_speaker_boost
+                    tts_elevenlabs_speed = cfg_el_speed
 
                 audio_bytes = generate_tts_bytes(
                     "SparkyBot TTS is working. Let's get those bags.", _Cfg()
                 )
                 if not audio_bytes:
-                    self.tts_test_status.setText("✗ Audio generation failed — check logs.")
+                    self._sig_tts_test_done.emit("✗ Audio generation failed — check logs.", False)
                     return
 
-                client = getattr(self, '_tts_client', None)
-                if client is not None:
-                    client.update_volume(self.tts_volume.value())
-                    client.speak_from_bytes(audio_bytes)
-                    self.tts_test_status.setText("✓ Audio queued — check your speakers.")
+                if tts_client is not None:
+                    tts_client.update_volume(cfg_volume)
+                    tts_client.speak_from_bytes(audio_bytes)
+                    self._sig_tts_test_done.emit("✓ Audio queued — check your speakers.", True)
                 else:
-                    self.tts_test_status.setText(
-                        "✓ Audio generated successfully. Save & restart to enable local playback."
+                    self._sig_tts_test_done.emit(
+                        "✓ Audio generated successfully. Save & restart to enable local playback.", True
                     )
             except Exception as e:
-                self.tts_test_status.setText(f"Test failed: {e}")
-            finally:
-                self.tts_test_btn.setEnabled(True)
+                self._sig_tts_test_done.emit(f"Test failed: {e}", False)
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def _on_tts_test_done(self, message: str, success: bool):
+        """Slot: display TTS test result (main thread)."""
+        self.tts_test_status.setText(message)
+        self.tts_test_btn.setEnabled(True)
 
     def _on_ai_provider_changed(self, provider_name: str):
         """Fill in base URL and model from preset, then refresh model list."""
@@ -1032,6 +1072,7 @@ class SettingsWindow(QWidget):
 
         self.ai_refresh_models_btn.setEnabled(False)
         self.ai_refresh_models_btn.setText("Fetching...")
+        current_provider = self.ai_provider.currentText()
 
         import threading
         def _fetch():
@@ -1041,28 +1082,31 @@ class SettingsWindow(QWidget):
 
             if not models:
                 # Fallback to preset model list
-                provider = self.ai_provider.currentText()
-                preset = PRESETS.get(provider, {})
+                preset = PRESETS.get(current_provider, {})
                 models = preset.get("models", [])
                 source = "preset"
 
-            self.ai_refresh_models_btn.setEnabled(True)
-            self.ai_refresh_models_btn.setText("Refresh Models")
-
-            if models:
-                current = self.ai_model.currentText()
-                self.ai_model.clear()
-                self.ai_model.addItems(models)
-                idx = self.ai_model.findText(current)
-                if idx >= 0:
-                    self.ai_model.setCurrentIndex(idx)
-                elif current:
-                    self.ai_model.setEditText(current)
-                self.ai_test_status.setText(f"Loaded {len(models)} models (from {source})")
-            else:
-                self.ai_test_status.setText("No models found — type a model name manually")
+            self._sig_models_result.emit(models, source)
 
         threading.Thread(target=_fetch, daemon=True).start()
+
+    def _on_models_result(self, models: list, source: str):
+        """Slot: apply fetched model list to combo box (main thread)."""
+        self.ai_refresh_models_btn.setEnabled(True)
+        self.ai_refresh_models_btn.setText("Refresh Models")
+
+        if models:
+            current = self.ai_model.currentText()
+            self.ai_model.clear()
+            self.ai_model.addItems(models)
+            idx = self.ai_model.findText(current)
+            if idx >= 0:
+                self.ai_model.setCurrentIndex(idx)
+            elif current:
+                self.ai_model.setEditText(current)
+            self.ai_test_status.setText(f"Loaded {len(models)} models (from {source})")
+        else:
+            self.ai_test_status.setText("No models found — type a model name manually")
 
     def _test_ai_connection(self):
         """Send a test request to verify the AI connection works."""
@@ -1121,12 +1165,16 @@ class SettingsWindow(QWidget):
         def _run_test():
             result = analyst.analyze(test_summary, timeout=15)
             if result:
-                self.ai_test_status.setText(f"Success! Response:\n{result[:200]}")
+                self._sig_ai_test_done.emit(f"Success! Response:\n{result[:200]}", True)
             else:
-                self.ai_test_status.setText("Failed — check URL, key, and model name")
-            self.ai_test_btn.setEnabled(True)
+                self._sig_ai_test_done.emit("Failed — check URL, key, and model name", False)
 
         threading.Thread(target=_run_test, daemon=True).start()
+
+    def _on_ai_test_done(self, message: str, success: bool):
+        """Slot: display AI test result (main thread)."""
+        self.ai_test_status.setText(message)
+        self.ai_test_btn.setEnabled(True)
 
     def _edit_vocabulary(self, initial_tab: str = "shock"):
         """Open a structured dialog for editing vocabulary terms.
@@ -1432,10 +1480,10 @@ class SettingsWindow(QWidget):
             if not term:
                 validation.setText("Term is required.")
                 return
-            if category == "gates" and not condition_input.text().strip():
+            if category == "gates" and not condition_input.toPlainText().strip():
                 validation.setText("Triggers when is required.")
                 return
-            if category == "gates" and not instruction_input.text().strip():
+            if category == "gates" and not instruction_input.toPlainText().strip():
                 validation.setText("SparkyBot should is required.")
                 return
 
@@ -1448,8 +1496,8 @@ class SettingsWindow(QWidget):
             if desc_input.toPlainText().strip():
                 result["desc"] = desc_input.toPlainText().strip()
             if category == "gates":
-                result["condition"] = condition_input.text().strip()
-                result["instruction"] = instruction_input.text().strip()
+                result["condition"] = condition_input.toPlainText().strip()
+                result["instruction"] = instruction_input.toPlainText().strip()
             out.clear()
             out.update(result)
             dialog.accept()
@@ -2212,6 +2260,12 @@ class SettingsWindow(QWidget):
             lambda t: self.sparkybot_latest_label.setText(t)
         )
 
+        # Test/refresh operation signals
+        self._sig_models_result.connect(self._on_models_result)
+        self._sig_ai_test_done.connect(self._on_ai_test_done)
+        self._sig_twitch_test_done.connect(self._on_twitch_test_done)
+        self._sig_tts_test_done.connect(self._on_tts_test_done)
+
     def _browse_folder(self, line_edit: QLineEdit):
         """Open folder browser dialog"""
         folder = QFileDialog.getExistingDirectory(
@@ -2306,6 +2360,7 @@ class SettingsWindow(QWidget):
         self.ai_api_key.setText(self.config.ai_api_key)
         self.ai_model.setEditText(self.config.ai_model)
         self.ai_max_tokens.setValue(self.config.ai_max_tokens)
+        self.ai_timeout.setValue(self.config.ai_timeout)
         if self.config.ai_system_prompt:
             self.ai_prompt_mode.setCurrentText("Custom")
             self.ai_system_prompt.setPlainText(self.config.ai_system_prompt)
@@ -2447,6 +2502,7 @@ class SettingsWindow(QWidget):
         cfg('AI', 'aiApiKey', self.ai_api_key.text())
         cfg('AI', 'aiModel', self.ai_model.currentText())
         cfg('AI', 'aiMaxTokens', str(self.ai_max_tokens.value()))
+        cfg('AI', 'aiTimeout', str(self.ai_timeout.value()))
         if self.ai_prompt_mode.currentText().startswith("Default"):
             cfg('AI', 'aiSystemPrompt', '')
             from core.ai_analyst import DEFAULT_PROMPT_VERSION

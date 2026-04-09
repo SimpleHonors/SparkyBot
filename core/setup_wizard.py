@@ -506,7 +506,7 @@ class GW2EIPage(QWizardPage):
                     Q_ARG(int, int(pct))
                 )
 
-            success, message = updater.download_and_update(download_url, progress_cb)
+            success, message = updater.download_and_update(download_url, version=latest_version, progress_callback=progress_cb)
 
             QMetaObject.invokeMethod(
                 self, "_on_download_complete",
@@ -1445,6 +1445,7 @@ class BehaviorPage(QWizardPage):
         # Start watcher on startup
         self.start_watcher_on_startup = QCheckBox("Start watching for logs automatically on launch")
         self.start_watcher_on_startup.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        self.start_watcher_on_startup.setChecked(config.start_watcher_on_startup)
         start_watcher_note = QLabel(
             "When enabled, SparkyBot begins monitoring your log folder immediately "
             "without needing to click Start Watcher."
@@ -1458,6 +1459,7 @@ class BehaviorPage(QWizardPage):
         # Start minimized
         self.start_minimized = QCheckBox("Start minimized to system tray")
         self.start_minimized.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        self.start_minimized.setChecked(config.start_minimized)
         start_minimized_note = QLabel(
             "SparkyBot launches silently in the background. Access it from the system tray icon."
         )
@@ -1470,6 +1472,7 @@ class BehaviorPage(QWizardPage):
         # Close to tray
         self.close_to_tray = QCheckBox("Close to system tray instead of quitting")
         self.close_to_tray.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+        self.close_to_tray.setChecked(config.close_to_tray)
         close_note = QLabel(
             "Clicking the X button hides SparkyBot to the tray instead of exiting the application."
         )
