@@ -1006,6 +1006,11 @@ class FightReport:
         squad_dead = sum(p.dead for p in self.players)
         squad_kdr = self.total_kills / squad_dead if squad_dead > 0 else float(self.total_kills)
         enemy_dead = sum(e.dead for e in self.enemies)
+        # Squad downs-received (times squad members were downed by the enemy,
+        # regardless of whether they were finished off). Already computed in
+        # get_overview but not previously exported. Needed for item #7
+        # (squad resilience / rez-chain detection) in ai_analyst._pre_analyze.
+        squad_downs_received = sum(p.down_count for p in self.players)
 
         # Determine outcome explicitly
         if squad_kdr >= 2.0 and squad_dead < enemy_dead:
@@ -1129,8 +1134,33 @@ class FightReport:
 
         if val := get_outlier(all_bursts, lambda w: w.dmg_4s, 20000): outliers["burst_damage_4s"] = {**val, "unit": "burst damage (4s)"}
 
+        # Derive fight_shape from the enemy/friendly ratio. Thresholds match
+        # item #1's Decisive Win mood tiers in ai_analyst._pre_analyze so that
+        # a single knob controls both the data label and the downstream mood
+        # logic. Item #6 note: the existing `outcome` field does not consider
+        # numbers at all (it keys off KDR and deaths only), so a 50v18 stomp
+        # and a 35v50 miracle both land on "Decisive Win". fight_shape is the
+        # new, numbers-aware dimension. `outcome` is kept unchanged to avoid
+        # breaking other consumers (Discord embed, Twitch post, history logs).
+        enemy_ct = len(self.enemies)
+        if friendly_count > 0 and enemy_ct > 0:
+            shape_ratio = enemy_ct / friendly_count
+            if shape_ratio > 1.15:
+                fight_shape = "legendary_outnumbered"
+            elif shape_ratio >= 0.75:
+                fight_shape = "comparable"
+            elif shape_ratio >= 0.5:
+                fight_shape = "comfortable"
+            else:
+                fight_shape = "blowout"
+        else:
+            shape_ratio = 0.0
+            fight_shape = "unknown"
+
         return {
             "outcome": outcome,
+            "fight_shape": fight_shape,
+            "fight_shape_ratio": round(shape_ratio, 3),
             "zone": self.zone,
             "commander": self.commander,
             "duration": self._format_duration(),
@@ -1146,6 +1176,7 @@ class FightReport:
             "squad_downs": self.total_downs,
             "squad_kills": self.total_kills,
             "squad_deaths": squad_dead,
+            "squad_downs_received": squad_downs_received,
             "squad_strips": total_strips,
             "squad_cleanses": total_cleanses,
             "squad_healing": total_healing,
