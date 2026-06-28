@@ -44,6 +44,21 @@ class PlayerStats:
     stab_uptime: float = 0.0
     aegis_uptime: float = 0.0
     dist_to_tag: float = 0.0  # average distance to commander (EI distToCom)
+    # M7 calibration additions (v1.7.0)
+    damage_taken: int = 0
+    condi_damage_taken: int = 0
+    downed_damage_taken: int = 0  # damage absorbed while downed (sat-on indicator)
+    resurrects: int = 0
+    resurrect_time: float = 0.0
+    condi_damage: int = 0  # offensive condi damage to enemies (sum dpsTargets)
+    power_damage: int = 0  # offensive power damage to enemies (sum dpsTargets)
+    might_gen: float = 0.0
+    quickness_gen: float = 0.0
+    alacrity_gen: float = 0.0
+    protection_gen: float = 0.0
+    regen_gen: float = 0.0
+    stability_gen: float = 0.0
+    aegis_gen: float = 0.0
 
 
 @dataclass
@@ -269,6 +284,31 @@ class FightReport:
             damage = stats.get('totalDmg', 0)
             dps = self._calc_dps(damage)
 
+            # M7: condi vs power damage split, summed across all enemy targets
+            condi_damage = 0
+            power_damage = 0
+            for tgt_dps_list in p.get('dpsTargets', []):
+                if tgt_dps_list and isinstance(tgt_dps_list[0], dict):
+                    condi_damage += tgt_dps_list[0].get('condiDamage', 0)
+                    power_damage += tgt_dps_list[0].get('powerDamage', 0)
+
+            # M7: boon generation rates (stacks/sec generated to squad) from squadBuffs
+            _BOON_GEN_IDS = {
+                740: 'might_gen', 1187: 'quickness_gen', 30328: 'alacrity_gen',
+                717: 'protection_gen', 718: 'regen_gen',
+                1122: 'stability_gen', 743: 'aegis_gen',
+            }
+            boon_gen = {v: 0.0 for v in _BOON_GEN_IDS.values()}
+            for entry in p.get('squadBuffs', []):
+                if not isinstance(entry, dict):
+                    continue
+                bid = entry.get('id')
+                if bid not in _BOON_GEN_IDS:
+                    continue
+                bd = entry.get('buffData', [{}])
+                if bd and isinstance(bd[0], dict):
+                    boon_gen[_BOON_GEN_IDS[bid]] = bd[0].get('generation', 0.0)
+
             # CC fields — hard_cc from statsAll, soft_cc/immob_cc from target buffs
             hard_cc = stats.get('appliedCrowdControl', 0)
             player_name = p.get('name', '')
@@ -303,6 +343,21 @@ class FightReport:
                 stab_uptime=stab_uptime,
                 aegis_uptime=aegis_uptime,
                 dist_to_tag=stats.get('distToCom', 0.0),
+                # M7 calibration additions
+                damage_taken=def_data.get('damageTaken', 0),
+                condi_damage_taken=def_data.get('conditionDamageTaken', 0),
+                downed_damage_taken=def_data.get('downedDamageTaken', 0),
+                resurrects=sup_data.get('resurrects', 0),
+                resurrect_time=sup_data.get('resurrectTime', 0.0),
+                condi_damage=condi_damage,
+                power_damage=power_damage,
+                might_gen=boon_gen['might_gen'],
+                quickness_gen=boon_gen['quickness_gen'],
+                alacrity_gen=boon_gen['alacrity_gen'],
+                protection_gen=boon_gen['protection_gen'],
+                regen_gen=boon_gen['regen_gen'],
+                stability_gen=boon_gen['stability_gen'],
+                aegis_gen=boon_gen['aegis_gen'],
             )
 
             if is_ally:
@@ -366,9 +421,9 @@ class FightReport:
         Values sourced from MzFightReporter's ParseBot.mapTeamID().
         WvW and Guild Hall IDs both included.
         """
-        RED = {697, 705, 706, 707, 882, 885, 2520}
+        RED = {697, 705, 706, 707, 882, 885, 886, 2520, 2543}
         GREEN = {39, 2739, 2741, 2752, 2763, 2767}
-        BLUE = {432, 433, 1277, 1989}
+        BLUE = {432, 433, 1277, 1282, 1989}
 
         if team_id in RED:
             return "Red"
@@ -1029,6 +1084,19 @@ class FightReport:
         top_strips = sorted([p for p in self.players if p.boon_strips > 0], key=lambda p: p.boon_strips, reverse=True)[:3]
         top_healers = sorted([p for p in self.players if p.healing > 0], key=lambda p: p.healing, reverse=True)[:3]
 
+        # M7: additional top-N pools for calibration + build inference
+        top_stability = sorted([p for p in self.players if p.stab_uptime > 0], key=lambda p: p.stab_uptime, reverse=True)[:3]
+        top_downed_damage = sorted([p for p in self.players if p.downed_damage > 0], key=lambda p: p.downed_damage, reverse=True)[:3]
+        top_downed_healing = sorted([p for p in self.players if p.downed_healing > 0], key=lambda p: p.downed_healing, reverse=True)[:3]
+        top_dying = sorted([p for p in self.players if p.down_count > 0], key=lambda p: p.down_count, reverse=True)[:3]
+        top_resurrects = sorted([p for p in self.players if p.resurrects > 0], key=lambda p: p.resurrects, reverse=True)[:3]
+        top_damage_taken = sorted([p for p in self.players if p.damage_taken > 0], key=lambda p: p.damage_taken, reverse=True)[:3]
+        top_might_gen = sorted([p for p in self.players if p.might_gen > 0], key=lambda p: p.might_gen, reverse=True)[:3]
+        top_quickness_gen = sorted([p for p in self.players if p.quickness_gen > 0], key=lambda p: p.quickness_gen, reverse=True)[:3]
+        top_alacrity_gen = sorted([p for p in self.players if p.alacrity_gen > 0], key=lambda p: p.alacrity_gen, reverse=True)[:3]
+        top_protection_gen = sorted([p for p in self.players if p.protection_gen > 0], key=lambda p: p.protection_gen, reverse=True)[:3]
+        top_stability_gen = sorted([p for p in self.players if p.stability_gen > 0], key=lambda p: p.stability_gen, reverse=True)[:3]
+
         # Aggregate squad stats for WvW-specific metrics
         total_strips = sum(p.boon_strips for p in self.players)
         total_cleanses = sum(p.cleanse for p in self.players)
@@ -1122,17 +1190,109 @@ class FightReport:
 
             return None
 
-        outliers = {}
-        if val := get_outlier(self.players, lambda p: p.downed_damage, 50000): outliers["down_contribution"] = {**val, "unit": "down damage"}
-        if val := get_outlier(self.players, lambda p: p.boon_strips, 20): outliers["boon_strips"] = {**val, "action": "boons stripped"}
-        if val := get_outlier(self.players, lambda p: p.downs, 5): outliers["outgoing_downs"] = {**val, "unit": "downs"}
-        if val := get_outlier(self.players, lambda p: p.kills, 5): outliers["outgoing_kills"] = {**val, "unit": "kills"}
-        if val := get_outlier(self.players, lambda p: p.cleanse, 50): outliers["cleanses"] = {**val, "unit": "cleanses"}
-        if val := get_outlier(self.players, lambda p: p.healing, 100000): outliers["healing"] = {**val, "unit": "healing"}
-        if val := get_outlier(self.players, lambda p: p.stab_uptime, 20.0): outliers["stability_uptime"] = {**val, "unit": "stability uptime"}
-        if val := get_outlier(self.players, lambda p: p.aegis_uptime, 5.0): outliers["aegis_uptime"] = {**val, "unit": "aegis uptime"}
+        # v1.7.0 — Outlier detection anchored to M7 corpus calibration. EVERY
+        # cumulative metric is divided by fight duration first, then compared
+        # against the corpus's p90 (exceptional) tier. A player only earns
+        # the "MUST be highlighted" signal if their RATE is in the top ~10%
+        # of historical observations, independent of fight length.
+        #
+        # Rationale: per-fight raw counts (e.g. "5 kills", "100 strips") are
+        # meaningless without time context. 5 kills in 30 seconds is legendary;
+        # 5 kills in 8 minutes is mediocre. Old absolute floors silently
+        # rewarded long fights for accumulating big totals on average play.
+        from performance_buckets import _PERFORMANCE_THRESHOLDS  # noqa: E402
 
-        if val := get_outlier(all_bursts, lambda w: w.dmg_4s, 20000): outliers["burst_damage_4s"] = {**val, "unit": "burst damage (4s)"}
+        # Optional cooldown tracker — when present, a (player, axis) pair on
+        # cooldown is skipped and the NEXT qualifying player wins the slot.
+        # Set via FightReport.callout_cooldown attribute before calling
+        # get_ai_summary. Stays None for backwards compat.
+        cooldown = getattr(self, 'callout_cooldown', None)
+
+        # v1.7.0 — Outlier detection anchored to M7 corpus calibration with
+        # per-axis tuning so every axis fires at a similar ~13-15% rate. Each
+        # axis has its own (tier_index, dispersion_gate) calibrated against
+        # the 802-fight corpus. Cumulative metrics are rate-normalized first.
+        #
+        # tier_index: 0=p25, 1=p50, 2=p75, 3=p90, 4=p95
+        # dispersion_gate: 1.0 = no gate (top performer wins outright);
+        #                  1.5 = top must beat next exceptional by 1.5x
+        # scaling: 'per_sec' / 'per_min' / 'absolute' (already rate-like)
+        dur_s = max(self.total_seconds, 1)
+
+        def _rate(raw: float, scaling: str) -> float:
+            if scaling == 'per_sec': return raw / dur_s
+            if scaling == 'per_min': return raw / dur_s * 60
+            return raw
+
+        def calibrated_outlier(items, key_func, axis: str, scaling: str,
+                               tier_idx: int, gate: float, cooldown_axis: str,
+                               name_attr: str = 'name'):
+            """Solo/pair outlier whose rate-on-axis is at tier_idx+ and dominates by `gate`x.
+
+            Skips any candidate whose (name, cooldown_axis) is on cooldown
+            and falls through to the next qualifying player. Maintains rank
+            order — after a skip, the new "first place" gets evaluated for
+            the dispersion gate against the new "second place".
+            """
+            floor = _PERFORMANCE_THRESHOLDS[axis][tier_idx]
+            qualifying = []
+            for it in items:
+                raw = key_func(it)
+                if raw <= 0:
+                    continue
+                if _rate(raw, scaling) >= floor:
+                    qualifying.append((raw, it))
+            qualifying.sort(key=lambda t: t[0], reverse=True)
+
+            # Apply cooldown filter: drop any entry whose (name, axis) is locked.
+            if cooldown is not None:
+                qualifying = [
+                    (raw, it) for raw, it in qualifying
+                    if not cooldown.is_on_cooldown(
+                        getattr(it, name_attr, 'Unknown'), cooldown_axis)
+                ]
+
+            if not qualifying:
+                return None
+            raw1, it1 = qualifying[0]
+            name1 = getattr(it1, name_attr, 'Unknown')
+            if len(qualifying) == 1 or gate <= 1.0:
+                return {"name": name1, "value": int(raw1)}
+            raw2, it2 = qualifying[1]
+            name2 = getattr(it2, name_attr, 'Unknown')
+            if raw1 >= raw2 * gate:
+                return {"name": name1, "value": int(raw1)}
+            if len(qualifying) >= 3 and raw2 >= qualifying[2][0] * gate:
+                return {"name": f"{name1} and {name2}", "value": int(raw1)}
+            return None
+
+        outliers = {}
+        # (label, key_func, axis, scaling, tier_idx, gate, unit_label, unit_key)
+        # Per-axis tuning lands every axis at ~13-15% firing rate over the corpus.
+        _spec = [
+            # Per-axis tuning targets ~12-17% firing rate per axis on the
+            # production data (live re-parses, not the corpus-only sweep).
+            # tier_idx: 0=p25, 1=p50, 2=p75, 3=p90, 4=p95
+            ("down_contribution", lambda p: p.downed_damage,  "downed_damage",    "absolute", 2, 1.5, "down damage",       "unit"),    # p75 + 1.5x
+            ("healing",           lambda p: p.healing,         "healing",          "per_sec",  4, 2.0, "healing",           "unit"),    # p95 + 2.0x (heal usually concentrated)
+            ("boon_strips",       lambda p: p.boon_strips,     "strips_pm",        "per_min",  3, 1.5, "boons stripped",    "action"),  # p90 + 1.5x
+            ("cleanses",          lambda p: p.cleanse,         "cleanses_pm",      "per_min",  4, 2.0, "cleanses",          "unit"),    # p95 + 2.0x
+            ("outgoing_downs",    lambda p: p.downs,           "downs_dealt_pm",   "per_min",  3, 1.5, "downs",             "unit"),    # p90 + 1.5x
+            ("outgoing_kills",    lambda p: p.kills,           "kills_pm",         "per_min",  3, 1.5, "kills",             "unit"),    # p90 + 1.5x
+            ("stability_uptime",  lambda p: p.stab_uptime,     "stability_uptime", "absolute", 3, 1.0, "stability uptime",  "unit"),    # p90 + no gate (stab is rare)
+        ]
+        for label, key, axis, scaling, tier, gate, unit_label, unit_key in _spec:
+            shaped = calibrated_outlier(self.players, key, axis, scaling, tier, gate, label)
+            if shaped:
+                outliers[label] = {**shaped, unit_key: unit_label}
+
+        # burst_4s — fixed 4-second window, no rate normalization
+        burst = calibrated_outlier(all_bursts, lambda w: w.dmg_4s,
+                                   "burst_4s", "absolute", 3, 1.5,
+                                   "burst_damage_4s",
+                                   name_attr='player_name')
+        if burst:
+            outliers["burst_damage_4s"] = {**burst, "unit": "burst damage (4s)"}
 
         # Derive fight_shape from the enemy/friendly ratio. Thresholds match
         # item #1's Decisive Win mood tiers in ai_analyst._pre_analyze so that
@@ -1185,8 +1345,15 @@ class FightReport:
             "enemy_deaths": enemy_dead,
             "enemy_total_damage": enemy_total_damage,
             "top_damage": [
-                {"name": p.name, "profession": self._get_full_profession_name(p.profession[:4].upper()),
-                 "damage": p.damage, "downs": p.downs, "kills": p.kills}
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "damage": p.damage, "downs": p.downs, "kills": p.kills,
+                 # M7: condi share enables build inference (condi vs power)
+                 "condi_share": (p.condi_damage / (p.condi_damage + p.power_damage))
+                                if (p.condi_damage + p.power_damage) > 0 else 0.0,
+                 "damage_taken": p.damage_taken,
+                 "stab_uptime": round(p.stab_uptime, 3),
+                 "resurrects": p.resurrects}
                 for p in top_damage
             ],
             "top_cleanses": [
@@ -1229,4 +1396,77 @@ class FightReport:
                 for p in self.players
             ],
             "outliers": outliers,
+            # M7 calibration additions
+            "squad_resurrects": sum(p.resurrects for p in self.players),
+            "squad_damage_taken": sum(p.damage_taken for p in self.players),
+            "squad_condi_damage": sum(p.condi_damage for p in self.players),
+            "squad_power_damage": sum(p.power_damage for p in self.players),
+            "top_stability": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "stab_uptime": round(p.stab_uptime, 3)}
+                for p in top_stability
+            ],
+            "top_downed_damage": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "downed_damage": p.downed_damage}
+                for p in top_downed_damage
+            ],
+            "top_downed_healing": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "downed_healing": p.downed_healing}
+                for p in top_downed_healing
+            ],
+            "top_dying": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "down_count": p.down_count, "dead": p.dead}
+                for p in top_dying
+            ],
+            "top_resurrects": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "resurrects": p.resurrects, "resurrect_time": round(p.resurrect_time, 1)}
+                for p in top_resurrects
+            ],
+            "top_damage_taken": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "damage_taken": p.damage_taken,
+                 "downed_damage_taken": p.downed_damage_taken,
+                 "dead": p.dead, "down_count": p.down_count}
+                for p in top_damage_taken
+            ],
+            "top_might_gen": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "might_gen": round(p.might_gen, 3)}
+                for p in top_might_gen
+            ],
+            "top_quickness_gen": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "quickness_gen": round(p.quickness_gen, 3)}
+                for p in top_quickness_gen
+            ],
+            "top_alacrity_gen": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "alacrity_gen": round(p.alacrity_gen, 3)}
+                for p in top_alacrity_gen
+            ],
+            "top_protection_gen": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "protection_gen": round(p.protection_gen, 3)}
+                for p in top_protection_gen
+            ],
+            "top_stability_gen": [
+                {"name": p.name,
+                 "profession": self._get_full_profession_name(p.profession[:4].upper()),
+                 "stability_gen": round(p.stability_gen, 3)}
+                for p in top_stability_gen
+            ],
         }

@@ -72,6 +72,8 @@ class Config:
             'aiVocabWeightPositive': '33',
             'aiVocabWeightNegative': '33',
             'aiVocabWeightGates': '33',
+            'aiDisableThinking': 'false',
+            'aiUseV3Pipeline': 'false',
         },
         'Twitch': {
             'enableTwitchBot': 'false',
@@ -201,10 +203,12 @@ class Config:
         self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 350)
         self.ai_timeout = self._get_int('AI', 'aiTimeout', 30)
         self.ai_prompt_version = self._get_int('AI', 'aiPromptVersion', 0)
+        self.ai_use_v3_pipeline = self._config.getboolean('AI', 'aiUseV3Pipeline', fallback=False)
         self.ai_vocab_weight_shock = self._get_int('AI', 'aiVocabWeightShock', 33) / 100.0
         self.ai_vocab_weight_positive = self._get_int('AI', 'aiVocabWeightPositive', 33) / 100.0
         self.ai_vocab_weight_negative = self._get_int('AI', 'aiVocabWeightNegative', 33) / 100.0
         self.ai_vocab_weight_gates = self._get_int('AI', 'aiVocabWeightGates', 33) / 100.0
+        self.ai_disable_thinking = self._config.getboolean('AI', 'aiDisableThinking', fallback=False)
 
         # Twitch settings
         self.enable_twitch = self._config.getboolean('Twitch', 'enableTwitchBot')

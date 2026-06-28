@@ -1,10 +1,12 @@
 # SparkyBot
 
-**A Guild Wars 2 WvW AI-Powered fight log reporter for Discord and Twitch.**
+### The unhinged AI shot-caller that watches your Guild Wars 2 WvW logs, does the math, and roasts your squad in real time — on Discord *and* Twitch, with a voice if you want one.
 
-SparkyBot monitors your ArcDPS combat log folder, parses new WvW fight logs using GW2 Elite Insights, and posts rich fight reports to Discord and Twitch with optional AI commentary and TTS voice playback. Python is required.
+You fought. You died (a little). ArcDPS wrote a log. **Before you've finished typing "gg" SparkyBot has already parsed the entire fight, found the one stat that actually mattered, and posted commentary meaner and funnier than anything your guildies were about to say.**
 
-SparkyBot's default prompt includes strong language and WvW trash talk. This is competitive gaming humor, not personal attacks. Users who prefer milder output can edit the system prompt in Settings.
+It is not affiliated with ArenaNet. It is barely affiliated with good taste. It is, however, *extremely* good at its job.
+
+> ⚠️ SparkyBot's default prompt talks trash. Loudly. This is competitive-gaming humor about a video game, not personal attacks — and it roasts *your own squad* at least as hard as the enemy. Want it polite? Edit the system prompt in Settings. We won't judge. (We will, a little.)
 
 ---
 
@@ -16,18 +18,36 @@ SparkyBot's default prompt includes strong language and WvW trash talk. This is 
 <br><br>
 ![AI Powered Fight Analysis](https://github.com/user-attachments/assets/2d243ab1-7f1e-434d-9006-05b2710d330c)
 
+---
+
+## 🔥 What's New in 1.7.0 — *"The Anti-Slop Update"*
+
+Most AI bots have one fatal tell: they repeat themselves. Same three adjectives. Same "that's not a fight, that's a slaughter" sentence shape. Same poor bastard named MVP nine fights in a row. It reads like a bot because it *is* a bot phoning it in.
+
+**SparkyBot 1.7.0 declared war on that.** Here's the arsenal — and every word of this is real, it's in the code, go read it:
+
+- **🧠 The Anti-Repetition Engine.** SparkyBot remembers what it just said. Every 2-to-4-word phrase, every punchy verb ("shredded," "vaporized," "obliterated"), and every player name it spotlights gets tracked across your session. **Lean on any of them twice and it's benched for at least the next five fights.** Your commentary stops sounding like a broken Mad Lib and starts sounding like someone who was actually paying attention.
+- **📜 The "Narrative Facts" prompt engine (v3).** Instead of dumping a wall of raw JSON at the model and praying, SparkyBot pre-chews the fight into a handful of clean, factual sentences — with player and topic cooldowns baked in *before the text is even built*. The model literally cannot over-name your commander, because the name isn't in front of it to abuse.
+- **🎲 Stochastic seeding.** A high-entropy random (noun, register) pair gets slipped into every prompt to knock the model off its favorite rut. Translation: it gets bored of its own clichés so you don't have to.
+- **🩺 Silent-failure guard + auto-retry.** Reasoning models that "think" themselves into an empty response get caught and retried instead of posting nothing. The stats *never* wait on the AI — they post in seconds regardless.
+- **🧱 Fully modular rewrite.** The old 3,000-line brain got dismantled into focused modules (`vocabulary_tracker`, `narrative_facts`, `fight_analyst`, `freshness_engine`, `callout_cooldown`, and friends). Easier to read, easier to hack, harder to break.
+
+Is it overkill for posting jokes about a video game? **Absolutely.** Did we do it anyway? **Obviously.**
+
+---
+
 ## What It Does
 
 After a WvW fight ends and ArcDPS writes a log, SparkyBot delivers a full combat report within seconds:
 
-- **AI Fight Commentary** (optional): hype, unhinged analyst narration from any OpenAI-compatible LLM, with optional TTS and Discord audio
+- **AI Fight Commentary** (optional): hype, unhinged analyst narration from any OpenAI-compatible LLM, now with the anti-repetition engine above so it never repeats its own bits — plus optional TTS and Discord audio
 - **Quick Report**: KDR, duration, squad/enemy downs, kills, deaths
 - **Squad & Enemy Summaries**: player counts by team color, total damage, DPS
 - **Detailed Stats**: damage contribution, burst windows, strips, cleanses, heals, defense, CCs, downs/kills
 - **Boon Uptime**: defensive and offensive boon uptime per subgroup
 - **Enemy Intel**: top damage skills, composition by profession and team color
 
-Reports use Discord code blocks with team color detection and configurable guild icons. Twitch receives a plain-text summary and AI commentary.
+Reports use Discord code blocks with team color detection and configurable guild icons. Twitch receives a plain-text summary and AI commentary. Enemy players are never named — only their professions. We roast comps, not strangers.
 
 ---
 
@@ -41,12 +61,12 @@ Reports use Discord code blocks with team color detection and configurable guild
 
 ### Installation
 
-1. **Install Python 3.9+** from [python.org](https://www.python.org/downloads/). During installation, check the box that says **"Add Python to PATH"** (this is critical; SparkyBot will not launch without it).
+1. **Install Python 3.9+** from [python.org](https://www.python.org/downloads/). During installation, check the box that says **"Add Python to PATH"** (this is critical; SparkyBot will not launch without it, and it will be sad, and so will you).
 2. Download SparkyBot from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases)
 3. Extract the zip to any folder (e.g., `C:\SparkyBot`)
 4. Double-click **SparkyBot.bat**
 
-On first launch, SparkyBot installs dependencies, runs a setup wizard, and starts monitoring.
+On first launch, SparkyBot installs its own dependencies, runs a setup wizard, and starts monitoring. You do not need to be a programmer. You need to be able to double-click a file.
 
 ### Discord Webhook
 
@@ -78,7 +98,7 @@ All settings are in the GUI (right-click system tray icon → Settings). The set
 
 **Display**: toggle individual report sections (damage, heals, defense, CCs, strips, etc.).
 
-**Behavior**: auto-start with Windows, system tray options, auto-watcher, update checking. For hands-free operation, enable Start with Windows + Hide Console + Start Minimized + Start Watcher.
+**Behavior**: auto-start with Windows, system tray options, auto-watcher, update checking. For hands-free operation, enable Start with Windows + Hide Console + Start Minimized + Start Watcher, then never think about it again.
 
 **Updates**: check for SparkyBot and Elite Insights updates from Settings → Updates.
 
@@ -86,12 +106,12 @@ All settings are in the GUI (right-click system tray icon → Settings). The set
 
 | Setting | Description |
 |---------|-------------|
-| Provider | Preset API configurations (OpenAI, Google, xAI, DeepSeek, OpenRouter, local) |
+| Provider | Preset API configurations (OpenAI, Google, xAI, DeepSeek, OpenRouter, MiniMax, Groq, Together, Mistral, local Ollama/LM Studio) |
 | API Key | Your provider API key (blank for local models) |
 | Model | Select from dropdown or type manually |
 | System Prompt | Custom instructions; click "Edit" for full editor with Reset to Default |
 
-AI commentary posts as a separate embed after the fight report, never delaying stats. Retries up to 2 times on failure.
+AI commentary posts as a separate embed after the fight report, **never delaying stats**. Retries up to 2 times on failure, and the silent-failure guard catches "thought about it, said nothing" responses before they reach you.
 
 ### TTS Settings
 
@@ -109,7 +129,7 @@ ElevenLabs users can configure voice ID, stability, similarity, style, and speed
 
 ## AI Model Recommendations
 
-SparkyBot works with any OpenAI-compatible API. Models tested across real WvW fights, graded on rule compliance, narrative quality, and variety.
+SparkyBot works with **any** OpenAI-compatible API. Models below were tested across real WvW fights and graded on rule compliance, narrative quality, and variety.
 
 ### Best Free
 
@@ -138,7 +158,7 @@ SparkyBot works with any OpenAI-compatible API. Models tested across real WvW fi
 | GPT-5.4 Mini | 20/20 | $0.29 |
 | Grok 4.20 | 20/20 | $0.84 |
 
-A typical 20-fight WvW night costs less than a penny on Gemini, 2 cents on DeepSeek, 6 cents on GPT-5.4 Mini. All models above are available through [OpenRouter](https://openrouter.ai/) with a single API key.
+A typical 20-fight WvW night costs **less than a penny** on Gemini, 2 cents on DeepSeek, 6 cents on GPT-5.4 Mini. Yes — a full night of professional-grade roasting costs less than the repair bill on a single bad push. All models above are available through [OpenRouter](https://openrouter.ai/) with a single API key.
 
 ---
 
@@ -163,6 +183,8 @@ python bootstrap.py [options]
 
 **Parsing**: GW2 Elite Insights CLI converts ArcDPS `.evtc` logs to JSON. Parse settings are written fresh each invocation.
 
+**Pre-analysis**: before a single token hits the model, SparkyBot buckets the fight into qualitative tags (calibrated against a corpus of recorded fights), applies player/topic cooldowns, and builds the "Narrative Facts" the model is allowed to talk about. The AI gets *curated truth*, not a firehose.
+
 **Discord**: reports split across batched embeds within API limits (6000 chars, 10 embeds per message). AI commentary follows as a separate message.
 
 **Twitch**: plain-text quick report + AI commentary, each within the 500-char limit. TLS by default, 3-second delay between messages.
@@ -173,25 +195,42 @@ python bootstrap.py [options]
 
 ```
 SparkyBot/
-├── bootstrap.py            # Entry point
-├── main.py                 # PyQt6 application
-├── SparkyBot.bat           # Windows launcher
+├── bootstrap.py                  # Entry point / self-updater
+├── main.py                       # PyQt6 application
+├── SparkyBot.bat                 # Windows launcher
+├── prompts/
+│   ├── sparky_system_v2.md       # Legacy "translate buckets to voice" prompt
+│   └── sparky_system_v3.md       # Calibrated Narrative Facts prompt
 ├── core/
-│   ├── ai_analyst.py       # AI fight commentator
-│   ├── config.py           # Configuration
-│   ├── discord_bot.py      # Discord webhook client
-│   ├── fight_report.py     # Log → embed formatter
-│   ├── file_watcher.py     # File monitoring
-│   ├── gw2ei_invoker.py    # GW2EI CLI wrapper
-│   ├── ei_updater.py       # Elite Insights updater
-│   ├── gui_settings.py     # Settings window
-│   ├── setup_wizard.py     # First-run wizard
-│   ├── tray_manager.py     # System tray
-│   ├── tts.py              # TTS (edge-tts + ElevenLabs)
-│   ├── twitch_bot.py       # Twitch IRC client
-│   └── version.py          # Version number
-├── assets/                 # Icons and images
-└── GW2EI/                  # Elite Insights (auto-managed)
+│   ├── ai_analyst.py             # Back-compat shim (re-exports the split modules)
+│   ├── fight_analyst.py          # Orchestrates a fight → LLM call → post-processing
+│   ├── narrative_facts.py        # v3: builds curated factual sentences for the prompt
+│   ├── pre_digester.py           # Raw EI metrics → qualitative fight buckets
+│   ├── performance_buckets.py    # Per-player performance tiering + build inference
+│   ├── vocabulary_config.py      # Vocabulary palette (dice-rolled per call)
+│   ├── vocabulary_tracker.py     # ⭐ Anti-repetition engine (phrases/verbs/players)
+│   ├── freshness_engine.py       # Cross-fight freshness hints
+│   ├── stochastic_seeds.py       # High-entropy prompt conditioning
+│   ├── callout_cooldown.py       # Commander/topic callout pacing
+│   ├── session_history.py        # Win/loss streak + session context
+│   ├── ai_helpers.py             # Shared helpers, regexes, tag-distance grading
+│   ├── response_post_processor.py# Strips slop, label tics, and thinking traces
+│   ├── silent_failure_guard.py   # Detects empty "I thought about it" responses
+│   ├── providers.py              # Provider presets (base URLs)
+│   ├── config.py                 # Configuration
+│   ├── discord_bot.py            # Discord webhook client
+│   ├── twitch_bot.py             # Twitch IRC client
+│   ├── tts.py                    # TTS (edge-tts + ElevenLabs)
+│   ├── fight_report.py           # Log → embed formatter
+│   ├── file_watcher.py           # File monitoring
+│   ├── gw2ei_invoker.py          # GW2EI CLI wrapper
+│   ├── ei_updater.py             # Elite Insights updater
+│   ├── gui_settings.py           # Settings window
+│   ├── setup_wizard.py           # First-run wizard
+│   ├── tray_manager.py           # System tray
+│   └── version.py                # Version number
+├── assets/                       # Icons and images
+└── GW2EI/                        # Elite Insights (auto-managed, not in repo)
 ```
 
 ---
@@ -209,6 +248,8 @@ SparkyBot/
 **AI cut off mid-sentence**: raise Max Tokens in Settings → AI. Some reasoning models consume tokens on internal thinking before producing output.
 
 **AI times out**: raise API Timeout (default 30s). SparkyBot retries twice. Try a faster model if timeouts persist.
+
+**AI keeps repeating itself**: it shouldn't — that's literally what 1.7.0 fixed — but the anti-repetition memory builds over a session, so the first couple of fights have less history to work with. Give it a few rounds. It gets meaner *and* more varied the longer the night goes.
 
 **Team colors show as "Enemy"**: unmapped team ID. Check console for warnings and [open an issue](https://github.com/SimpleHonors/SparkyBot/issues).
 

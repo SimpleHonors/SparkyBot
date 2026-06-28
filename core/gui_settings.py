@@ -500,7 +500,7 @@ class SettingsWindow(QWidget):
 
     def _create_ai_tab(self) -> QWidget:
         """Create AI analysis configuration tab"""
-        from core.ai_analyst import PRESETS
+        from core.providers import PRESETS
 
         scroll = QScrollArea()
         widget = QWidget()
@@ -552,7 +552,7 @@ class SettingsWindow(QWidget):
 
         # Max tokens
         self.ai_max_tokens = QSpinBox()
-        self.ai_max_tokens.setRange(100, 4000)
+        self.ai_max_tokens.setRange(100, 8000)
         self.ai_max_tokens.setValue(350)
         form.addRow("Max Tokens:", self.ai_max_tokens)
 
@@ -563,12 +563,16 @@ class SettingsWindow(QWidget):
         self.ai_timeout.setSuffix(" seconds")
         form.addRow("API Timeout:", self.ai_timeout)
 
-        # API Timeout
-        self.ai_timeout = QSpinBox()
-        self.ai_timeout.setRange(10, 120)
-        self.ai_timeout.setValue(30)
-        self.ai_timeout.setSuffix(" seconds")
-        form.addRow("API Timeout:", self.ai_timeout)
+        # Disable Thinking / Reasoning Mode
+        self.ai_disable_thinking = QCheckBox("Disable Thinking / Reasoning Mode")
+        self.ai_disable_thinking.setToolTip(
+            "Disable chain-of-thought reasoning for models that support it.\n"
+            "Enable this if AI responses are being truncated because the model\n"
+            "spends its entire token budget on internal reasoning.\n\n"
+            "Affects: Kimi K2.5/K2.6, DeepSeek, Gemini, and any model\n"
+            "routed through OpenRouter that supports reasoning control."
+        )
+        form.addRow("", self.ai_disable_thinking)
 
         # System Prompt — mode selector (Default vs Custom) with preview
         prompt_layout = QVBoxLayout()
@@ -1051,7 +1055,7 @@ class SettingsWindow(QWidget):
 
     def _on_ai_provider_changed(self, provider_name: str):
         """Fill in base URL and model from preset, then refresh model list."""
-        from core.ai_analyst import PRESETS
+        from core.providers import PRESETS
         preset = PRESETS.get(provider_name, {})
         if preset.get("base_url"):
             self.ai_base_url.setText(preset["base_url"])
@@ -1076,7 +1080,8 @@ class SettingsWindow(QWidget):
 
         import threading
         def _fetch():
-            from core.ai_analyst import FightAnalyst, PRESETS
+            from core.providers import PRESETS, fetch_models
+            from core.ai_analyst import FightAnalyst
             models = FightAnalyst.fetch_models(base_url, api_key)
             source = "API"
 
@@ -1118,6 +1123,7 @@ class SettingsWindow(QWidget):
             model=self.ai_model.currentText(),
             system_prompt=self.ai_system_prompt.toPlainText() or None,
             max_tokens=self.ai_max_tokens.value(),
+            thinking=not self.ai_disable_thinking.isChecked(),
         )
 
         test_summary = {
@@ -1163,11 +1169,14 @@ class SettingsWindow(QWidget):
 
         import threading
         def _run_test():
-            result = analyst.analyze(test_summary, timeout=15)
-            if result:
-                self._sig_ai_test_done.emit(f"Success! Response:\n{result[:200]}", True)
-            else:
-                self._sig_ai_test_done.emit("Failed — check URL, key, and model name", False)
+            try:
+                result = analyst.analyze(test_summary, timeout=15)
+                if result:
+                    self._sig_ai_test_done.emit(f"Success! Response:\n{result[:200]}", True)
+                else:
+                    self._sig_ai_test_done.emit("Failed — check URL, key, and model name", False)
+            except Exception as exc:
+                self._sig_ai_test_done.emit(f"Test failed: {exc}", False)
 
         threading.Thread(target=_run_test, daemon=True).start()
 
@@ -2361,6 +2370,7 @@ class SettingsWindow(QWidget):
         self.ai_model.setEditText(self.config.ai_model)
         self.ai_max_tokens.setValue(self.config.ai_max_tokens)
         self.ai_timeout.setValue(self.config.ai_timeout)
+        self.ai_disable_thinking.setChecked(self.config.ai_disable_thinking)
         if self.config.ai_system_prompt:
             self.ai_prompt_mode.setCurrentText("Custom")
             self.ai_system_prompt.setPlainText(self.config.ai_system_prompt)
@@ -2503,6 +2513,7 @@ class SettingsWindow(QWidget):
         cfg('AI', 'aiModel', self.ai_model.currentText())
         cfg('AI', 'aiMaxTokens', str(self.ai_max_tokens.value()))
         cfg('AI', 'aiTimeout', str(self.ai_timeout.value()))
+        cfg('AI', 'aiDisableThinking', str(self.ai_disable_thinking.isChecked()).lower())
         if self.ai_prompt_mode.currentText().startswith("Default"):
             cfg('AI', 'aiSystemPrompt', '')
             from core.ai_analyst import DEFAULT_PROMPT_VERSION

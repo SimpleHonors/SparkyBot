@@ -40,16 +40,30 @@ from core.tts import TTSClient
 # Persistent AI singletons — created once, reused across all fights
 _vocab_config: Optional['VocabularyConfig'] = None
 _vocab_tracker: Optional['VocabularyTracker'] = None
+_session_history: Optional['SessionHistoryTracker'] = None
+# v1.7.0 — most-recent AI response, threaded into the next analyze() so the
+# M4 freshness engine actually fires its cross-fight phrase suppression.
+_last_ai_response: Optional[str] = None
+# v1.7.0 — per-(player, axis) callout cooldown so the same person can't carry
+# the same outlier callout 3 fights in a row.
+_callout_cooldown = None
 
 
 def _get_ai_components():
-    """Lazy-init and return the shared VocabularyConfig and VocabularyTracker."""
-    global _vocab_config, _vocab_tracker
+    """Lazy-init and return the shared VocabularyConfig, VocabularyTracker, and SessionHistoryTracker."""
+    global _vocab_config, _vocab_tracker, _session_history, _callout_cooldown
     if _vocab_config is None:
-        from core.ai_analyst import VocabularyConfig, VocabularyTracker
+        from core.ai_analyst import VocabularyConfig, VocabularyTracker, SessionHistoryTracker
+        from core.callout_cooldown import CalloutCooldown
+        from pathlib import Path
         _vocab_config = VocabularyConfig()
         _vocab_tracker = VocabularyTracker(vocab_config=_vocab_config)
-    return _vocab_config, _vocab_tracker
+        _session_history = SessionHistoryTracker()
+        # State file lives next to other singleton JSONs in the SparkyBot dir
+        _callout_cooldown = CalloutCooldown(
+            state_path=Path(__file__).parent / 'sparkybot_callout_cooldown.json'
+        )
+    return _vocab_config, _vocab_tracker, _session_history
 
 
 class FileProcessorWorker(QThread):
@@ -137,6 +151,11 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
             report_data = json.load(f)
 
         report = FightReport(report_data)
+        # v1.7.0 — wire the (player, axis) cooldown tracker into outlier picking
+        global _callout_cooldown
+        if _callout_cooldown is None:
+            _get_ai_components()  # lazy-init the singletons
+        report.callout_cooldown = _callout_cooldown
         report.set_embed_color(config.embed_color)
 
         # Check fight minimums
@@ -157,52 +176,63 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
             _try_delete_json(json_file, logger)
             return ProcessResult.SKIPPED_THRESHOLD
 
-        # Send to Discord with rich embeds
-        if not config.enable_discord_bot:
-            # Discord disabled - just clean up and report success
-            _try_delete_json(json_file, logger)
-            return ProcessResult.SUCCESS
-
-        # Discord is enabled - check instance is available
-        if discord is None:
+        # Discord enabled in config but webhook not initialized -> real error
+        if config.enable_discord_bot and discord is None:
             logger.error("Discord enabled in config but webhook not initialized")
             return ProcessResult.ERROR_DISCORD
 
-        display_config = {
-            'showSquadSummary': True,
-            'showEnemySummary': True,
-            'showDamage': config.show_damage,
-            'showBurstDmg': config.show_burst_dmg,
-            'showStrips': config.show_strips,
-            'showCleanses': config.show_cleanses,
-            'showHeals': config.show_heals,
-            'showDefense': config.show_defense,
-            'showCCs': config.show_ccs,
-            'showDownsKills': config.show_downs_kills,
-            'showQuickReport': config.show_quick_report,
-            'showOffensiveBoons': config.show_offensive_boons,
-            'showDefensiveBoons': config.show_defensive_boons,
-            'showTopEnemySkills': config.show_top_enemy_skills,
-            'showEnemyBreakdown': config.show_enemy_breakdown,
-        }
+        # Whether we will actually post to Discord this run. AI analysis must run
+        # regardless (e.g. --debug-ai-prompt, local TTS), so do NOT early-return
+        # when Discord is disabled.
+        discord_active = config.enable_discord_bot and discord is not None
+        success_count = 0
 
-        # Resolve guild icon path for thumbnail attachment
-        icon_path = config.get_thumbnail_path()
+        # Send the fight report to Discord with rich embeds (only when active)
+        if discord_active:
+            display_config = {
+                'showSquadSummary': True,
+                'showEnemySummary': True,
+                'showDamage': config.show_damage,
+                'showBurstDmg': config.show_burst_dmg,
+                'showStrips': config.show_strips,
+                'showCleanses': config.show_cleanses,
+                'showHeals': config.show_heals,
+                'showDefense': config.show_defense,
+                'showCCs': config.show_ccs,
+                'showDownsKills': config.show_downs_kills,
+                'showQuickReport': config.show_quick_report,
+                'showOffensiveBoons': config.show_offensive_boons,
+                'showDefensiveBoons': config.show_defensive_boons,
+                'showTopEnemySkills': config.show_top_enemy_skills,
+                'showEnemyBreakdown': config.show_enemy_breakdown,
+            }
 
-        embeds = report.get_discord_embeds(
-            display_config,
-            icon_filename=icon_path  # guild icon for thumbnail
-        )
+            # Resolve guild icon path for thumbnail attachment
+            icon_path = config.get_thumbnail_path()
 
-        # Send fight report immediately — no waiting on AI
-        success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
+            embeds = report.get_discord_embeds(
+                display_config,
+                icon_filename=icon_path  # guild icon for thumbnail
+            )
+
+            # Send fight report immediately — no waiting on AI
+            success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
 
         # AI analysis runs AFTER report is already posted
         ai_text = None
         if config.enable_ai_analysis and config.ai_base_url and config.ai_model:
             try:
                 from core.ai_analyst import FightAnalyst
-                vocab_config, vocab_tracker = _get_ai_components()
+                vocab_config, vocab_tracker, session_history = _get_ai_components()
+
+                # v3 pipeline is the active path. The custom prompt field
+                # (config.ai_system_prompt) is only respected if it contains
+                # the {commander_block} placeholder; otherwise v3 loads from
+                # prompts/sparky_system_v3.md.
+                # Single-source cooldown: the analyst reads the SAME object that
+                # record()/tick()/save() below mutate, so callouts actually get
+                # suppressed across fights (avoids the split-brain that caused
+                # repetitive commentary).
                 analyst = FightAnalyst(
                     base_url=config.ai_base_url,
                     api_key=config.ai_api_key,
@@ -217,9 +247,28 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                         "negative": config.ai_vocab_weight_negative,
                         "gates": config.ai_vocab_weight_gates,
                     },
+                    session_history=session_history,
+                    thinking=not config.ai_disable_thinking,
+                    prompt_version="v3",
+                    callout_cooldown=_callout_cooldown,
                 )
                 summary = report.get_ai_summary()
-                analysis = analyst.analyze(summary)
+                global _last_ai_response
+                analysis = analyst.analyze(summary, previous_response=_last_ai_response)
+                if analysis:
+                    _last_ai_response = analysis
+                # Record fired callouts + advance cooldowns for the NEXT fight.
+                # Done after analyze() so a model error doesn't spend cooldowns.
+                if _callout_cooldown is not None:
+                    for axis, info in (summary.get('outliers') or {}).items():
+                        name = info.get('name', '')
+                        # Co-outlier names join with " and "; record both halves.
+                        for n in (name.split(' and ') if ' and ' in name else [name]):
+                            n = n.strip()
+                            if n:
+                                _callout_cooldown.record(n, axis)
+                    _callout_cooldown.tick()
+                    _callout_cooldown.save()
                 if analysis:
                     # Truncate to last complete sentence within Discord's limit
                     if len(analysis) > 4096:
@@ -254,10 +303,11 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                             logger.warning(f"TTS audio generation failed: {tts_err}")
 
                     # Send AI embed to Discord — audio posted separately so the player renders below the embed
-                    discord.send_to_all(
-                        embeds=[ai_embed],
-                        audio_bytes=audio_bytes if config.tts_discord_attach else None,
-                    )
+                    if discord_active:
+                        discord.send_to_all(
+                            embeds=[ai_embed],
+                            audio_bytes=audio_bytes if config.tts_discord_attach else None,
+                        )
 
                     ai_text = analysis  # Save for Twitch
 
@@ -287,6 +337,12 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                 twitch.close()
             except Exception as e:
                 logger.warning(f"Twitch send failed: {e}")
+
+        # Discord posting was not attempted (disabled) — processing still
+        # succeeded, so clean up and report success.
+        if not discord_active:
+            _try_delete_json(json_file, logger)
+            return ProcessResult.SUCCESS
 
         # success_count can be: 0 (all failed), 1+ (webhooks succeeded), or True (single, deprecated)
         if isinstance(success_count, bool):

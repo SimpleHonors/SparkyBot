@@ -1,8 +1,32 @@
-.gitignore
+# --- secrets & user config (NEVER commit) ---
+# NOTE: scoped to the user's runtime config files, NOT source files that
+# merely contain the word "config" (e.g. core/config.py, vocabulary_config.py).
+config.properties
+config.*.properties
+*.properties
+config.ini
+
+# --- runtime data, history & logs (NEVER commit) ---
+ai_prompt_*.json
+sparkybot_*.json
+*.log
+
+# --- local backups & caches ---
+*.bak
+*.bak.*
+core.bak.*
+*__pycache__*
+.codegraph/
+.serena/
+.understand-anything/
+.venv/
+venv/
+
+# --- third-party / large assets ---
 GW2EI/
 git/
-*config*
-*properties*
+
+# --- internal/dev scratch ---
 PLAN.md
 *RELEASE_NOTES*
-*__pycache__*
+drafts/
