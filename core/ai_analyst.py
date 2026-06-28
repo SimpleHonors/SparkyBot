@@ -51,7 +51,7 @@ _STAT_RE = re.compile(
 # Default prompt version — increment when _core_system_prompt or _rules_section
 # changes so users on custom prompts can be notified of improvements.
 # ---------------------------------------------------------------------------
-DEFAULT_PROMPT_VERSION = 3
+DEFAULT_PROMPT_VERSION = 4
 
 DEFAULT_PROMPT_CHANGELOG = {
     1: {
@@ -93,6 +93,17 @@ DEFAULT_PROMPT_CHANGELOG = {
             "Raw aggregate numbers (squad_damage, squad_healing, enemy_total_damage, squad_dps) stripped from fight data JSON to reduce stat mining. Pre-analysis conclusions provide the same information narratively.",
         ],
         "reason": "Shootout testing of 30+ models across multiple fights showed consistent patterns: stat-heavy outputs scored C, verbose outputs gamed sentence count, and loss commentary was underspecified.",
+    },
+    4: {
+        "title": "Anti-repetition stack and prompt hygiene",
+        "changes": [
+            "Vocabulary and player-mention tracking now use a stable absolute path so history persists correctly across sessions.",
+            "Player mention cooldown threshold lowered from 3 to 2 to suppress overused names sooner.",
+            "Tag discipline stat gated to LOOSE/SCATTERED grades only; EXCELLENT and ACCEPTABLE no longer appear in every report.",
+            "Mandatory ALL-CAPS instruction removed from freestyle vocabulary block.",
+            "AI-slop sentence templates removed: 'that is not a story' construction and gratuitous ALL-CAPS directives in mood text cleaned up.",
+        ],
+        "reason": "Anti-repetition stack was effectively dark in prod because the vocab store path was CWD-dependent; player variety was broken for the same reason. Prompt hygiene pass removes templates that cause stilted, template-sounding output.",
     },
 }
 
@@ -160,7 +171,7 @@ class VocabularyConfig:
     """
 
     def __init__(self, config_path: Path = None):
-        self.config_path = config_path or Path.cwd() / "sparkybot_vocabulary.json"
+        self.config_path = config_path or Path(__file__).parent.parent / "sparkybot_vocabulary.json"
         self._raw: dict = {}           # raw JSON data
         self._compiled: list = []      # [(name, [compiled_regex, ...]), ...] for tracker
         self._mtime: float = 0         # last modified time for auto-reload
@@ -570,7 +581,7 @@ class VocabularyTracker:
 
     def __init__(self, store_path: Path = None, window_hours: int = 2,
                  vocab_config: VocabularyConfig = None):
-        self.store_path = store_path or Path.cwd() / "sparkybot_vocab_usage.json"
+        self.store_path = store_path or Path(__file__).parent.parent / "sparkybot_vocab_usage.json"
         self.window_seconds = window_hours * 3600
         self.vocab_config = vocab_config
         self._events: list = []        # list of {"term": str, "ts": float}
@@ -1051,11 +1062,11 @@ class VocabularyTracker:
         if summary:
             commander = (summary.get("commander") or "").strip()
 
-        # Threshold: 3+ mentions in the window
+        # Threshold: 2+ mentions in the window
         # Commander gets a 50% dice roll to escape suppression
         suppressed = []
         for name, c in counts.items():
-            if c < 3:
+            if c < 2:
                 continue
             if name == commander:
                 if random.random() < 0.5:
@@ -1081,7 +1092,7 @@ class VocabularyTracker:
         parts = ", ".join(f"{name} (x{c})" for name, c in suppressed)
         lines = [
             "\n\nRECENT PLAYER MENTIONS",
-            "The following squad players have been named as the lead story in 3+ "
+            "The following squad players have been named as the lead story in 2+ "
             "responses in the last 2 hours:",
             f"  {parts}",
             "For this response, prefer crediting a different player, or describe "
@@ -1491,7 +1502,7 @@ class SessionHistoryTracker:
     LOSS_OUTCOMES = {"Loss", "Decisive Loss"}
 
     def __init__(self, store_path: Path = None):
-        self.store_path = store_path or Path.cwd() / "sparkybot_session_history.json"
+        self.store_path = store_path or Path(__file__).parent.parent / "sparkybot_session_history.json"
         self._entries: list = []  # list of {"outcome": str, "fight_shape": str, "ts": float}
         self._load()
 
@@ -1665,7 +1676,7 @@ class SessionHistoryTracker:
                     (
                         " Session note: this win streak is so long it is barely "
                         "worth commenting on. Find the one thing the squad did "
-                        "BADLY despite the easy night and roast that instead of "
+                        "badly despite the easy night and roast that instead of "
                         "praising the win. Constructive contempt."
                     ),
                 ])
@@ -2379,20 +2390,11 @@ class FightAnalyst:
             outcome = summary.get("outcome", "")
             is_loss = outcome in ("Loss", "Decisive Loss", "Draw")
 
-            if grade_distance < TAG_DISTANCE_EXCELLENT:
-                lines.append(
-                    f"Tag discipline: Tight (median {grade_distance:.0f} distance to tag). "
-                    f"Squad was stacked well."
-                )
-            elif grade_distance < TAG_DISTANCE_ACCEPTABLE:
-                if is_loss:
-                    lines.append(
-                        f"Tag discipline: Acceptable but could be tighter (median {grade_distance:.0f} distance to tag)."
-                    )
-                else:
-                    lines.append(
-                        f"Tag discipline: Acceptable (median {grade_distance:.0f} distance to tag)."
-                    )
+            # Only inject tag discipline for LOOSE or SCATTERED spreads.
+            # EXCELLENT and ACCEPTABLE are non-events; reporting them every fight
+            # trains the model to pad responses with tag commentary when there is no story.
+            if grade_distance < TAG_DISTANCE_ACCEPTABLE:
+                pass  # excellent or acceptable spread — no tag discipline line needed
             elif grade_distance < TAG_DISTANCE_LOOSE:
                 if is_loss:
                     lines.append(
@@ -2503,8 +2505,8 @@ class FightAnalyst:
                     "this was never a contest. Do NOT hype this fight. No 'massacre', 'slaughter', "
                     "'annihilation', 'legendary', 'speedrun', 'execution', 'evisceration', or "
                     "'obliteration' language. The enemy was a havoc party that got bullied by a "
-                    "full squad, that is not a story. Valid angles: (a) mock the enemy for showing "
-                    "up at all, (b) call out anything the squad did POORLY despite the easy "
+                    "full squad. Valid angles: (a) mock the enemy for showing "
+                    "up at all, (b) call out anything the squad did poorly despite the easy "
                     "numbers, (c) note one player who made the easy fight look effortless. Tone is "
                     "dry and dismissive, not euphoric."
                 )
@@ -3025,7 +3027,6 @@ class FightAnalyst:
 
         lines.append("")
         lines.append("You may always invent your own vivid phrases, insults, or exclamations instead of using palette terms.")
-        lines.append("Freestyle inventions should be written in ALL CAPS when used as punchlines or exclamations.")
 
         return "\n".join(lines)
 
