@@ -25,28 +25,65 @@ def apply_pending_update():
     nothing app-side is imported yet, so the swap always succeeds.
     """
     import shutil
+    import time
     app_dir = Path(__file__).parent
     pending = app_dir / ".update_pending"
     if not pending.is_dir():
         return
-    try:
-        print("Applying pending SparkyBot update...")
-        count = 0
-        for src in pending.rglob("*"):
-            if src.is_dir():
-                continue
-            rel = src.relative_to(pending)
-            # Never replace the running bootstrap script or protected user files
-            if rel.parts[0] in ("bootstrap.py", "config.properties", "GW2EI"):
-                continue
-            dst = app_dir / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            count += 1
+
+    # Build the work list first so we can retry the stragglers.
+    work = []
+    for src in pending.rglob("*"):
+        if src.is_dir():
+            continue
+        rel = src.relative_to(pending)
+        # Never replace the running bootstrap script or protected user files
+        if rel.parts[0] in ("bootstrap.py", "config.properties", "GW2EI"):
+            continue
+        work.append((src, app_dir / rel))
+
+    if not work:
         shutil.rmtree(pending, ignore_errors=True)
-        print(f"Update applied: {count} files updated. Continuing startup...\n")
-    except Exception as e:
-        print(f"WARNING: could not apply pending update: {e}")
+        return
+
+    print("Applying pending SparkyBot update...")
+
+    # On Windows + network shares, os.execv leaves the OLD process briefly alive
+    # while the new one starts, so it still locks main.py / core/*.py for a moment.
+    # A short initial wait + per-file retry waits that dying process out instead of
+    # failing on the first PermissionError (which is what caused the upgrade loop).
+    time.sleep(1.0)
+    remaining = list(work)
+    applied = 0
+    MAX_ROUNDS = 20  # ~20s total worst case
+    for attempt in range(MAX_ROUNDS):
+        still_locked = []
+        for src, dst in remaining:
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                applied += 1
+            except PermissionError:
+                still_locked.append((src, dst))
+            except Exception as e:
+                # Non-lock error: don't spin on it, just report and skip.
+                print(f"WARNING: could not apply {dst.name}: {e}")
+        remaining = still_locked
+        if not remaining:
+            break
+        if attempt < MAX_ROUNDS - 1:
+            print(f"  {len(remaining)} file(s) still locked by the closing app; "
+                  f"waiting (try {attempt + 1}/{MAX_ROUNDS})...")
+            time.sleep(1.0)
+
+    if remaining:
+        # Keep .update_pending so a clean manual relaunch (old process fully dead)
+        # finishes the job. Do NOT delete it — that is what triggers a re-download loop.
+        print(f"WARNING: {len(remaining)} file(s) still locked; update NOT fully applied.\n"
+              f"Fully close SparkyBot and relaunch to finish installing.")
+    else:
+        shutil.rmtree(pending, ignore_errors=True)
+        print(f"Update applied: {applied} files updated. Continuing startup...\n")
 
 
 def check_and_install():

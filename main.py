@@ -698,6 +698,20 @@ class SparkyBotApp(QApplication):
         if not self.config.check_updates_on_launch:
             return
 
+        # If an update is already staged but not yet applied, do NOT re-check.
+        # Re-checking here re-downloads + re-stages the same release every launch,
+        # which is exactly what produced the infinite upgrade loop. Bootstrap applies
+        # the staged update at startup; if it's still here, the apply hasn't completed
+        # (e.g. files were still locked by the closing process) — a clean relaunch
+        # finishes it. Either way: don't prompt or download again.
+        from pathlib import Path
+        if (Path(__file__).parent / ".update_pending").is_dir():
+            self.logger.info(
+                "Update already staged in .update_pending/; skipping update check. "
+                "Fully close and relaunch SparkyBot to finish installing."
+            )
+            return
+
         import threading
 
         def _check():
@@ -746,6 +760,7 @@ class SparkyBotApp(QApplication):
     def _show_update_dialog(self, latest_version: str, release_data: dict):
         """Show update prompt to user."""
         from PyQt6.QtWidgets import QMessageBox
+        from PyQt6.QtCore import Qt
         from core.version import VERSION
 
         msg = QMessageBox()
@@ -755,6 +770,9 @@ class SparkyBotApp(QApplication):
                     f"Latest: v{latest_version}\n\n"
                     f"Would you like to update now?")
         msg.setIcon(QMessageBox.Icon.Information)
+        # Force on top — this dialog has no parent and was opening BEHIND the
+        # main window, so the user never saw the prompt (or the error label).
+        msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
         update_btn = msg.addButton("Update Now", QMessageBox.ButtonRole.AcceptRole)
         skip_btn = msg.addButton("Skip This Time", QMessageBox.ButtonRole.RejectRole)
@@ -801,12 +819,14 @@ class SparkyBotApp(QApplication):
     def _on_update_complete(self, version: str):
         """Show restart dialog after successful update."""
         from PyQt6.QtWidgets import QMessageBox
+        from PyQt6.QtCore import Qt
 
         msg = QMessageBox()
         msg.setWindowTitle("Update Installed")
         msg.setText(f"SparkyBot has been updated to v{version}.\n\n"
                     f"The application needs to restart for changes to take effect.")
         msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
         restart_btn = msg.addButton("Restart Now", QMessageBox.ButtonRole.AcceptRole)
         later_btn = msg.addButton("Later", QMessageBox.ButtonRole.RejectRole)
@@ -826,9 +846,16 @@ class SparkyBotApp(QApplication):
         # Stop the watcher cleanly
         self.stop_watcher()
 
-        # Get the command that launched us
+        # Always restart THROUGH bootstrap.py. bootstrap.apply_pending_update()
+        # is what swaps the staged files in before any app module is imported.
+        # If we relaunched main.py directly (e.g. user ran `python main.py`), the
+        # staged update would never apply and we'd loop forever re-downloading it.
         python = sys.executable
-        script = os.path.abspath(sys.argv[0])
+        bootstrap = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootstrap.py")
+        if os.path.exists(bootstrap):
+            script = bootstrap
+        else:
+            script = os.path.abspath(sys.argv[0])
         args = sys.argv[1:]
 
         # Filter out --test-update if present
