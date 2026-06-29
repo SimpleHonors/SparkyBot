@@ -2043,85 +2043,51 @@ class SettingsWindow(QWidget):
                 for chunk in response.iter_content(chunk_size=8192):
                     tmp.write(chunk)
 
-            self.sig_sparkybot_status.emit("Installing update...")
+            self.sig_sparkybot_status.emit("Downloading update...")
 
-            # Paths to protect during the update
+            # --- STAGE the update; do NOT overwrite live files here ---
+            # On Windows (and especially over a network share), the OS locks the
+            # .py files the running app has already imported, so an in-place
+            # overwrite of main.py / core/*.py fails with PermissionError. Instead
+            # we extract into a `.update_pending/` staging folder (always writable
+            # — these files aren't loaded), and bootstrap.py applies it on the next
+            # launch, BEFORE importing the app, when nothing is locked.
             PROTECTED_PATHS = {'config.properties', 'GW2EI'}
             SKIP_PATHS = {'.github', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', '.gitignore'}
 
-            # Extract only files that are new or changed
+            staging = app_dir / '.update_pending'
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(parents=True, exist_ok=True)
+
+            staged = 0
             with zipfile.ZipFile(tmp_path, 'r') as zf:
                 names = zf.namelist()
-                logger.info(f"Zip contains {len(names)} entries")
-                logger.info(f"Zip root: {names[0] if names else 'empty'}")
-
-                # Log a few sample paths
-                for n in names[1:5]:
-                    logger.info(f"  Sample: {n}")
-
-                skipped = updated = new_files = 0
-
-                for member in zf.namelist():
-                    # Get path relative to zip's root directory
+                logger.info(f"Zip contains {len(names)} entries; staging to {staging}")
+                for member in names:
+                    # Strip the zip's top-level directory entry
                     parts = member.split('/', 1)
                     if len(parts) < 2 or not parts[1]:
-                        continue  # skip top-level directory entry
+                        continue
                     relative_path = parts[1]
-
-                    # Skip protected paths
                     top_level = relative_path.split('/')[0]
                     if top_level in PROTECTED_PATHS:
-                        continue
-
-                    # Skip repo-only files (not needed on user machines)
+                        continue  # never stage over user config/data
                     if top_level in SKIP_PATHS or member in SKIP_PATHS:
-                        continue
-
-                    target = app_dir / relative_path
-
-                    # Create directories as needed
+                        continue  # repo-only files
                     if member.endswith('/'):
-                        target.mkdir(parents=True, exist_ok=True)
                         continue
-
-                    # Log version.py specifically
-                    if 'version.py' in relative_path:
-                        logger.info(f"Found version.py: member={member}, target={target}, exists={target.exists()}")
-                        if target.exists():
-                            logger.info(f"  Local content: {target.read_text()[:50]}")
-                            new_content = zf.read(member)
-                            logger.info(f"  Zip content: {new_content[:50]}")
-
-                    # Skip if local file exists and is identical by content hash
-                    if target.exists():
-                        new_content = zf.read(member)
-                        old_hash = hashlib.md5(target.read_bytes()).digest()
-                        new_hash = hashlib.md5(new_content).digest()
-                        if old_hash == new_hash:
-                            skipped += 1
-                            continue
-                        # Content differs — write it
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        with open(target, 'wb') as dst:
-                            dst.write(new_content)
-                        updated += 1
-                        logger.debug(f"Updated: {relative_path}")
-                        continue
-
-                    # File doesn't exist locally — write it
+                    target = staging / relative_path
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(member) as src, open(target, 'wb') as dst:
                         dst.write(src.read())
-                    new_files += 1
-                    logger.debug(f"New file: {relative_path}")
+                    staged += 1
 
-            logger.info(f"Update result: {new_files} new, {updated} updated, {skipped} unchanged")
-
+            logger.info(f"Staged {staged} files to {staging}; will apply on next launch")
             tmp_path.unlink()
 
             self.sig_sparkybot_status.emit(
-                f"Updated to v{version}. "
-                f"Please restart SparkyBot for changes to take effect."
+                f"Update v{version} downloaded. Restart SparkyBot to finish installing."
             )
             self.sig_sparkybot_button_state.emit("Restart Required", False)
             self.sig_update_complete.emit(version)

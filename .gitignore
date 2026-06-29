@@ -11,6 +11,9 @@ ai_prompt_*.json
 sparkybot_*.json
 *.log
 
+# --- staged self-update (created at runtime, applied on next launch) ---
+.update_pending/
+
 # --- local backups & caches ---
 *.bak
 *.bak.*
