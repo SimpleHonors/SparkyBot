@@ -22,11 +22,10 @@ It is not affiliated with ArenaNet. It is barely affiliated with good taste. It 
 
 ## 🔥 What's New in 1.7.5 — *"It Remembers Its Own Tics"*
 
-1.7.0 gave Sparky a short memory for repetition. 1.7.5 gives it a *long* one, and closes the loopholes it was using to cheat:
+1.7.0 gave Sparky a short memory. 1.7.5 gives it a *grudge* — and patches the two ways it was quietly cheating its own anti-slop rules.
 
-- **🧠 Long-horizon signature phrases.** The old anti-repetition engine only remembered the last ~10 fights, so a pet phrase ("poor stomp discipline," "from the dirt") would age out, sneak back in, and oscillate forever. Now Sparky keeps a running ledger of the phrases it overuses *across its whole history* — once something becomes a verified crutch it stays benched, with the ban list widened so the long tail can't slip through the cracks. It learns its own bad habits, no human curating a list.
-- **🙈 Data-layer player cooldown.** Telling the model "don't keep naming the same player" had a loophole: it would just drop the name and credit them by build instead ("the power amalgam… again"). Now, when a player is on cooldown, **their individual stats are redacted from what the model even sees** — you can't credit a stat line that isn't in front of you. Their numbers still flow into the anonymous squad totals, so the fight's scale stays honest.
-- **🩹 Self-updater hardened for network shares.** The in-app updater now swaps locked files by renaming them aside instead of fighting the lock — no more "update won't apply" loops on SMB-mounted installs.
+- **🧠 It now remembers every phrase it's ever leaned on.** The old engine only looked back ~10 fights, so a pet phrase ("poor stomp discipline," "from the dirt") would quietly age out, slink back in, and live forever in rotation. Now Sparky keeps a permanent rap sheet of its own verbal tics across *all* of history. Reach for the same crutch too many times and it's blacklisted — no human maintains the list, it narcs on itself.
+- **🙈 It can't credit the same hero by a fake name anymore.** Old trick: told not to keep naming a player, the model would just drop the name and call them "the power amalgam… again." Cute. So now a cooled-down player's stats are **deleted from what the model can even see** — you can't gush about a stat line that isn't on the page. Their numbers still count toward the squad totals, so nobody's getting erased from history, just from the spotlight.
 
 ---
 
@@ -203,42 +202,25 @@ python bootstrap.py [options]
 
 ## How Sparky Knows You Balled Out
 
-Sparky never hardcodes "good = 5,000 DPS." A number that's monstrous in a 60-second wipe is mediocre in a 10-minute grind, and a healer's stat sheet looks nothing like a DPS's. So instead of fixed cutoffs, **every player is graded on a curve against a corpus of 800+ real WvW fights** — the same way a percentile rank works on a test. You're measured against everyone who has actually played.
+Here's the problem with "good": 4,000 DPS is a war crime in a 90-second gank and a nap in a 10-minute slugfest, and a healer's stat sheet looks nothing like a zerker's. So Sparky does **not** do hardcoded "good = big number" garbage. It grades you **on a curve against 800+ real WvW fights** — every number you post gets ranked against everyone who's ever actually thrown down. No vibes. Receipts.
 
-### The five tiers
+Five tiers, by percentile. Clear the floor or Sparky doesn't even bring you up — there are no participation trophies in here:
 
-Each stat axis is scored into one of five tiers by where it lands in the historical distribution:
+| Tier | You beat… | Translation |
+|------|:---------:|-------------|
+| `solid` | 25% | you showed up and did a thing |
+| `strong` | 50% | comfortably above the middle of the pack |
+| `dominant` | 75% | you're carrying *(this tier was literally named `carried` once)* |
+| `exceptional` | 90% | one of the best bodies on the field |
+| `legendary` | 95% | the stat line that gets screenshotted into guild chat |
 
-| Tier | Percentile | Meaning |
-|------|-----------|---------|
-| `solid` | top 75% (≥ p25) | cleared the noise floor — worth a mention |
-| `strong` | top 50% (≥ p50) | above the median player |
-| `dominant` | top 25% (≥ p75) | carrying their weight and then some *(this tier used to literally be called "carried")* |
-| `exceptional` | top 10% (≥ p90) | one of the best on the field |
-| `legendary` | top 5% (≥ p95) | a stat line people screenshot |
+And it judges **everything** independently — not just damage. Healing, cleanses, boon strips, hard CC, burst, downs, kills, stability uptime, boon gen — all normalized per-second so the grind and the gank get a fair trial. *(For the nerds: clear ~5,500 DPS/sec and you're top-5% of every fight on record. Flex accordingly.)*
 
-Below `solid`? Sparky stays quiet about it — no participation trophies.
+**But here's the part lazy stat sheets miss.** Standing in the biggest blob and mashing `1` racks up "damage." *Winning* happens at the decisive moment — so Sparky stalks two killer axes: damage into **downed** enemies (finishing the kill before they rally) and healing into your own **downed** bodies (ripping a teammate off the floor mid-wipe). Go off on either and you get tagged **clutch** — the closer. That's a sharper read than "who pressed buttons hardest."
 
-### It's not just damage
+Then it fingerprints your stat shape against your class to work out *what you actually were* — `burst evoker`, `rez druid`, `boon DPS` — and spotlights your single most unhinged number instead of parroting the damage chart. You get credit for the thing you actually did.
 
-A fight has many ways to matter, so a player is bucketed across **every axis independently** — DPS, healing, cleanses, boon strips, hard CC, burst, downs dealt, kills, stability uptime, might/quickness/alacrity generation. Everything is normalized **per second** first, so a short skirmish and a long grind are compared fairly.
-
-The calibrated thresholds (from an 802-fight corpus) look like this — each row is `(solid, strong, dominant, exceptional, legendary)`:
-
-| Axis | p25 | p50 | p75 | p90 | p95 |
-|------|----:|----:|----:|----:|----:|
-| DPS (per sec) | 1,225 | 2,003 | 3,121 | 4,552 | 5,509 |
-| Healing (per sec) | 736 | 1,348 | 2,098 | 2,949 | 3,479 |
-
-### The clutch factor — the part most stat sheets miss
-
-Raw totals reward whoever stood in the biggest pile. What actually wins fights is **impact at the decisive moment**, so Sparky tracks two special axes: damage dealt *to downed enemies* (finishing the kill before they rally) and healing poured *into your own downed bodies* (yanking a teammate off the floor). Hit `dominant`+ on either and you're flagged **clutch** — the player who closed the deal or saved the wipe. That's a different, sharper signal than "did big numbers."
-
-### From numbers to a name
-
-Finally, Sparky fingerprints your stat profile against your profession and condition-vs-power split to **infer your build** — `burst evoker`, `rez druid`, `boon DPS`, `strip support`, and so on — then spotlights your single most impressive axis (legendary beats exceptional beats dominant). That's how it knows to credit you for the thing you actually did best, instead of just parroting the top damage number.
-
-> **It learns from your own logs.** The thresholds aren't pulled from thin air — they're recalibrated from recorded fights via `tools/recalc_thresholds.py`. Feed it your guild's history and "what good looks like" tunes itself to *your* server's meta.
+> **Tuned on real blood, not vibes.** Every threshold is recalibrated from recorded fights (`tools/recalc_thresholds.py`). Feed it your guild's logs and "what good looks like" reshapes itself to *your* server's meta.
 
 ---
 
