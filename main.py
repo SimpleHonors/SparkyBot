@@ -214,15 +214,26 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
             _try_delete_json(json_file, logger)
             return ProcessResult.SKIPPED_THRESHOLD
 
+        # Compute the AI/corpus summary once and reuse it for both the corpus
+        # hook below and the AI analysis path further down (get_ai_summary rebuilds
+        # ~18 sorted top-N arrays, so we avoid doing that twice per fight).
+        # Wrapped so a summary failure can never break the Discord report path.
+        ai_summary = None
+        try:
+            ai_summary = report.get_ai_summary()
+        except Exception as sum_err:
+            logger.warning(f"get_ai_summary failed: {sum_err}")
+
         # Auto-accumulate the calibration corpus: every accepted live fight
         # contributes its summary so the GUI "Calibrate to Your Guild" feature
         # can recompute thresholds from real fights. Best-effort — a failure here
         # must never break the report/AI pipeline.
-        try:
-            from core.calibration import append_summary
-            append_summary(report.get_ai_summary())
-        except Exception as cal_err:
-            logger.debug(f"Calibration corpus append skipped: {cal_err}")
+        if ai_summary is not None:
+            try:
+                from core.calibration import append_summary
+                append_summary(ai_summary)
+            except Exception as cal_err:
+                logger.debug(f"Calibration corpus append skipped: {cal_err}")
 
         # Discord enabled in config but webhook not initialized -> real error
         if config.enable_discord_bot and discord is None:
@@ -300,7 +311,10 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                     prompt_version="v3",
                     callout_cooldown=_callout_cooldown,
                 )
-                summary = report.get_ai_summary()
+                # Reuse the summary computed once above; only recompute if that
+                # precompute failed (preserves the original behavior of raising
+                # inside this try, where it is caught).
+                summary = ai_summary if ai_summary is not None else report.get_ai_summary()
                 global _last_ai_response
                 analysis = analyst.analyze(summary, previous_response=_last_ai_response)
                 if analysis:

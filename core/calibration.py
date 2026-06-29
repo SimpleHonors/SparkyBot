@@ -24,6 +24,7 @@ A field prefixed with '+' sums the '+'-joined keys, e.g. '+hard_cc+interrupts'.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -53,7 +54,10 @@ DEFAULT_MIN_DURATION = 30  # seconds; short fights skew rates and are skipped
 _PCTS = (0.25, 0.50, 0.75, 0.90, 0.95)
 
 # Default runtime corpus / override paths (app dir, gitignored).
-_APP_DIR = Path(__file__).resolve().parent.parent
+# WITHOUT .resolve() to match config.home_dir (Path(__file__).parent.parent),
+# so the auto-accumulate hook and the GUI agree on the same file even under a
+# symlinked install.
+_APP_DIR = Path(__file__).parent.parent
 CORPUS_PATH = _APP_DIR / "calibration_corpus.jsonl"
 THRESHOLDS_PATH = _APP_DIR / "calibration_thresholds.json"
 
@@ -131,48 +135,60 @@ def compute_thresholds(summaries: Iterable[dict], min_duration: int = DEFAULT_MI
 
 # ---------------------------------------------------------------------------
 # Corpus store — one {"summary": <summary>} JSON object per line.
+#
+# There are genuinely concurrent writers (the watcher spawns a thread per
+# detected log, and the GUI import runs on its own daemon thread), so a
+# process-wide lock serializes corpus access. The lock makes appends — and the
+# count/load reads that may run alongside them — atomic with respect to one
+# another, preventing interleaved/partial lines.
 # ---------------------------------------------------------------------------
+_CORPUS_LOCK = threading.Lock()
+
 
 def append_summary(summary: dict, path: Path = CORPUS_PATH) -> None:
     """Append a single fight summary to the corpus (best-effort, creates dirs)."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'a', encoding='utf-8') as f:
-        f.write(json.dumps({"summary": summary}, ensure_ascii=False) + "\n")
+    line = json.dumps({"summary": summary}, ensure_ascii=False) + "\n"
+    with _CORPUS_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'a', encoding='utf-8') as f:
+            f.write(line)
 
 
 def corpus_count(path: Path = CORPUS_PATH) -> int:
     """Number of fights collected in the corpus (0 if the file is absent)."""
     path = Path(path)
-    if not path.exists():
-        return 0
-    count = 0
-    with open(path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip():
-                count += 1
-    return count
+    with _CORPUS_LOCK:
+        if not path.exists():
+            return 0
+        count = 0
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    count += 1
+        return count
 
 
 def load_corpus(path: Path = CORPUS_PATH) -> list[dict]:
     """Load every stored fight summary. Corrupt lines are skipped, not fatal."""
     path = Path(path)
-    if not path.exists():
-        return []
-    summaries: list[dict] = []
-    with open(path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            summary = obj.get("summary") if isinstance(obj, dict) else None
-            if isinstance(summary, dict):
-                summaries.append(summary)
-    return summaries
+    with _CORPUS_LOCK:
+        if not path.exists():
+            return []
+        summaries: list[dict] = []
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                summary = obj.get("summary") if isinstance(obj, dict) else None
+                if isinstance(summary, dict):
+                    summaries.append(summary)
+        return summaries
 
 
 def write_thresholds(thresholds: dict, path: Path = THRESHOLDS_PATH) -> None:

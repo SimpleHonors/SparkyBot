@@ -178,3 +178,37 @@ def test_write_thresholds_roundtrip(tmp_path):
     write_thresholds(payload, out)
     import json
     assert json.loads(out.read_text()) == payload
+
+
+def test_concurrent_appends_do_not_corrupt_corpus(tmp_path):
+    # Multiple writers (watcher thread-per-fight + GUI import thread) append to
+    # the same file; the lock must keep every line intact (no interleaving).
+    import threading
+    corpus = tmp_path / "calibration_corpus.jsonl"
+    n_threads, per_thread = 8, 25
+    # Large-ish summaries so a write could exceed the OS buffer if unlocked.
+    big = [{"name": "TestPlayer", "damage": 123456, "blob": "x" * 2000} for _ in range(20)]
+
+    def worker(tid):
+        for j in range(per_thread):
+            append_summary(_fight(top_damage=list(big), tag=f"{tid}-{j}"), corpus)
+
+    threads = [threading.Thread(target=worker, args=(t,)) for t in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert corpus_count(corpus) == n_threads * per_thread
+    # Every line must still parse — no corruption from interleaved writes.
+    assert len(load_corpus(corpus)) == n_threads * per_thread
+
+
+def test_corpus_and_override_paths_consistent_across_modules(tmp_path):
+    # Finding #6: the auto-accumulate path (calibration) and the threshold
+    # override path (performance_buckets) must resolve to the same app dir, and
+    # neither may diverge via an inconsistent .resolve().
+    import core.calibration as cal
+    from core import performance_buckets as pb
+    assert cal._APP_DIR == pb._OVERRIDE_PATH.parent
+    assert cal.CORPUS_PATH.parent == pb._OVERRIDE_PATH.parent
