@@ -29,13 +29,36 @@ class EIUpdater:
             (update_available, latest_version, download_url)
         """
         try:
-            response = requests.get(GITHUB_API_URL, timeout=10)
-            if response.status_code != 200:
-                logger.error(f"GitHub API returned {response.status_code}")
-                return False, "", ""
+            import re
 
-            data = response.json()
-            latest_version = data.get("tag_name", "").lstrip("v")
+            # Resolve the latest tag WITHOUT the GitHub API. api.github.com caps
+            # unauthenticated clients at 60 req/hr and returns 403 when exhausted;
+            # the github.com /releases/latest endpoint just 302-redirects to the
+            # newest /tag/vX.Y.Z and is NOT rate-limited.
+            tag = ""
+            latest_version = ""
+            data = None
+            try:
+                r = requests.get(
+                    "https://github.com/baaron4/GW2-Elite-Insights-Parser/releases/latest",
+                    allow_redirects=False, timeout=10
+                )
+                m = re.search(r"/tag/(v?[0-9][0-9.]*)", r.headers.get("Location", ""))
+                if m:
+                    tag = m.group(1)
+                    latest_version = tag.lstrip("v")
+            except requests.RequestException:
+                pass
+
+            # Fall back to the API only if the redirect gave us nothing.
+            if not latest_version:
+                response = requests.get(GITHUB_API_URL, timeout=10)
+                if response.status_code != 200:
+                    logger.error(f"GitHub API returned {response.status_code}")
+                    return False, "", ""
+                data = response.json()
+                tag = data.get("tag_name", "")
+                latest_version = tag.lstrip("v")
 
             # Get current version
             current_version = self.get_current_version()
@@ -44,20 +67,23 @@ class EIUpdater:
                 self._save_version(current_version)  # Ensure version file exists for future reads
                 return False, latest_version, ""
 
-            # Find the CLI release asset (we need CLI for parsing)
-            # Order of preference: GW2EICLI.zip first, then GW2EI.zip
-            cli_url = ""
-            gui_url = ""
-            for asset in data.get("assets", []):
-                name = asset["name"].lower()
-                if name.endswith(".zip") and "sig" not in name:
-                    if name == "gw2eicli.zip":
-                        cli_url = asset["browser_download_url"]
-                    elif name.startswith("gw2ei"):
-                        gui_url = asset["browser_download_url"]
-
-            # Prefer CLI version for parsing
-            download_url = cli_url if cli_url else gui_url
+            # Find the CLI release asset (we need CLI for parsing).
+            # If we have full API data, use its asset URLs; otherwise build the
+            # CLI download link by convention (github.com, not rate-limited).
+            download_url = ""
+            if data is not None:
+                cli_url = ""
+                gui_url = ""
+                for asset in data.get("assets", []):
+                    name = asset["name"].lower()
+                    if name.endswith(".zip") and "sig" not in name:
+                        if name == "gw2eicli.zip":
+                            cli_url = asset["browser_download_url"]
+                        elif name.startswith("gw2ei"):
+                            gui_url = asset["browser_download_url"]
+                download_url = cli_url if cli_url else gui_url
+            if not download_url and tag:
+                download_url = f"{GITHUB_DOWNLOAD_URL}/{tag}/GW2EICLI.zip"
 
             if not download_url:
                 logger.warning("No Windows download found in release")
