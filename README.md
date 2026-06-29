@@ -20,6 +20,16 @@ It is not affiliated with ArenaNet. It is barely affiliated with good taste. It 
 
 ---
 
+## 🔥 What's New in 1.7.5 — *"It Remembers Its Own Tics"*
+
+1.7.0 gave Sparky a short memory for repetition. 1.7.5 gives it a *long* one, and closes the loopholes it was using to cheat:
+
+- **🧠 Long-horizon signature phrases.** The old anti-repetition engine only remembered the last ~10 fights, so a pet phrase ("poor stomp discipline," "from the dirt") would age out, sneak back in, and oscillate forever. Now Sparky keeps a running ledger of the phrases it overuses *across its whole history* — once something becomes a verified crutch it stays benched, with the ban list widened so the long tail can't slip through the cracks. It learns its own bad habits, no human curating a list.
+- **🙈 Data-layer player cooldown.** Telling the model "don't keep naming the same player" had a loophole: it would just drop the name and credit them by build instead ("the power amalgam… again"). Now, when a player is on cooldown, **their individual stats are redacted from what the model even sees** — you can't credit a stat line that isn't in front of you. Their numbers still flow into the anonymous squad totals, so the fight's scale stays honest.
+- **🩹 Self-updater hardened for network shares.** The in-app updater now swaps locked files by renaming them aside instead of fighting the lock — no more "update won't apply" loops on SMB-mounted installs.
+
+---
+
 ## 🔥 What's New in 1.7.0 — *"The Anti-Slop Update"*
 
 Most AI bots have one fatal tell: they repeat themselves. Same three adjectives. Same "that's not a fight, that's a slaughter" sentence shape. Same poor bastard named MVP nine fights in a row. It reads like a bot because it *is* a bot phoning it in.
@@ -188,6 +198,47 @@ python bootstrap.py [options]
 **Discord**: reports split across batched embeds within API limits (6000 chars, 10 embeds per message). AI commentary follows as a separate message.
 
 **Twitch**: plain-text quick report + AI commentary, each within the 500-char limit. TLS by default, 3-second delay between messages.
+
+---
+
+## How Sparky Knows You Balled Out
+
+Sparky never hardcodes "good = 5,000 DPS." A number that's monstrous in a 60-second wipe is mediocre in a 10-minute grind, and a healer's stat sheet looks nothing like a DPS's. So instead of fixed cutoffs, **every player is graded on a curve against a corpus of 800+ real WvW fights** — the same way a percentile rank works on a test. You're measured against everyone who has actually played.
+
+### The five tiers
+
+Each stat axis is scored into one of five tiers by where it lands in the historical distribution:
+
+| Tier | Percentile | Meaning |
+|------|-----------|---------|
+| `solid` | top 75% (≥ p25) | cleared the noise floor — worth a mention |
+| `strong` | top 50% (≥ p50) | above the median player |
+| `dominant` | top 25% (≥ p75) | carrying their weight and then some *(this tier used to literally be called "carried")* |
+| `exceptional` | top 10% (≥ p90) | one of the best on the field |
+| `legendary` | top 5% (≥ p95) | a stat line people screenshot |
+
+Below `solid`? Sparky stays quiet about it — no participation trophies.
+
+### It's not just damage
+
+A fight has many ways to matter, so a player is bucketed across **every axis independently** — DPS, healing, cleanses, boon strips, hard CC, burst, downs dealt, kills, stability uptime, might/quickness/alacrity generation. Everything is normalized **per second** first, so a short skirmish and a long grind are compared fairly.
+
+The calibrated thresholds (from an 802-fight corpus) look like this — each row is `(solid, strong, dominant, exceptional, legendary)`:
+
+| Axis | p25 | p50 | p75 | p90 | p95 |
+|------|----:|----:|----:|----:|----:|
+| DPS (per sec) | 1,225 | 2,003 | 3,121 | 4,552 | 5,509 |
+| Healing (per sec) | 736 | 1,348 | 2,098 | 2,949 | 3,479 |
+
+### The clutch factor — the part most stat sheets miss
+
+Raw totals reward whoever stood in the biggest pile. What actually wins fights is **impact at the decisive moment**, so Sparky tracks two special axes: damage dealt *to downed enemies* (finishing the kill before they rally) and healing poured *into your own downed bodies* (yanking a teammate off the floor). Hit `dominant`+ on either and you're flagged **clutch** — the player who closed the deal or saved the wipe. That's a different, sharper signal than "did big numbers."
+
+### From numbers to a name
+
+Finally, Sparky fingerprints your stat profile against your profession and condition-vs-power split to **infer your build** — `burst evoker`, `rez druid`, `boon DPS`, `strip support`, and so on — then spotlights your single most impressive axis (legendary beats exceptional beats dominant). That's how it knows to credit you for the thing you actually did best, instead of just parroting the top damage number.
+
+> **It learns from your own logs.** The thresholds aren't pulled from thin air — they're recalibrated from recorded fights via `tools/recalc_thresholds.py`. Feed it your guild's history and "what good looks like" tunes itself to *your* server's meta.
 
 ---
 
