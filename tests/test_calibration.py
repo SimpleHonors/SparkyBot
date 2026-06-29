@@ -17,6 +17,7 @@ from core.calibration import (
     corpus_count,
     load_corpus,
     write_thresholds,
+    parallel_harvest,
     AXES,
 )
 
@@ -212,3 +213,66 @@ def test_corpus_and_override_paths_consistent_across_modules(tmp_path):
     from core import performance_buckets as pb
     assert cal._APP_DIR == pb._OVERRIDE_PATH.parent
     assert cal.CORPUS_PATH.parent == pb._OVERRIDE_PATH.parent
+
+
+# ---------------------------------------------------------------------------
+# Parallel import harness — runs a per-file worker concurrently, returns the
+# successes and collects per-item failures without raising.
+# ---------------------------------------------------------------------------
+
+def _harvest_worker_factory():
+    """Worker: even inputs succeed (-> x*10), odd inputs raise. Thread-safe log."""
+    import threading
+    processed = []
+    lock = threading.Lock()
+
+    def worker(x):
+        with lock:
+            processed.append(x)
+        if x % 2 == 1:
+            raise ValueError(f"odd input {x}")
+        return x * 10
+
+    return worker, processed, lock
+
+
+def test_parallel_harvest_all_processed_failures_collected_n1_and_n8():
+    inputs = list(range(10))  # 0..9
+    for n in (1, 8):
+        worker, processed, _ = _harvest_worker_factory()
+        results, errors = parallel_harvest(inputs, worker, n)
+        # every input was attempted exactly once (no corruption / drops)
+        assert sorted(processed) == inputs
+        # successes = even inputs scaled; nothing missing
+        assert sorted(results) == [x * 10 for x in inputs if x % 2 == 0]
+        # failures collected (not raised), one per odd input, carrying the exc
+        failed = sorted(item for item, exc in errors)
+        assert failed == [x for x in inputs if x % 2 == 1]
+        assert all(isinstance(exc, ValueError) for _, exc in errors)
+
+
+def test_parallel_harvest_one_failure_does_not_abort_batch():
+    def worker(x):
+        if x == 3:
+            raise RuntimeError("boom")
+        return x
+    results, errors = parallel_harvest([1, 2, 3, 4, 5], worker, 4)
+    assert sorted(results) == [1, 2, 4, 5]      # the other four still completed
+    assert [item for item, _ in errors] == [3]   # only the bad one failed
+
+
+def test_parallel_harvest_progress_callback():
+    calls = []
+
+    def on_progress(completed, total, item):
+        calls.append((completed, total))
+
+    results, errors = parallel_harvest(range(5), lambda x: x, 4, on_progress=on_progress)
+    assert len(calls) == 5
+    assert {total for _, total in calls} == {5}
+    assert sorted(completed for completed, _ in calls) == [1, 2, 3, 4, 5]
+
+
+def test_parallel_harvest_empty_input():
+    results, errors = parallel_harvest([], lambda x: x, 8)
+    assert results == [] and errors == []

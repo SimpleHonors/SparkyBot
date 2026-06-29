@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, Optional
 
 # (axis_name, corpus_top_array, field, scaling)
 AXES = [
@@ -196,3 +197,56 @@ def write_thresholds(thresholds: dict, path: Path = THRESHOLDS_PATH) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(thresholds, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+# ---------------------------------------------------------------------------
+# Parallel import harness.
+#
+# Runs a per-item worker across a thread pool for the manual log-import flow.
+# Elite Insights is an external subprocess (it releases the GIL), so threads
+# give real parallelism. This is a pure, generic, testable helper — no PyQt and
+# no EI knowledge; the GUI supplies the per-file worker and a progress callback.
+# ---------------------------------------------------------------------------
+
+def parallel_harvest(
+    inputs: Iterable,
+    worker: Callable,
+    concurrency: int = 4,
+    on_progress: Optional[Callable[[int, int, object], None]] = None,
+):
+    """Run ``worker(item)`` for every item across up to ``concurrency`` threads.
+
+    Returns ``(results, errors)`` where ``results`` is the list of successful
+    return values (in completion order) and ``errors`` is a list of
+    ``(item, exception)`` for items whose worker raised. A per-item failure is
+    collected, never re-raised, so one bad input can't abort the batch.
+
+    ``on_progress(completed, total, item)``, if given, is called once per
+    finished item from the calling thread (so a GUI caller can safely emit a Qt
+    signal from it). A progress-callback error is swallowed and never affects
+    the harvest.
+    """
+    items = list(inputs)
+    total = len(items)
+    results: list = []
+    errors: list = []
+    if total == 0:
+        return results, errors
+
+    max_workers = max(1, int(concurrency))
+    completed = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(worker, item): item for item in items}
+        for future in as_completed(futures):
+            item = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:  # per-item failure must not abort the batch
+                errors.append((item, exc))
+            completed += 1
+            if on_progress is not None:
+                try:
+                    on_progress(completed, total, item)
+                except Exception:
+                    pass
+    return results, errors

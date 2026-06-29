@@ -2754,11 +2754,35 @@ class SettingsWindow(QWidget):
         actions_group = QGroupBox("Actions")
         actions_layout = QVBoxLayout(actions_group)
 
+        # Concurrency selector for the manual import.
+        conc_row = QHBoxLayout()
+        conc_row.addWidget(QLabel("Parallel files:"))
+        self.calib_concurrency = QComboBox()
+        self.calib_concurrency.addItems(["1", "2", "4", "8", "16", "32"])
+        self.calib_concurrency.setCurrentText("4")  # default
+        self.calib_concurrency.setToolTip(
+            "How many log files to run through Elite Insights at once during "
+            "import. Higher is faster but uses more CPU and RAM."
+        )
+        self.calib_concurrency.setFixedWidth(70)
+        conc_row.addWidget(self.calib_concurrency)
+        conc_row.addStretch()
+        actions_layout.addLayout(conc_row)
+
+        conc_note = QLabel(
+            "⚠ High values (16/32) run many Elite Insights parses at once and "
+            "will spike CPU and RAM. Start with 4."
+        )
+        conc_note.setWordWrap(True)
+        conc_note.setStyleSheet("font-size: 10px; color: #888; padding-bottom: 4px;")
+        actions_layout.addWidget(conc_note)
+
         btn_row = QHBoxLayout()
         self.calib_import_btn = QPushButton("Import Logs...")
         self.calib_import_btn.setToolTip(
             "Select .evtc/.zevtc files to run through Elite Insights and add to the "
-            "calibration corpus. This can be slow — EI parses each file in turn."
+            "calibration corpus. Use the 'Parallel files' selector to process several "
+            "at once."
         )
         self.calib_import_btn.clicked.connect(self._calib_import_logs)
         self.calib_recalibrate_btn = QPushButton("Recalibrate")
@@ -2849,39 +2873,66 @@ class SettingsWindow(QWidget):
         self.calib_import_btn.setEnabled(False)
         self.calib_recalibrate_btn.setEnabled(False)
         self.calib_reset_btn.setEnabled(False)
-        self.calib_status_label.setText(f"Importing {len(files)} log(s) through Elite Insights...")
+        # Capture the concurrency on the UI thread (no widget access off-thread).
+        try:
+            concurrency = int(self.calib_concurrency.currentText())
+        except (ValueError, AttributeError):
+            concurrency = 4
+        self.calib_status_label.setText(
+            f"Importing {len(files)} log(s) through Elite Insights "
+            f"({concurrency} at a time)..."
+        )
         self._sig_calib_progress.emit(0, len(files))
 
         paths = [Path(f) for f in files]
-        threading.Thread(target=self._calib_import_worker, args=(paths,), daemon=True).start()
+        threading.Thread(
+            target=self._calib_import_worker, args=(paths, concurrency), daemon=True
+        ).start()
 
-    def _calib_import_worker(self, paths):
-        """Background: run each log through EI -> FightReport -> summary -> corpus."""
+    def _calib_import_worker(self, paths, concurrency):
+        """Background: parse logs concurrently through EI -> summary -> corpus.
+
+        Runs on a worker thread (off the UI loop). The actual fan-out is the pure
+        parallel_harvest helper; per-file work happens on pool threads and touches
+        NO widgets — progress is marshaled back via Qt signals only.
+        """
         import json as _json
+        import uuid
         from core.gw2ei_invoker import GW2EIInvoker
         from core.fight_report import FightReport
-        from core.calibration import append_summary
+        from core.calibration import append_summary, parallel_harvest
 
         invoker = GW2EIInvoker(self.config)
         corpus_path = self._calib_corpus_path()
-        ok = 0
-        for i, path in enumerate(paths):
-            self._sig_calib_status.emit(f"Parsing {path.name} ({i + 1}/{len(paths)})...")
-            try:
-                json_file = invoker.parse_file(path)
-                if not json_file:
-                    logging.getLogger(__name__).warning("EI parse returned no JSON for %s", path.name)
-                    continue
-                with open(json_file, "r", encoding="utf-8") as f:
-                    report_data = _json.load(f)
-                report = FightReport(report_data)
-                append_summary(report.get_ai_summary(), corpus_path)
-                ok += 1
-            except Exception as exc:
-                logging.getLogger(__name__).warning("Calibration import failed for %s: %s", path.name, exc)
-            self._sig_calib_progress.emit(i + 1, len(paths))
+        total = len(paths)
 
-        self._sig_calib_import_done.emit(ok, len(paths))
+        def harvest_one(path):
+            # Unique per-job EI config so concurrent parses don't share/clobber
+            # the single wvwupload.conf (see GW2EIInvoker.parse_file).
+            config_name = f"wvwupload_{uuid.uuid4().hex}.conf"
+            json_file = invoker.parse_file(path, config_name=config_name)
+            if not json_file:
+                raise RuntimeError(f"Elite Insights produced no JSON for {path.name}")
+            with open(json_file, "r", encoding="utf-8") as f:
+                report_data = _json.load(f)
+            report = FightReport(report_data)
+            # append_summary holds its own lock — safe under concurrency.
+            append_summary(report.get_ai_summary(), corpus_path)
+            return path
+
+        def on_progress(completed, _total, item):
+            self._sig_calib_status.emit(f"Parsed {completed}/{total}: {item.name}")
+            self._sig_calib_progress.emit(completed, total)
+
+        results, errors = parallel_harvest(
+            paths, harvest_one, concurrency, on_progress=on_progress
+        )
+        for item, exc in errors:
+            logging.getLogger(__name__).warning(
+                "Calibration import failed for %s: %s", getattr(item, "name", item), exc
+            )
+
+        self._sig_calib_import_done.emit(len(results), total)
 
     def _calib_recalibrate(self):
         """Compute proposed thresholds and show the side-by-side preview dialog."""
