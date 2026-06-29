@@ -18,6 +18,10 @@ from core.calibration import (
     load_corpus,
     write_thresholds,
     parallel_harvest,
+    tier_delta,
+    fight_count_warning,
+    format_threshold,
+    MIN_FIGHTS_FOR_STABLE_CALIBRATION,
     AXES,
 )
 
@@ -276,3 +280,96 @@ def test_parallel_harvest_progress_callback():
 def test_parallel_harvest_empty_input():
     results, errors = parallel_harvest([], lambda x: x, 8)
     assert results == [] and errors == []
+
+
+# ---------------------------------------------------------------------------
+# Recalibration preview: per-tier delta + distinct-fight-count warning.
+# ---------------------------------------------------------------------------
+
+def test_tier_delta_rise():
+    d = tier_delta(100, 150)
+    assert d.direction == "up"
+    assert d.delta == 50
+    assert d.pct == 50.0
+
+
+def test_tier_delta_drop():
+    d = tier_delta(200, 150)
+    assert d.direction == "down"
+    assert d.delta == -50
+    assert d.pct == -25.0
+
+
+def test_tier_delta_unchanged():
+    d = tier_delta(100, 100)
+    assert d.direction == "same"
+    assert d.delta == 0
+    assert d.pct == 0.0
+
+
+def test_tier_delta_zero_current_no_divide_by_zero():
+    d = tier_delta(0, 5)
+    assert d.direction == "up"
+    assert d.delta == 5
+    assert d.pct is None  # caller renders "n/a%"
+
+
+def test_tier_delta_zero_current_unchanged():
+    d = tier_delta(0, 0)
+    assert d.direction == "same"
+    assert d.delta == 0
+    assert d.pct is None
+
+
+def test_fight_count_warning_boundary():
+    t = MIN_FIGHTS_FOR_STABLE_CALIBRATION
+    assert fight_count_warning(t - 1) is True    # just below floor -> warn
+    assert fight_count_warning(t) is False        # exactly at floor -> no warn
+    assert fight_count_warning(t + 10) is False
+    assert fight_count_warning(0) is True
+
+
+def test_fight_count_warning_custom_threshold():
+    assert fight_count_warning(4, threshold=5) is True
+    assert fight_count_warning(5, threshold=5) is False
+    assert fight_count_warning(6, threshold=5) is False
+
+
+# ---------------------------------------------------------------------------
+# format_threshold — human-readable, never scientific notation.
+# ---------------------------------------------------------------------------
+
+def test_format_threshold_large_values_thousands_separated():
+    assert format_threshold(1400) == "1,400"
+    assert format_threshold(1225) == "1,225"
+    assert format_threshold(5509) == "5,509"
+    assert format_threshold(18231) == "18,231"
+    assert format_threshold(1234567) == "1,234,567"
+
+
+def test_format_threshold_mid_values_int_or_one_decimal():
+    assert format_threshold(27.6) == "27.6"
+    assert format_threshold(52.2) == "52.2"
+    assert format_threshold(13.0) == "13"     # whole -> integer
+    assert format_threshold(100) == "100"
+
+
+def test_format_threshold_small_values_two_decimals():
+    assert format_threshold(2.857) == "2.86"
+    assert format_threshold(0.594) == "0.59"
+    assert format_threshold(0.077) == "0.08"
+    assert format_threshold(0) == "0.00"
+
+
+def test_format_threshold_negatives():
+    assert format_threshold(-25) == "-25"
+    assert format_threshold(-1400) == "-1,400"
+    assert format_threshold(-2.5) == "-2.50"
+
+
+def test_format_threshold_never_scientific_notation():
+    # The exact magnitudes that used to render as 1.4e+03 etc., plus extremes.
+    for v in (1400, 2360, 3610, 4640, 5960, 1e6, 1e9, 0.0015, 0.0001, 492465):
+        out = format_threshold(v)
+        assert "e+" not in out.lower()
+        assert "e-" not in out.lower()

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -250,3 +251,73 @@ def parallel_harvest(
                 except Exception:
                     pass
     return results, errors
+
+
+# ---------------------------------------------------------------------------
+# Recalibration preview helpers — pure logic for the "geeky" delta view and the
+# distinct-fight-count soft warning. The GUI renders these; it owns no math.
+# ---------------------------------------------------------------------------
+
+# Warn (never block) when the corpus holds fewer than this many DISTINCT fights.
+# Rationale: percentiles over a handful of fights are jumpy. This is separate
+# from the per-axis observation flag — a few imported logs carry dozens of
+# player observations each, so obs counts clear easily while fight count is
+# still tiny. ~20 fights is a sane floor for a stable curve.
+MIN_FIGHTS_FOR_STABLE_CALIBRATION = 20
+
+# direction: 'up' | 'down' | 'same'; delta: signed (proposed - current);
+# pct: signed percent change, or None when current is 0 (render as "n/a%").
+TierDelta = namedtuple("TierDelta", ["direction", "delta", "pct"])
+
+
+def tier_delta(current_val, proposed_val) -> TierDelta:
+    """Movement of one tier threshold from current -> proposed.
+
+    Returns a TierDelta(direction, delta, pct). ``pct`` is None when the current
+    value is 0, so callers show "n/a%" instead of dividing by zero.
+    """
+    delta = proposed_val - current_val
+    if delta > 0:
+        direction = "up"
+    elif delta < 0:
+        direction = "down"
+    else:
+        direction = "same"
+    pct = None if current_val == 0 else (delta / current_val * 100.0)
+    return TierDelta(direction=direction, delta=delta, pct=pct)
+
+
+def fight_count_warning(fight_count: int,
+                        threshold: int = MIN_FIGHTS_FOR_STABLE_CALIBRATION) -> bool:
+    """True when there are too few DISTINCT fights for a stable percentile curve.
+
+    Soft warning only — callers must warn, never block. At or above the
+    threshold returns False.
+    """
+    return fight_count < threshold
+
+
+def format_threshold(v) -> str:
+    """Human-readable number formatting for the preview — NEVER scientific notation.
+
+    The threshold axes span wildly different magnitudes (dps in the thousands,
+    per-minute rates and 0–1 uptimes under 10), so a single ``%g`` produced ugly
+    "1.4e+03". Bands instead:
+        >= 1000  -> thousands-separated integer   (1,400 / 18,231)
+        >= 10    -> integer when whole, else 1 dp  (13 / 27.6)
+        < 10     -> 2 decimals                     (2.86 / 0.08)
+    Applied to current, proposed, the absolute delta, and the percent value.
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    neg = f < 0
+    a = abs(f)
+    if a >= 1000:
+        s = f"{round(a):,}"
+    elif a >= 10:
+        s = f"{round(a)}" if abs(a - round(a)) < 1e-9 else f"{a:.1f}"
+    else:
+        s = f"{a:.2f}"
+    return f"-{s}" if neg else s

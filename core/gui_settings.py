@@ -2790,7 +2790,7 @@ class SettingsWindow(QWidget):
             "Compute new thresholds from the collected fights and preview them "
             "side-by-side before applying."
         )
-        self.calib_recalibrate_btn.clicked.connect(self._calib_recalibrate)
+        self.calib_recalibrate_btn.clicked.connect(lambda: self._calib_recalibrate())
         self.calib_reset_btn = QPushButton("Reset to Defaults")
         self.calib_reset_btn.setToolTip(
             "Discard your calibration and revert to SparkyBot's built-in thresholds."
@@ -2841,7 +2841,12 @@ class SettingsWindow(QWidget):
         self.calib_progress.setValue(value)
 
     def _on_calib_import_done(self, imported_ok: int, total: int):
-        """Slot: import finished — re-enable buttons and refresh the count."""
+        """Slot: import finished — re-enable buttons and refresh the count.
+
+        Runs on the UI thread (it's a Qt signal slot, _sig_calib_import_done,
+        emitted from the worker thread and delivered here via the event loop), so
+        it can safely open the recalibration preview dialog.
+        """
         self.calib_import_btn.setEnabled(True)
         self.calib_recalibrate_btn.setEnabled(True)
         self.calib_reset_btn.setEnabled(True)
@@ -2852,6 +2857,13 @@ class SettingsWindow(QWidget):
         if failed:
             msg += f" {failed} failed to parse (see logs)."
         self.calib_status_label.setText(msg)
+
+        # Auto-prompt recalibration once at least one fight was added — the user
+        # shouldn't have to remember to click Recalibrate. This only ASKS: the
+        # preview's Confirm/Deny still gates whether thresholds are written
+        # (auto=True suppresses no-data pop-ups so a useless dialog never opens).
+        if imported_ok >= 1:
+            self._calib_recalibrate(auto=True)
 
     def _calib_import_logs(self):
         """Pick .evtc/.zevtc files and import them via Elite Insights (threaded)."""
@@ -2934,31 +2946,41 @@ class SettingsWindow(QWidget):
 
         self._sig_calib_import_done.emit(len(results), total)
 
-    def _calib_recalibrate(self):
-        """Compute proposed thresholds and show the side-by-side preview dialog."""
+    def _calib_recalibrate(self, auto: bool = False):
+        """Compute proposed thresholds and show the side-by-side preview dialog.
+
+        `auto=True` is used when an import auto-prompts recalibration: it suppresses
+        the informational "no data" pop-ups (so a finished import with too little
+        data doesn't spawn a useless dialog) and only opens the preview when there
+        is actually something to propose. The manual Recalibrate button passes
+        auto=False and keeps its existing feedback dialogs.
+        """
         from core.calibration import compute_thresholds, load_corpus, write_thresholds
         from core.performance_buckets import active_thresholds, reload_thresholds
 
         summaries = load_corpus(self._calib_corpus_path())
         if not summaries:
-            QMessageBox.information(
-                self, "No Fights Collected",
-                "No fights have been collected yet. Let the watcher analyze some "
-                "fights, or import logs first."
-            )
+            if not auto:
+                QMessageBox.information(
+                    self, "No Fights Collected",
+                    "No fights have been collected yet. Let the watcher analyze some "
+                    "fights, or import logs first."
+                )
             return
 
         proposed, obs_counts = compute_thresholds(summaries)
         if not proposed:
-            QMessageBox.information(
-                self, "Not Enough Data",
-                "There aren't enough observations on any axis (need 5+) to compute "
-                "thresholds yet. Collect or import more fights."
-            )
+            if not auto:
+                QMessageBox.information(
+                    self, "Not Enough Data",
+                    "There aren't enough observations on any axis (need 5+) to compute "
+                    "thresholds yet. Collect or import more fights."
+                )
             return
 
         current = active_thresholds()
-        if self._show_recalibration_preview(current, proposed, obs_counts):
+        fight_count = len(summaries)  # distinct fights pooled (one summary per fight)
+        if self._show_recalibration_preview(current, proposed, obs_counts, fight_count):
             write_thresholds(proposed, self._calib_thresholds_path())
             reload_thresholds(self._calib_thresholds_path())
             thin = sum(1 for a in proposed if obs_counts.get(a, 0) < self.CALIB_CONFIDENCE_FLOOR)
@@ -2967,63 +2989,120 @@ class SettingsWindow(QWidget):
         else:
             self.calib_status_label.setText("Recalibration discarded — thresholds unchanged.")
 
-    def _show_recalibration_preview(self, current: dict, proposed: dict, obs_counts: dict) -> bool:
-        """Side-by-side current-vs-proposed table. Returns True if confirmed."""
-        from core.calibration import AXES
+    # Tier labels shown as the per-tier delta columns.
+    _CALIB_TIER_LABELS = ("p25", "p50", "p75", "p90", "p95")
+
+    @staticmethod
+    def _calib_num(v) -> str:
+        """Human-readable number formatting for the delta cells (never sci notation)."""
+        from core.calibration import format_threshold
+        return format_threshold(v)
+
+    def _show_recalibration_preview(self, current: dict, proposed: dict,
+                                    obs_counts: dict, fight_count: int) -> bool:
+        """Geeky per-tier delta view (current -> proposed, colored by direction).
+
+        Returns True if the operator confirms. Rendering only — the delta math and
+        the fight-count warning decision live in core.calibration (tier_delta /
+        fight_count_warning), kept pure and tested there.
+        """
+        from core.calibration import AXES, tier_delta, fight_count_warning
         from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
 
-        def _fmt(vals):
-            out = []
-            for v in vals:
-                out.append(f"{v:.3g}" if isinstance(v, float) else str(v))
-            return " / ".join(out)
+        up_color = QColor(80, 200, 120)     # green: tier rose
+        down_color = QColor(220, 100, 100)  # red: tier dropped
+        same_color = QColor(150, 150, 150)  # gray: unchanged
+        thin_color = QColor(220, 160, 60)   # amber: thin-obs axis flag
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Recalibration Preview")
-        dialog.setMinimumSize(820, 520)
+        dialog.setMinimumSize(1080, 560)
         dlg_layout = QVBoxLayout(dialog)
 
+        # Baseline header — defaults vs a prior applied calibration.
+        override_exists = self._calib_thresholds_path().exists()
+        baseline = ("Comparing against your applied calibration" if override_exists
+                    else "Comparing against built-in defaults")
+        header = QLabel(
+            f"<b>Calibrating from {fight_count} fight"
+            f"{'s' if fight_count != 1 else ''}.</b> &nbsp; {baseline}."
+        )
+        header.setTextFormat(Qt.TextFormat.RichText)
+        header.setStyleSheet("font-size: 12px; padding-bottom: 2px;")
+        dlg_layout.addWidget(header)
+
+        # Distinct-fight soft warning banner (never blocks).
+        if fight_count_warning(fight_count):
+            warn = QLabel(
+                f"⚠ Only {fight_count} fight"
+                f"{'s' if fight_count != 1 else ''} — the percentile curve may be "
+                "unreliable. Consider importing more logs before relying on this. "
+                "(You can still apply it.)"
+            )
+            warn.setWordWrap(True)
+            warn.setStyleSheet(
+                "background-color: #5a4500; color: #ffd966; border: 1px solid "
+                "#8a6d00; border-radius: 4px; padding: 6px; font-size: 11px;"
+            )
+            dlg_layout.addWidget(warn)
+
         note = QLabel(
-            "Tiers per axis: p25 / p50 / p75 / p90 / p95. Axes with fewer than "
-            f"{self.CALIB_CONFIDENCE_FLOOR} observations are flagged with a warning "
-            "(thin data — applied anyway). Axes without enough data to recalibrate "
-            "(under 5 observations) keep their current values."
+            "Each cell shows current → proposed with the change "
+            "(green up, red down, gray unchanged) and percent. A current value of "
+            "0 shows 'n/a%'. Axis ⚠ = fewer than "
+            f"{self.CALIB_CONFIDENCE_FLOOR} pooled observations (thin — still "
+            "applied). Axes under 5 observations keep their current values."
         )
         note.setWordWrap(True)
-        note.setStyleSheet("font-size: 11px; color: #aaa; padding-bottom: 6px;")
+        note.setStyleSheet("font-size: 11px; color: #aaa; padding: 4px 0;")
         dlg_layout.addWidget(note)
 
         axis_names = [a[0] for a in AXES]
-        table = QTableWidget(len(axis_names), 4)
-        table.setHorizontalHeaderLabels(["Axis", "Obs", "Current", "Proposed"])
+        cols = ["Axis", "Obs", *self._CALIB_TIER_LABELS]
+        table = QTableWidget(len(axis_names), len(cols))
+        table.setHorizontalHeaderLabels(cols)
         table.verticalHeader().setVisible(False)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
 
-        thin_color = QColor(220, 160, 60)
         for row, axis in enumerate(axis_names):
             n = obs_counts.get(axis, 0)
-            is_thin = n < self.CALIB_CONFIDENCE_FLOOR
             has_new = axis in proposed
+            is_thin = n < self.CALIB_CONFIDENCE_FLOOR
 
-            axis_label = axis + (" ⚠" if (has_new and is_thin) else "")
-            table.setItem(row, 0, QTableWidgetItem(axis_label))
+            axis_item = QTableWidgetItem(axis + (" ⚠" if (has_new and is_thin) else ""))
+            if has_new and is_thin:
+                axis_item.setForeground(thin_color)
+                axis_item.setToolTip(f"Thin data: only {n} observations pooled.")
+            table.setItem(row, 0, axis_item)
             table.setItem(row, 1, QTableWidgetItem(str(n)))
 
             cur = current.get(axis)
-            table.setItem(row, 2, QTableWidgetItem(_fmt(cur) if cur else "—"))
+            if not has_new or not cur:
+                # Under 5 obs (or no current) -> unchanged; span the tier columns.
+                kept = QTableWidgetItem("unchanged — keeping current")
+                kept.setForeground(same_color)
+                table.setSpan(row, 2, 1, len(self._CALIB_TIER_LABELS))
+                table.setItem(row, 2, kept)
+                continue
 
-            if has_new:
-                prop_item = QTableWidgetItem(_fmt(proposed[axis]))
-                if is_thin:
-                    prop_item.setForeground(thin_color)
-                    prop_item.setToolTip(f"Thin data: only {n} observations pooled.")
-                table.setItem(row, 3, prop_item)
-            else:
-                kept = QTableWidgetItem(f"— (keeps current, {n} obs)")
-                kept.setForeground(QColor(150, 150, 150))
-                table.setItem(row, 3, kept)
+            prop = proposed[axis]
+            for i in range(len(self._CALIB_TIER_LABELS)):
+                d = tier_delta(cur[i], prop[i])
+                arrow = {"up": "↑", "down": "↓", "same": "="}[d.direction]
+                if d.pct is None:
+                    pct_s = "n/a%"
+                else:
+                    sign = "+" if d.pct >= 0 else ""  # format_threshold carries any '-'
+                    pct_s = f"{sign}{self._calib_num(d.pct)}%"
+                text = (f"{self._calib_num(cur[i])}→{self._calib_num(prop[i])}  "
+                        f"{arrow}{self._calib_num(abs(d.delta))} ({pct_s})")
+                cell = QTableWidgetItem(text)
+                cell.setForeground(
+                    {"up": up_color, "down": down_color, "same": same_color}[d.direction]
+                )
+                table.setItem(row, 2 + i, cell)
 
         dlg_layout.addWidget(table)
 
