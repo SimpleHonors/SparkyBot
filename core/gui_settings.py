@@ -55,6 +55,11 @@ class SettingsWindow(QWidget):
     _sig_twitch_test_done = pyqtSignal(str, bool)    # message, success
     _sig_tts_test_done = pyqtSignal(str, bool)       # message, success
 
+    # Calibration tab signals (background EI import)
+    _sig_calib_status = pyqtSignal(str)              # status text
+    _sig_calib_progress = pyqtSignal(int, int)       # value, maximum (max 0 hides)
+    _sig_calib_import_done = pyqtSignal(int, int)    # imported_ok, total
+
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
@@ -95,6 +100,7 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._create_ai_tab(), "AI")
         tabs.addTab(self._create_tts_tab(), "TTS")
         tabs.addTab(self._create_process_files_tab(), "Process Files")
+        tabs.addTab(self._create_calibration_tab(), "Calibration")
         tabs.addTab(self._create_about_tab(), "About")
 
         layout.addWidget(tabs)
@@ -2241,6 +2247,11 @@ class SettingsWindow(QWidget):
         self._sig_twitch_test_done.connect(self._on_twitch_test_done)
         self._sig_tts_test_done.connect(self._on_tts_test_done)
 
+        # Calibration signals
+        self._sig_calib_status.connect(lambda t: self.calib_status_label.setText(t))
+        self._sig_calib_progress.connect(self._on_calib_progress)
+        self._sig_calib_import_done.connect(self._on_calib_import_done)
+
     def _browse_folder(self, line_edit: QLineEdit):
         """Open folder browser dialog"""
         folder = QFileDialog.getExistingDirectory(
@@ -2706,6 +2717,530 @@ class SettingsWindow(QWidget):
         # Create and return the widget
         self.process_files_widget = ProcessFilesWidget(self.config)
         return self.process_files_widget
+
+    # ------------------------------------------------------------------
+    # Calibration tab — "Calibrate to Your Guild"
+    # ------------------------------------------------------------------
+    # Soft confidence floor: axes pooled from fewer observations than this get
+    # a "thin data" warning in the preview. It NEVER blocks a recalibration.
+    CALIB_CONFIDENCE_FLOOR = 30
+
+    # Friendly metric names for the preview rows (raw axis key -> label). The raw
+    # key is still stashed in each row's UserRole for reference.
+    _CALIB_AXIS_NAMES = {
+        'dps':              "Damage/sec",
+        'healing':          "Healing/sec",
+        'cleanses_pm':      "Cleanses/min",
+        'strips_pm':        "Boon Strips/min",
+        'cc_pm':            "Hard CC/min",
+        'burst_4s':         "Burst Damage (4s)",
+        'downs_dealt_pm':   "Downs/min",
+        'kills_pm':         "Kills/min",
+        'stability_uptime': "Stability Uptime",
+        'downed_damage':    "Damage to Downed",
+        'downed_healing':   "Healing to Downed",
+        'resurrects':       "Resurrects",
+        'damage_taken':     "Damage Taken",
+        'might_gen':        "Might Output",
+        'quickness_gen':    "Quickness Output",
+        'alacrity_gen':     "Alacrity Output",
+        'protection_gen':   "Protection Output",
+        'stability_gen':    "Stability Output",
+    }
+
+    def _calib_axis_label(self, axis: str) -> str:
+        """Friendly display name for an axis key (falls back to a title-cased key)."""
+        return self._CALIB_AXIS_NAMES.get(axis, axis.replace('_', ' ').title())
+
+    def _set_calib_status(self, text: str, ok: bool | None = None):
+        """Set the calibration status line, colored green (ok) / red (fail) / neutral."""
+        if ok is True:
+            self.calib_status_label.setStyleSheet("color: #4CAF50;")
+        elif ok is False:
+            self.calib_status_label.setStyleSheet("color: #e06c6c;")
+        else:
+            self.calib_status_label.setStyleSheet("")
+        self.calib_status_label.setText(text)
+
+    def _create_calibration_tab(self) -> QWidget:
+        """Recalibrate performance thresholds from your own guild's fights."""
+        scroll = QScrollArea()
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        header = QLabel(
+            "Tune SparkyBot's performance tiers to your own guild's fights. Fights "
+            "are collected as the watcher runs; you can also import old logs."
+        )
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        # Collected fights
+        corpus_group = QGroupBox("Collected Fights")
+        corpus_layout = QVBoxLayout(corpus_group)
+        self.calib_count_label = QLabel("0 fights collected")
+        corpus_layout.addWidget(self.calib_count_label)
+        layout.addWidget(corpus_group)
+
+        # --- Import Logs group ---
+        import_group = QGroupBox("Import Logs")
+        import_form = QFormLayout(import_group)
+
+        self.calib_concurrency = QComboBox()
+        self.calib_concurrency.addItems(["1", "2", "4", "8", "16", "32"])
+        self.calib_concurrency.setCurrentText("4")  # default
+        self.calib_concurrency.setToolTip(
+            "How many log files Elite Insights parses at once. Higher is faster but "
+            "uses more CPU and RAM — high values (16/32) can spike both. Start at 4."
+        )
+        self.calib_concurrency.setFixedWidth(70)
+        import_form.addRow("Import speed (parallel files):", self.calib_concurrency)
+
+        self.calib_import_btn = QPushButton("Import Logs...")
+        self.calib_import_btn.setToolTip(
+            "Select .evtc/.zevtc files to run through Elite Insights and add to the "
+            "collected fights."
+        )
+        self.calib_import_btn.clicked.connect(self._calib_import_logs)
+        import_form.addRow("", self.calib_import_btn)
+
+        self.calib_progress = QProgressBar()
+        self.calib_progress.setVisible(False)
+        import_form.addRow("", self.calib_progress)
+
+        layout.addWidget(import_group)
+
+        # --- Apply Calibration group ---
+        apply_group = QGroupBox("Apply Calibration")
+        apply_layout = QVBoxLayout(apply_group)
+
+        btn_row = QHBoxLayout()
+        self.calib_recalibrate_btn = QPushButton("Recalibrate")
+        self.calib_recalibrate_btn.setMinimumHeight(36)
+        self.calib_recalibrate_btn.setStyleSheet("""
+            QPushButton { background-color: #4CAF50; color: white; font-weight: bold; border-radius: 5px; padding: 4px 12px; }
+            QPushButton:pressed { background-color: #45a049; }
+            QPushButton:disabled { background-color: #3a3a3a; color: #888; }
+        """)
+        self.calib_recalibrate_btn.setToolTip(
+            "Compute new thresholds from the collected fights and preview the change "
+            "before applying. Nothing is overwritten until you confirm."
+        )
+        self.calib_recalibrate_btn.clicked.connect(lambda: self._calib_recalibrate())
+        self.calib_reset_btn = QPushButton("Reset to Defaults")
+        self.calib_reset_btn.setToolTip(
+            "Discard your calibration and revert to SparkyBot's built-in thresholds."
+        )
+        self.calib_reset_btn.clicked.connect(self._calib_reset_defaults)
+        btn_row.addWidget(self.calib_recalibrate_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self.calib_reset_btn)
+        apply_layout.addLayout(btn_row)
+
+        self.calib_status_label = QLabel("")
+        self.calib_status_label.setWordWrap(True)
+        apply_layout.addWidget(self.calib_status_label)
+
+        layout.addWidget(apply_group)
+        layout.addStretch()
+
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+
+        # Initialize the collected-fights count + button enabled states.
+        self._refresh_calib_count()
+        return scroll
+
+    def _calib_corpus_path(self) -> Path:
+        return self.config.home_dir / "calibration_corpus.jsonl"
+
+    def _calib_thresholds_path(self) -> Path:
+        return self.config.home_dir / "calibration_thresholds.json"
+
+    def _refresh_calib_count(self):
+        """Refresh the fight count, the empty-state hint, and button enabled states."""
+        from core.calibration import corpus_count
+        n = corpus_count(self._calib_corpus_path())
+        if n == 0:
+            self.calib_count_label.setText(
+                "No fights collected yet — run the watcher on some fights, or click "
+                "Import Logs to get started."
+            )
+        else:
+            self.calib_count_label.setText(f"{n} fight{'s' if n != 1 else ''} collected.")
+        # Recalibrate only makes sense with at least one fight; Reset only when an
+        # override actually exists.
+        self.calib_recalibrate_btn.setEnabled(n > 0)
+        self.calib_reset_btn.setEnabled(self._calib_thresholds_path().exists())
+
+    def _on_calib_progress(self, value: int, maximum: int):
+        """Slot: drive the calibration progress bar (main thread)."""
+        if maximum <= 0:
+            self.calib_progress.setVisible(False)
+            return
+        self.calib_progress.setVisible(True)
+        self.calib_progress.setMaximum(maximum)
+        self.calib_progress.setValue(value)
+
+    def _on_calib_import_done(self, imported_ok: int, total: int):
+        """Slot: import finished — re-enable buttons and refresh the count.
+
+        Runs on the UI thread (it's a Qt signal slot, _sig_calib_import_done,
+        emitted from the worker thread and delivered here via the event loop), so
+        it can safely open the recalibration preview dialog.
+        """
+        self.calib_import_btn.setEnabled(True)
+        self.calib_progress.setVisible(False)
+        # _refresh_calib_count owns the Recalibrate/Reset enabled state.
+        self._refresh_calib_count()
+        failed = total - imported_ok
+        msg = f"Imported {imported_ok} of {total} log(s)."
+        if failed:
+            msg += f" {failed} failed to parse (see logs)."
+        if total and failed == 0:
+            ok = True
+        elif imported_ok == 0:
+            ok = False
+        else:
+            ok = None
+        self._set_calib_status(msg, ok=ok)
+
+        # Auto-prompt recalibration once at least one fight was added — the user
+        # shouldn't have to remember to click Recalibrate. This only ASKS: the
+        # preview's Confirm/Deny still gates whether thresholds are written
+        # (auto=True suppresses no-data pop-ups so a useless dialog never opens).
+        if imported_ok >= 1:
+            self._calib_recalibrate(auto=True)
+
+    def _calib_import_logs(self):
+        """Pick .evtc/.zevtc files and import them via Elite Insights (threaded)."""
+        start_dir = ""
+        try:
+            log_folders = self.config.get_log_folders()
+            if log_folders and Path(str(log_folders[0])).exists():
+                start_dir = str(log_folders[0])
+        except Exception:
+            pass
+
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Log Files to Import", start_dir,
+            "ArcDPS Logs (*.evtc *.zevtc);;All Files (*)"
+        )
+        if not files:
+            return
+
+        self.calib_import_btn.setEnabled(False)
+        self.calib_recalibrate_btn.setEnabled(False)
+        self.calib_reset_btn.setEnabled(False)
+        # Capture the concurrency on the UI thread (no widget access off-thread).
+        try:
+            concurrency = int(self.calib_concurrency.currentText())
+        except (ValueError, AttributeError):
+            concurrency = 4
+        self.calib_status_label.setText(
+            f"Importing {len(files)} log(s) through Elite Insights "
+            f"({concurrency} at a time)..."
+        )
+        self._sig_calib_progress.emit(0, len(files))
+
+        paths = [Path(f) for f in files]
+        threading.Thread(
+            target=self._calib_import_worker, args=(paths, concurrency), daemon=True
+        ).start()
+
+    def _calib_import_worker(self, paths, concurrency):
+        """Background: parse logs concurrently through EI -> summary -> corpus.
+
+        Runs on a worker thread (off the UI loop). The actual fan-out is the pure
+        parallel_harvest helper; per-file work happens on pool threads and touches
+        NO widgets — progress is marshaled back via Qt signals only.
+        """
+        import json as _json
+        import uuid
+        from core.gw2ei_invoker import GW2EIInvoker
+        from core.fight_report import FightReport
+        from core.calibration import append_summary, parallel_harvest
+
+        invoker = GW2EIInvoker(self.config)
+        corpus_path = self._calib_corpus_path()
+        total = len(paths)
+
+        def harvest_one(path):
+            # Unique per-job EI config so concurrent parses don't share/clobber
+            # the single wvwupload.conf (see GW2EIInvoker.parse_file).
+            config_name = f"wvwupload_{uuid.uuid4().hex}.conf"
+            json_file = invoker.parse_file(path, config_name=config_name)
+            if not json_file:
+                raise RuntimeError(f"Elite Insights produced no JSON for {path.name}")
+            with open(json_file, "r", encoding="utf-8") as f:
+                report_data = _json.load(f)
+            report = FightReport(report_data)
+            # append_summary holds its own lock — safe under concurrency.
+            append_summary(report.get_ai_summary(), corpus_path)
+            return path
+
+        def on_progress(completed, _total, item):
+            self._sig_calib_status.emit(f"Parsed {completed}/{total}: {item.name}")
+            self._sig_calib_progress.emit(completed, total)
+
+        results, errors = parallel_harvest(
+            paths, harvest_one, concurrency, on_progress=on_progress
+        )
+        for item, exc in errors:
+            logging.getLogger(__name__).warning(
+                "Calibration import failed for %s: %s", getattr(item, "name", item), exc
+            )
+
+        self._sig_calib_import_done.emit(len(results), total)
+
+    def _calib_recalibrate(self, auto: bool = False):
+        """Compute proposed thresholds and show the side-by-side preview dialog.
+
+        `auto=True` is used when an import auto-prompts recalibration: it suppresses
+        the informational "no data" pop-ups (so a finished import with too little
+        data doesn't spawn a useless dialog) and only opens the preview when there
+        is actually something to propose. The manual Recalibrate button passes
+        auto=False and keeps its existing feedback dialogs.
+        """
+        from PyQt6.QtWidgets import QApplication
+        from core.calibration import compute_thresholds, load_corpus, write_thresholds
+        from core.performance_buckets import active_thresholds, reload_thresholds
+
+        # load_corpus + compute_thresholds are synchronous and can be slow on a big
+        # corpus; show a wait cursor so the window doesn't look frozen. Restore it
+        # before any dialog/message box.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            summaries = load_corpus(self._calib_corpus_path())
+            proposed, obs_counts = compute_thresholds(summaries) if summaries else ({}, {})
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not summaries:
+            if not auto:
+                QMessageBox.information(
+                    self, "No Fights Collected",
+                    "No fights have been collected yet. Let the watcher analyze some "
+                    "fights, or import logs first."
+                )
+            return
+
+        if not proposed:
+            if not auto:
+                QMessageBox.information(
+                    self, "Not Enough Data",
+                    "There aren't enough observations on any axis (need 5+) to compute "
+                    "thresholds yet. Collect or import more fights."
+                )
+            return
+
+        current = active_thresholds()
+        fight_count = len(summaries)  # distinct fights pooled (one summary per fight)
+        if self._show_recalibration_preview(current, proposed, obs_counts, fight_count):
+            write_thresholds(proposed, self._calib_thresholds_path())
+            reload_thresholds(self._calib_thresholds_path())
+            thin = sum(1 for a in proposed if obs_counts.get(a, 0) < self.CALIB_CONFIDENCE_FLOOR)
+            if thin:
+                note = f" ({thin} {'axis' if thin == 1 else 'axes'} on thin data)"
+            else:
+                note = ""
+            self._set_calib_status(f"Calibration applied{note}. Active immediately.", ok=True)
+            self._refresh_calib_count()  # Reset button now has an override to remove
+        else:
+            self._set_calib_status("Recalibration discarded — thresholds unchanged.")
+
+    # Tier labels shown as the per-tier delta columns.
+    _CALIB_TIER_LABELS = ("p25", "p50", "p75", "p90", "p95")
+
+    @staticmethod
+    def _calib_num(v) -> str:
+        """Human-readable number formatting for the delta cells (never sci notation)."""
+        from core.calibration import format_threshold
+        return format_threshold(v)
+
+    def _show_recalibration_preview(self, current: dict, proposed: dict,
+                                    obs_counts: dict, fight_count: int) -> bool:
+        """Geeky per-tier delta view (current -> proposed, colored by direction).
+
+        Returns True if the operator confirms. Rendering only — the delta math and
+        the fight-count warning decision live in core.calibration (tier_delta /
+        fight_count_warning), kept pure and tested there.
+        """
+        from core.calibration import AXES, tier_delta, fight_count_warning
+        from core.performance_buckets import _BUCKET_LABELS
+        from PyQt6.QtWidgets import (
+            QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+        )
+
+        up_color = QColor(80, 200, 120)     # green: tier rose
+        down_color = QColor(220, 100, 100)  # red: tier dropped
+        same_color = QColor(150, 150, 150)  # gray: unchanged
+        thin_color = QColor(220, 160, 60)   # amber: thin-obs metric flag
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Recalibration Preview")
+        # Comfortable default, but a small minimum so it can't open off-screen on a
+        # 1366x768 laptop (columns stretch; tier headers wrap).
+        dialog.resize(1000, 560)
+        dialog.setMinimumSize(720, 420)
+        dlg_layout = QVBoxLayout(dialog)
+
+        # Baseline header — defaults vs a prior applied calibration.
+        override_exists = self._calib_thresholds_path().exists()
+        baseline = ("Comparing against your applied calibration" if override_exists
+                    else "Comparing against built-in defaults")
+        header = QLabel(
+            f"<b>Calibrating from {fight_count} fight"
+            f"{'s' if fight_count != 1 else ''}.</b> &nbsp; {baseline}."
+        )
+        header.setTextFormat(Qt.TextFormat.RichText)
+        dlg_layout.addWidget(header)
+
+        # Distinct-fight soft warning banner (never blocks).
+        if fight_count_warning(fight_count):
+            warn = QLabel(
+                f"⚠ Only {fight_count} fight"
+                f"{'s' if fight_count != 1 else ''} — the percentile curve may be "
+                "unreliable. Consider importing more logs before relying on this. "
+                "(You can still apply it.)"
+            )
+            warn.setWordWrap(True)
+            warn.setStyleSheet(
+                "background-color: #5a4500; color: #ffd966; border: 1px solid "
+                "#8a6d00; border-radius: 4px; padding: 6px;"
+            )
+            dlg_layout.addWidget(warn)
+
+        # One-line legend; the ⚠/thin-data detail lives in cell + header tooltips.
+        legend = QLabel("Green = up, red = down, gray = unchanged.")
+        legend.setStyleSheet("color: #aaa;")
+        dlg_layout.addWidget(legend)
+
+        # Tier columns speak TIER NAMES (percentile in parens + header tooltip).
+        tier_headers = [
+            f"{label.capitalize()} ({pct})"
+            for label, pct in zip(_BUCKET_LABELS, self._CALIB_TIER_LABELS)
+        ]
+        axis_names = [a[0] for a in AXES]
+        cols = ["Metric", "Samples", *tier_headers]
+        table = QTableWidget(len(axis_names), len(cols))
+        table.setHorizontalHeaderLabels(cols)
+
+        # Header tooltips: explain Samples and each tier's percentile floor.
+        samples_hdr = table.horizontalHeaderItem(1)
+        if samples_hdr is not None:
+            samples_hdr.setToolTip(
+                "Player-fight observations pooled for this metric — not the same as "
+                "the fight count above."
+            )
+        for i, (label, pct) in enumerate(zip(_BUCKET_LABELS, self._CALIB_TIER_LABELS)):
+            hdr = table.horizontalHeaderItem(2 + i)
+            if hdr is not None:
+                hdr.setToolTip(f"{label.capitalize()} tier — {pct} percentile floor.")
+
+        # Read-only, non-selectable, no focus, zebra striping.
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+
+        center = Qt.AlignmentFlag.AlignCenter
+        for row, axis in enumerate(axis_names):
+            n = obs_counts.get(axis, 0)
+            has_new = axis in proposed
+            is_thin = n < self.CALIB_CONFIDENCE_FLOOR
+
+            label = self._calib_axis_label(axis)
+            metric_item = QTableWidgetItem(label + (" ⚠" if (has_new and is_thin) else ""))
+            metric_item.setData(Qt.ItemDataRole.UserRole, axis)  # keep the raw key
+            if has_new and is_thin:
+                metric_item.setForeground(thin_color)
+                metric_item.setToolTip(
+                    f"Thin data: only {n} player-fight observations pooled "
+                    f"(under {self.CALIB_CONFIDENCE_FLOOR}). Applied anyway."
+                )
+            table.setItem(row, 0, metric_item)
+
+            samples_item = QTableWidgetItem(str(n))
+            samples_item.setTextAlignment(center)
+            table.setItem(row, 1, samples_item)
+
+            cur = current.get(axis)
+            if not has_new or not cur:
+                # Under 5 obs (or no current) -> unchanged; span the tier columns.
+                kept = QTableWidgetItem("unchanged — keeping current")
+                kept.setForeground(same_color)
+                kept.setTextAlignment(center)
+                kept.setToolTip(
+                    "Fewer than 5 observations — not enough to recalibrate, so the "
+                    "current values are kept."
+                )
+                table.setSpan(row, 2, 1, len(self._CALIB_TIER_LABELS))
+                table.setItem(row, 2, kept)
+                continue
+
+            prop = proposed[axis]
+            for i in range(len(self._CALIB_TIER_LABELS)):
+                d = tier_delta(cur[i], prop[i])
+                arrow = {"up": "↑", "down": "↓", "same": "="}[d.direction]
+                if d.pct is None:
+                    pct_s = "n/a%"
+                else:
+                    sign = "+" if d.pct >= 0 else ""  # format_threshold carries any '-'
+                    pct_s = f"{sign}{self._calib_num(d.pct)}%"
+                text = (f"{self._calib_num(cur[i])}→{self._calib_num(prop[i])}  "
+                        f"{arrow}{self._calib_num(abs(d.delta))} ({pct_s})")
+                cell = QTableWidgetItem(text)
+                cell.setTextAlignment(center)
+                cell.setForeground(
+                    {"up": up_color, "down": down_color, "same": same_color}[d.direction]
+                )
+                table.setItem(row, 2 + i, cell)
+
+        dlg_layout.addWidget(table)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Confirm & Apply")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancel")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dlg_layout.addWidget(buttons)
+
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _calib_reset_defaults(self):
+        """Delete the override file and revert to built-in defaults."""
+        from core.performance_buckets import reload_thresholds
+
+        path = self._calib_thresholds_path()
+        if not path.exists():
+            self._set_calib_status("Already using built-in defaults — nothing to reset.")
+            self._refresh_calib_count()
+            return
+
+        confirm = QMessageBox.question(
+            self, "Reset to Defaults",
+            "Discard your guild calibration and revert to SparkyBot's built-in "
+            "thresholds? Collected fights are kept; only the calibrated thresholds "
+            "are removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            path.unlink()
+        except OSError as exc:
+            self._set_calib_status(f"Could not remove calibration file: {exc}", ok=False)
+            return
+        reload_thresholds(self._calib_thresholds_path())
+        self._set_calib_status("Reverted to built-in defaults.", ok=True)
+        self._refresh_calib_count()  # Reset button disables now that the override is gone
 
     def _create_about_tab(self) -> QWidget:
         """Create about tab"""

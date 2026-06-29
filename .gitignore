@@ -11,6 +11,10 @@ ai_prompt_*.json
 sparkybot_*.json
 *.log
 
+# --- GUI calibration runtime data (corpus + operator threshold override) ---
+calibration_corpus.jsonl
+calibration_thresholds.json
+
 # --- staged self-update (created at runtime, applied on next launch) ---
 .update_pending/
 
