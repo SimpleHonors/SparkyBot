@@ -37,6 +37,20 @@ class VocabularyTracker:
     # _prune(): the most recent ROUND_FLOOR fights are never clock-evicted.
     ROUND_FLOOR = 5
 
+    # Long-horizon "signature phrase" suppression. The rolling phrase window only
+    # remembers the last 10 fights, so a stock phrase that recurs on a slower
+    # cadence ages out, gets reused, and oscillates back in forever. The signature
+    # ledger tracks how many distinct fights each n-gram has EVER appeared in (over
+    # a long horizon); once a phrase crosses SIGNATURE_THRESHOLD it is treated as a
+    # learned crutch and kept banned even after it leaves the rolling window. This
+    # is the self-correcting loop: the tracker learns the bot's own chronic tics
+    # from its output history and suppresses them without a human curating a list.
+    SIGNATURE_THRESHOLD = 4   # distinct fights an n-gram must recur in to be a signature
+    SIGNATURE_MAX = 16        # reserved slots for signatures in the ban block
+    PHRASE_BLOCK_MAX = 24     # total entries in the DO-NOT-REUSE block (prompt-bloat guard)
+    SIGNATURE_TTL_FIGHTS = 60  # forget a signature unused for this many fights
+    SIGNATURE_LEDGER_CAP = 4000  # hard cap on tracked n-grams (bounds the store)
+
     def __init__(self, store_path: Path = None, window_hours: int = 2,
                  vocab_config: VocabularyConfig = None):
         self.store_path = store_path or Path(__file__).parent.parent / "sparkybot_vocab_usage.json"
@@ -49,6 +63,11 @@ class VocabularyTracker:
         self._player_events: list = []  # list of {"name": str, "ts": float}
         self._topic_fight_events: list = []  # list of {"categories": list[str], "ts": float}
         self._phrase_events: list = []
+        # Long-horizon signature ledger (survives the rolling phrase-window prune).
+        self._signature_counts: Dict[str, int] = {}     # compound key -> # distinct fights
+        self._signature_display: Dict[str, str] = {}     # compound key -> display form
+        self._signature_last_fight: Dict[str, int] = {}  # compound key -> fight index last seen
+        self._fight_counter: int = 0                      # monotonic fight clock for TTL
         self._pug_events: list = []  # list of {"ts": float}
         self._comp_fingerprint_events: list = []  # list of {"labels": list[str], "ts": float}
         self._directive_events: list = []  # list of {"key": str, "ts": float}
@@ -98,6 +117,12 @@ class VocabularyTracker:
         # Freestyle phrase tracking: store the full response text for n-gram
         # extraction. Capped to last 10 responses in _prune().
         self._phrase_events.append({"text": response_text, "ts": now})
+
+        # Long-horizon signature tracking: count distinct fights each n-gram
+        # recurs in, so chronic crutch phrases stay banned after they leave the
+        # rolling window. This is what makes the tracker learn the bot's own tics.
+        self._fight_counter += 1
+        self._update_signatures(response_text)
 
         # PUG mention tracking
         if re.search(r'\bPUGs?\b', response_text):
@@ -464,40 +489,43 @@ class VocabularyTracker:
 
         return "\n".join(lines)
 
-    def _build_player_suppression_guidance(self, summary: Dict[str, Any] = None) -> str:
-        """Suggest which players to avoid naming based on recent mention frequency.
-        Commander suppression: the commander is no longer blanket-exempt."""
-        # Prune handled by _build_prompt caller.
+    def _suppressed_player_counts(self, summary: Dict[str, Any] = None) -> list:
+        """Players named in 2+ responses in the current window, as sorted
+        [(name, count)] (highest first). The commander escapes when a bark is
+        allowed this fight. Single source of truth for who is on name-cooldown —
+        used both by the text guidance and by data-layer stat redaction."""
         if not self._player_events:
-            return ""
-
-        # Count mentions per player in the current window
+            return []
         counts: Dict[str, int] = {}
         for event in self._player_events:
             name = event.get("name", "")
             if name:
                 counts[name] = counts.get(name, 0) + 1
 
-        commander = ""
-        if summary:
-            commander = (summary.get("commander") or "").strip()
-
-        # Threshold: 2+ mentions in the window.
+        commander = (summary.get("commander") or "").strip() if summary else ""
         # M5: commander escapes suppression if a bark is allowed for this fight
-        # (per-fight cap + cross-fight cooldown via `commander_bark_allowed`),
-        # replacing the prior 50% dice roll. fight_id is injected by FightAnalyst
-        # at analyze() entry; falls back to "default" for callers that omit it.
+        # (per-fight cap + cross-fight cooldown via `commander_bark_allowed`).
+        # fight_id is injected by FightAnalyst; falls back to "default".
         fight_id_for_bark = (summary.get("_fight_id") if summary else None) or "default"
         suppressed = []
         for name, c in counts.items():
             if c < 2:
                 continue
-            if name == commander:
-                if self.commander_bark_allowed(commander, fight_id_for_bark):
-                    continue  # commander escapes suppression this fight
+            if name == commander and self.commander_bark_allowed(commander, fight_id_for_bark):
+                continue  # commander escapes suppression this fight
             suppressed.append((name, c))
-
         suppressed.sort(key=lambda x: -x[1])
+        return suppressed
+
+    def get_suppressed_players(self, summary: Dict[str, Any] = None) -> list:
+        """Names of players on name-cooldown this fight (see _suppressed_player_counts)."""
+        return [name for name, _ in self._suppressed_player_counts(summary)]
+
+    def _build_player_suppression_guidance(self, summary: Dict[str, Any] = None) -> str:
+        """Suggest which players to avoid naming based on recent mention frequency.
+        Commander suppression: the commander is no longer blanket-exempt."""
+        # Prune handled by _build_prompt caller.
+        suppressed = self._suppressed_player_counts(summary)
         if not suppressed:
             return ""
 
@@ -615,6 +643,43 @@ class VocabularyTracker:
         # Numbers context
         "outnumbered", "numbers", "ratio", "advantage", "disadvantage",
     })
+
+    def _update_signatures(self, text: str) -> None:
+        """Bump the long-horizon doc-count for each 3/4-gram in `text` (deduped
+        within this response). Called once per recorded fight; survives the
+        rolling phrase-window prune so chronic phrases accumulate over time."""
+        if not text:
+            return
+        punct_re = re.compile(r'[^\w\s]', re.UNICODE)
+        words = punct_re.sub('', text.lower()).split()
+        seen: set = set()
+        for n in (3, 4):
+            for i in range(len(words) - n + 1):
+                gram = ' '.join(words[i:i + n])
+                key = gram.replace(' ', '')
+                if key in seen:
+                    continue
+                seen.add(key)
+                self._signature_display.setdefault(key, gram)
+                self._signature_counts[key] = self._signature_counts.get(key, 0) + 1
+                self._signature_last_fight[key] = self._fight_counter
+
+    def _signature_bans(self, exclude: set = None) -> list:
+        """Return [(display, count)] for n-grams that have crossed the signature
+        threshold, highest-count first, capped at SIGNATURE_MAX. `exclude` is a
+        set of display forms already covered by the rolling window."""
+        exclude = exclude or set()
+        out = []
+        for key, count in sorted(self._signature_counts.items(), key=lambda kv: -kv[1]):
+            if count < self.SIGNATURE_THRESHOLD:
+                break  # sorted desc — nothing below threshold remains
+            disp = self._signature_display.get(key, "")
+            if not disp or disp in exclude:
+                continue
+            out.append((disp, count))
+            if len(out) >= self.SIGNATURE_MAX:
+                break
+        return out
 
     def _build_phrase_guidance(self, summary: Dict[str, Any] = None) -> str:
         """Extract recurring n-grams, fixation verbs, and overused words."""
@@ -755,7 +820,19 @@ class VocabularyTracker:
                 key=lambda x: -x[1]
             )
 
-        if not repeated and not repeated_2grams and not repeated_verbs and not repeated_words:
+        # Long-horizon signature phrases (computed before the empty-window guard so
+        # they still fire when the rolling window happens to be quiet). Exclude
+        # phrases already surfaced by the rolling window — those get banned anyway,
+        # so signature slots are reserved for chronic phrases the window has
+        # forgotten (the whole point of the long-horizon tier).
+        window_displays = ({g for g, _ in repeated}
+                           | {g for g, _ in repeated_2grams}
+                           | {v for v, _ in repeated_verbs}
+                           | {w for w, _ in repeated_words})
+        sig_bans = self._signature_bans(exclude=window_displays)
+
+        if (not repeated and not repeated_2grams and not repeated_verbs
+                and not repeated_words and not sig_bans):
             return ""
 
         # Deduplicate n-grams: if a 4-gram is banned, don't also ban its sub-3-grams
@@ -789,12 +866,18 @@ class VocabularyTracker:
                 banned.append(f'"{word}" (x{count}, overused)')
                 banned_set.add(word)
 
+        # Reserved slots at the FRONT for long-horizon signatures: a proven chronic
+        # repeat must not be crowded out of the cap by transient window phrases.
+        sig_entries = [f'"{disp}" (x{count}, signature)'
+                       for disp, count in sig_bans if disp not in banned_set]
+        banned = sig_entries + banned
+
         if not banned:
             return ""
 
-        # Cap the list at 15 to avoid prompt bloat
-        if len(banned) > 15:
-            banned = banned[:15]
+        # Cap the list to avoid prompt bloat (signatures lead, so they survive)
+        if len(banned) > self.PHRASE_BLOCK_MAX:
+            banned = banned[:self.PHRASE_BLOCK_MAX]
 
         return (
             "\n\nREPEATED PHRASES — DO NOT REUSE\n"
@@ -1020,6 +1103,31 @@ class VocabularyTracker:
         self._comp_fingerprint_events = [e for e in self._comp_fingerprint_events if e["ts"] >= cutoff]
         self._directive_events = [e for e in self._directive_events if e["ts"] >= cutoff]
         self._seed_events = [e for e in self._seed_events if e["ts"] >= cutoff]
+        self._prune_signatures()
+
+    def _prune_signatures(self) -> None:
+        """Decay the long-horizon signature ledger so it stays bounded and so a
+        phrase the bot has stopped using is eventually released for reuse:
+          1. forget n-grams unused for more than SIGNATURE_TTL_FIGHTS fights;
+          2. hard-cap the ledger, evicting the weakest (lowest count, then oldest).
+        """
+        def _drop(key):
+            self._signature_counts.pop(key, None)
+            self._signature_display.pop(key, None)
+            self._signature_last_fight.pop(key, None)
+
+        stale = [k for k, last in self._signature_last_fight.items()
+                 if self._fight_counter - last > self.SIGNATURE_TTL_FIGHTS]
+        for k in stale:
+            _drop(k)
+
+        if len(self._signature_counts) > self.SIGNATURE_LEDGER_CAP:
+            ranked = sorted(
+                self._signature_counts,
+                key=lambda k: (self._signature_counts[k], self._signature_last_fight.get(k, 0)),
+            )
+            for k in ranked[:len(self._signature_counts) - self.SIGNATURE_LEDGER_CAP]:
+                _drop(k)
 
     def _load(self) -> None:
         """Load persisted events from disk, ignoring errors. Backward-compatible."""
@@ -1033,6 +1141,10 @@ class VocabularyTracker:
                 self._player_events = data.get("player_events", [])
                 self._topic_fight_events = data.get("topic_fight_events", [])
                 self._phrase_events = data.get("phrase_events", [])
+                self._signature_counts = data.get("signature_counts", {})
+                self._signature_display = data.get("signature_display", {})
+                self._signature_last_fight = data.get("signature_last_fight", {})
+                self._fight_counter = data.get("fight_counter", 0)
                 self._pug_events = data.get("pug_events", [])
                 self._comp_fingerprint_events = data.get("comp_fingerprint_events", [])
                 self._directive_events = data.get("directive_events", [])
@@ -1047,6 +1159,9 @@ class VocabularyTracker:
             self._player_events = []
             self._topic_fight_events = []
             self._phrase_events = []
+            self._signature_counts = {}
+            self._signature_display = {}
+            self._signature_last_fight = {}
             self._pug_events = []
             self._comp_fingerprint_events = []
             self._directive_events = []
@@ -1063,6 +1178,10 @@ class VocabularyTracker:
                 "player_events": self._player_events,
                 "topic_fight_events": self._topic_fight_events,
                 "phrase_events": self._phrase_events,
+                "signature_counts": self._signature_counts,
+                "signature_display": self._signature_display,
+                "signature_last_fight": self._signature_last_fight,
+                "fight_counter": self._fight_counter,
                 "pug_events": self._pug_events,
                 "comp_fingerprint_events": self._comp_fingerprint_events,
                 "directive_events": self._directive_events,

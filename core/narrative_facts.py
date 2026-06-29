@@ -41,6 +41,27 @@ _TOP_ARRAYS = (
     'top_protection_gen', 'top_stability_gen',
 )
 
+
+def redact_players_from_summary(summary: dict, names) -> dict:
+    """Return a copy of `summary` with `names` removed from every per-player
+    leaderboard (the _TOP_ARRAYS), leaving team aggregates (squad_*/enemy_*)
+    untouched. This is the data-layer player cooldown: a player on name-cooldown
+    has no individual stat rows for the model to credit (by name OR by build
+    nickname), but their contribution still lives in the anonymous team totals,
+    so the fight's scale stays accurate. The original summary is not mutated."""
+    if not names:
+        return summary
+    drop = {n for n in names if n}
+    if not drop:
+        return summary
+    redacted = dict(summary)  # shallow copy; only the _TOP_ARRAYS keys are replaced
+    for arr_name in _TOP_ARRAYS:
+        rows = summary.get(arr_name)
+        if not rows:
+            continue
+        redacted[arr_name] = [e for e in rows if e.get('name') not in drop]
+    return redacted
+
 # Axis → human-readable phrase used in template 5.
 _AXIS_LABEL = {
     'dps':            'damage',

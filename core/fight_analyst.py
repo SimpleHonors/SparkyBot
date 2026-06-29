@@ -50,6 +50,7 @@ try:
     from narrative_facts import (
         build_narrative_facts, render_narrative_block,
         extract_roster_names, filter_palette_for_name_poisoning,
+        redact_players_from_summary,
     )
     from callout_cooldown import CalloutCooldown
     _V3_AVAILABLE = True
@@ -488,7 +489,19 @@ class FightAnalyst:
         # Note: _pending_commander_emit is staged in _build_system_prompt_v3
         # which runs first per analyze() flow.
 
-        facts = build_narrative_facts(fight_summary,
+        # Data-layer player cooldown: redact name-cooldown players' individual
+        # stat rows from the data the model sees, so it cannot credit them by
+        # name OR by build nickname ("the power amalgam"). Their numbers remain
+        # in the anonymous team totals, so the fight's scale stays accurate.
+        # Prune first so the rolling window + 5-round floor are current.
+        facts_summary = fight_summary
+        if self.vocab_tracker:
+            self.vocab_tracker.prune()
+            cooled = self.vocab_tracker.get_suppressed_players(fight_summary)
+            if cooled:
+                facts_summary = redact_players_from_summary(fight_summary, cooled)
+
+        facts = build_narrative_facts(facts_summary,
                                       cooldown=self._callout_cooldown)
         self._pending_topic_emits = set(facts.get('topic_emits', set()))
         self._pending_player_emits = set(facts.get('player_emits', set()))
@@ -511,15 +524,12 @@ class FightAnalyst:
                 vocab_block = vocab_block[:600].rstrip() + "\n  …(truncated)"
             body += "\n\n" + vocab_block
 
-        # Anti-repetition guidance (parity with the v2 path in _build_prompt):
-        # without this the v3 assembly records usage but never tells the model
-        # what to avoid, so players and phrases repeat across fights. Prune first
-        # so the rolling window + 5-round floor are current.
+        # Anti-repetition guidance: phrase-level only. Player cooldown is now
+        # enforced at the data layer (stat redaction above) instead of a text
+        # instruction — naming the cooled-down player here would reintroduce the
+        # exact fixation hook, plus the "describe without a name" loophole that
+        # produced periphrasis like "the power amalgam". Prune already done above.
         if self.vocab_tracker:
-            self.vocab_tracker.prune()
-            player_guide = self.vocab_tracker._build_player_suppression_guidance(fight_summary)
-            if player_guide:
-                body += "\n\n" + player_guide.strip()
             phrase_guide = self.vocab_tracker._build_phrase_guidance(fight_summary)
             if phrase_guide:
                 body += "\n\n" + phrase_guide.strip()
