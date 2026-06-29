@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -68,60 +70,116 @@ _BUCKET_LABELS = ('solid', 'strong', 'dominant', 'exceptional', 'legendary')
 # ---------------------------------------------------------------------------
 # Runtime-loadable thresholds.
 #
-# On import we load the active set: the operator override
-# (calibration_thresholds.json in the app dir) merged over the built-in
-# defaults, or the defaults alone if no valid override exists. Merge (rather
-# than full replace) means an axis the guild had too little data to recalibrate
-# keeps its built-in default instead of becoming unbucketable.
+# The active set is the operator override (calibration_thresholds.json in the
+# app dir) merged over the built-in defaults, or the defaults alone if no valid
+# override exists. Merge (rather than full replace) means an axis the guild had
+# too little data to recalibrate keeps its built-in default instead of becoming
+# unbucketable.
 #
-# Apply timing: the override takes effect immediately in-process when the GUI
-# calls reload_thresholds() after a confirmed recalibrate, AND on the next
-# launch (loaded here at import). No restart required.
+# IMPORTANT — module-identity robustness. main.py puts BOTH the repo root and
+# core/ on sys.path, so this module can be imported under two names
+# ('performance_buckets' AND 'core.performance_buckets') as two distinct module
+# objects, each with its own globals. To make in-process recalibration apply no
+# matter which copy a caller holds, active_thresholds() is backed by the
+# override FILE with an mtime/size signature check: each copy re-reads only when
+# the file changes and caches otherwise. So when the GUI writes the override,
+# every module copy's next active_thresholds() call picks it up — no restart,
+# no dependence on which module instance reload_thresholds() was called on.
+#
+# Path note: derived WITHOUT .resolve() to match config.home_dir
+# (Path(__file__).parent.parent), so a symlinked install can't make the
+# import-time reader and the GUI writer diverge.
 # ---------------------------------------------------------------------------
-_OVERRIDE_PATH = Path(__file__).resolve().parent.parent / "calibration_thresholds.json"
+_OVERRIDE_PATH = Path(__file__).parent.parent / "calibration_thresholds.json"
+
+_THRESHOLDS_LOCK = threading.Lock()
+_ACTIVE_THRESHOLDS: dict | None = None
+_ACTIVE_SIGNATURE = None  # (mtime_ns, size) of the override file when cached; None = file absent
 
 
-def load_thresholds(path: Path = _OVERRIDE_PATH) -> dict:
+def _override_signature(path: Path):
+    """Cheap change-detection signature for the override file (None if absent)."""
+    try:
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _valid_tier_values(vals) -> bool:
+    """A valid override row is a list/tuple of exactly 5 finite, non-bool numbers."""
+    if not isinstance(vals, (list, tuple)) or len(vals) != len(_BUCKET_LABELS):
+        return False
+    for v in vals:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+        if not math.isfinite(v):
+            return False
+    return True
+
+
+def load_thresholds(path: Path | None = None) -> dict:
     """Return the active threshold dict: defaults merged with the override file.
 
-    Always returns an independent dict (callers may mutate it freely). A missing
-    or corrupt override silently yields the built-in defaults.
+    Always returns an independent dict (callers may mutate it freely). A missing,
+    corrupt, or type-garbage override silently yields the built-in defaults; an
+    override axis whose 5 values are not all finite numbers is dropped (that axis
+    keeps its built-in default), consistent with the merge behavior.
     """
+    path = Path(path) if path is not None else _OVERRIDE_PATH
     active = {k: tuple(v) for k, v in _DEFAULT_THRESHOLDS.items()}
-    path = Path(path)
     if not path.exists():
         return active
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, OSError, ValueError) as exc:
         logger.warning("Ignoring corrupt calibration override %s: %s", path, exc)
         return active
     if not isinstance(raw, dict):
         logger.warning("Ignoring calibration override %s: not a JSON object", path)
         return active
     for axis, vals in raw.items():
-        if isinstance(vals, (list, tuple)) and len(vals) == len(_BUCKET_LABELS):
+        if _valid_tier_values(vals):
             active[axis] = tuple(vals)
+        else:
+            logger.warning(
+                "Dropping calibration override axis %r (not 5 finite numbers); "
+                "keeping built-in default", axis
+            )
     return active
 
 
-_ACTIVE_THRESHOLDS: dict = load_thresholds()
+def active_thresholds(path: Path | None = None) -> dict:
+    """The currently active thresholds (override-aware).
 
-
-def active_thresholds() -> dict:
-    """The currently active thresholds (override-aware)."""
-    return _ACTIVE_THRESHOLDS
-
-
-def reload_thresholds(path: Path = _OVERRIDE_PATH) -> dict:
-    """Re-read the override file and swap in the new active set (in-process).
-
-    Called by the GUI after a confirmed recalibrate so the change applies
-    without a restart.
+    Self-refreshing: re-reads the override file only when its mtime/size changes,
+    otherwise returns the cached dict. This makes a freshly-written override take
+    effect on the next call from ANY imported copy of this module, with no
+    restart and no reliance on reload_thresholds() having been called on this
+    particular module instance.
     """
-    global _ACTIVE_THRESHOLDS
-    _ACTIVE_THRESHOLDS = load_thresholds(path)
-    return _ACTIVE_THRESHOLDS
+    global _ACTIVE_THRESHOLDS, _ACTIVE_SIGNATURE
+    p = Path(path) if path is not None else _OVERRIDE_PATH
+    sig = _override_signature(p)
+    with _THRESHOLDS_LOCK:
+        if _ACTIVE_THRESHOLDS is None or sig != _ACTIVE_SIGNATURE:
+            _ACTIVE_THRESHOLDS = load_thresholds(p)
+            _ACTIVE_SIGNATURE = sig
+        return _ACTIVE_THRESHOLDS
+
+
+def reload_thresholds(path: Path | None = None) -> dict:
+    """Force an immediate re-read of the override file and refresh the cache.
+
+    The GUI calls this right after writing/deleting the override so its own copy
+    reflects the change at once; other module copies pick it up lazily via the
+    mtime check in active_thresholds().
+    """
+    global _ACTIVE_THRESHOLDS, _ACTIVE_SIGNATURE
+    with _THRESHOLDS_LOCK:
+        _ACTIVE_THRESHOLDS = None
+        _ACTIVE_SIGNATURE = None
+    return active_thresholds(path)
 
 
 def bucket_axis(value: float, axis: str) -> str | None:
