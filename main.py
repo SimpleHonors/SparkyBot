@@ -214,6 +214,16 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
             _try_delete_json(json_file, logger)
             return ProcessResult.SKIPPED_THRESHOLD
 
+        # Auto-accumulate the calibration corpus: every accepted live fight
+        # contributes its summary so the GUI "Calibrate to Your Guild" feature
+        # can recompute thresholds from real fights. Best-effort — a failure here
+        # must never break the report/AI pipeline.
+        try:
+            from core.calibration import append_summary
+            append_summary(report.get_ai_summary())
+        except Exception as cal_err:
+            logger.debug(f"Calibration corpus append skipped: {cal_err}")
+
         # Discord enabled in config but webhook not initialized -> real error
         if config.enable_discord_bot and discord is None:
             logger.error("Discord enabled in config but webhook not initialized")
