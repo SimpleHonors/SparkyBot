@@ -717,32 +717,86 @@ class SparkyBotApp(QApplication):
         def _check():
             try:
                 import requests
+                import re
                 from core.version import VERSION
-                from core.ei_updater import EIUpdater
 
-                # Check SparkyBot version FIRST
-                response = requests.get(
-                    "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
-                    timeout=10
-                )
+                def _parse(v):
+                    try:
+                        return tuple(int(x) for x in v.split('.')[:3])
+                    except (ValueError, AttributeError):
+                        return (0, 0, 0)
+
+                # Resolve the latest version WITHOUT the GitHub API. The API caps
+                # unauthenticated clients at 60 req/hr/IP and returns 403 when
+                # exhausted (which silently looked like "no update"). The plain
+                # github.com /releases/latest endpoint just 302-redirects to the
+                # newest /tag/vX.Y.Z and is NOT rate-limited, so the check keeps
+                # working under throttling.
+                latest = ""
+                release_data = None
+                try:
+                    r = requests.get(
+                        "https://github.com/SimpleHonors/SparkyBot/releases/latest",
+                        allow_redirects=False, timeout=10
+                    )
+                    m = re.search(r"/tag/v?([0-9][0-9.]*)", r.headers.get("Location", ""))
+                    if m:
+                        latest = m.group(1)
+                except Exception as e:
+                    self.logger.debug(f"redirect version check failed: {e}")
+
+                # Fall back to the API only if the redirect gave us nothing.
+                if not latest:
+                    try:
+                        resp = requests.get(
+                            "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
+                            timeout=10
+                        )
+                        if resp.status_code == 200:
+                            release_data = resp.json()
+                            latest = release_data.get("tag_name", "").lstrip("v").strip()
+                        elif resp.status_code == 403:
+                            self.logger.info(
+                                "Update check skipped: GitHub API rate limit (403). "
+                                "Resets within the hour."
+                            )
+                    except Exception as e:
+                        self.logger.debug(f"API version check failed: {e}")
+
                 sparkybot_needs_update = False
-                if response.status_code == 200:
-                    data = response.json()
-                    latest = data.get("tag_name", "").lstrip("v").strip()
-
-                    def _parse(v):
+                if latest and _parse(latest) > _parse(VERSION):
+                    # We need the asset URL to download. Try the API for full
+                    # release data; if it's throttled, synthesize it from our
+                    # release naming convention — the download URL lives on
+                    # github.com (not the rate-limited API), so it still works.
+                    if release_data is None:
                         try:
-                            return tuple(int(x) for x in v.split('.')[:3])
-                        except (ValueError, AttributeError):
-                            return (0, 0, 0)
-
-                    if _parse(latest) > _parse(VERSION):
-                        self._update_info = data
-                        self.sig_show_update.emit(latest, data)
-                        sparkybot_needs_update = True
+                            resp = requests.get(
+                                "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
+                                timeout=10
+                            )
+                            if resp.status_code == 200:
+                                release_data = resp.json()
+                        except Exception:
+                            release_data = None
+                    if release_data is None:
+                        release_data = {
+                            "tag_name": f"v{latest}",
+                            "assets": [{
+                                "name": f"SparkyBot-{latest}.zip",
+                                "browser_download_url": (
+                                    "https://github.com/SimpleHonors/SparkyBot/"
+                                    f"releases/download/v{latest}/SparkyBot-{latest}.zip"
+                                ),
+                            }],
+                        }
+                    self._update_info = release_data
+                    self.sig_show_update.emit(latest, release_data)
+                    sparkybot_needs_update = True
 
                 # Only check EI if SparkyBot is already up to date
                 if not sparkybot_needs_update:
+                    from core.ei_updater import EIUpdater
                     from core.gw2ei_invoker import GW2EIInvoker
                     invoker = GW2EIInvoker(self.config)
                     ei = EIUpdater(invoker.get_gw2ei_folder())
