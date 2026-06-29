@@ -48,6 +48,44 @@ _last_ai_response: Optional[str] = None
 # the same outlier callout 3 fights in a row.
 _callout_cooldown = None
 
+# v1.7.3 — external relauncher used to apply staged updates on network-share
+# installs. Written to the OS temp dir (LOCAL disk) and run detached AFTER this
+# process hard-exits, so nothing holds the share's .py files while bootstrap
+# applies the update. It waits until main.py is writable (old process fully
+# gone + SMB lock released), then starts bootstrap.py which does the apply.
+_RELAUNCH_SRC = r'''
+import os, sys, time, subprocess
+
+app_dir = sys.argv[1]
+python = sys.argv[2]
+args = sys.argv[3:]
+main_py = os.path.join(app_dir, "main.py")
+bootstrap = os.path.join(app_dir, "bootstrap.py")
+
+def writable(path):
+    # Opening for append needs write access but does NOT truncate. If another
+    # process still holds the file (deny-write / sharing violation) this raises.
+    try:
+        with open(path, "ab"):
+            return True
+    except OSError:
+        return False
+
+# Wait up to ~60s for the old SparkyBot process to fully release main.py.
+for _ in range(120):
+    if not os.path.exists(main_py) or writable(main_py):
+        break
+    time.sleep(0.5)
+
+# Small extra settle for the SMB oplock to break, then start bootstrap, which
+# applies the staged update (it has its own per-file retry as a safety net).
+time.sleep(1.0)
+try:
+    subprocess.Popen([python, bootstrap, *args], cwd=app_dir)
+except Exception as e:
+    sys.stderr.write("relaunch failed: %s\n" % e)
+'''
+
 
 def _get_ai_components():
     """Lazy-init and return the shared VocabularyConfig, VocabularyTracker, and SessionHistoryTracker."""
@@ -891,32 +929,57 @@ class SparkyBotApp(QApplication):
             self._restart_app()
 
     def _restart_app(self):
-        """Restart the application."""
+        """Restart the application to apply a staged update.
+
+        On a network-share install the program files (main.py, core/*.py) stay
+        LOCKED for as long as ANY SparkyBot process holds them. os.execv does not
+        truly kill the old process on Windows — it overlaps the new one, so the
+        staged update can never be copied over the still-locked files (the
+        infinite "still locked" loop the operator hit).
+
+        Fix: hand off to a tiny relauncher that lives on LOCAL disk (so it holds
+        no lock on the share), then HARD-exit this process with os._exit so every
+        share handle is released instantly. The relauncher waits until main.py is
+        actually writable again, then starts bootstrap.py, which applies the
+        staged update with nothing holding the files.
+        """
         import sys
         import os
+        import subprocess
+        import tempfile
 
-        self.logger.info("Restarting SparkyBot after update...")
+        self.logger.info("Closing SparkyBot to apply update (handing off to relauncher)...")
 
-        # Stop the watcher cleanly
-        self.stop_watcher()
+        try:
+            self.stop_watcher()
+        except Exception:
+            pass
 
-        # Always restart THROUGH bootstrap.py. bootstrap.apply_pending_update()
-        # is what swaps the staged files in before any app module is imported.
-        # If we relaunched main.py directly (e.g. user ran `python main.py`), the
-        # staged update would never apply and we'd loop forever re-downloading it.
         python = sys.executable
-        bootstrap = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bootstrap.py")
-        if os.path.exists(bootstrap):
-            script = bootstrap
-        else:
-            script = os.path.abspath(sys.argv[0])
-        args = sys.argv[1:]
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        args = [a for a in sys.argv[1:] if a != '--test-update']
 
-        # Filter out --test-update if present
-        args = [a for a in args if a != '--test-update']
+        relauncher = os.path.join(tempfile.gettempdir(), "sparkybot_relaunch.py")
+        try:
+            with open(relauncher, "w", encoding="utf-8") as f:
+                f.write(_RELAUNCH_SRC)
 
-        # Launch new process
-        os.execv(python, [python, script] + args)
+            # CREATE_NEW_PROCESS_GROUP so the child outlives this process and is
+            # not killed by the console's Ctrl+C; it still inherits the console
+            # so the relaunched app's startup log stays visible to the user.
+            creationflags = 0x00000200 if os.name == "nt" else 0
+            subprocess.Popen(
+                [python, relauncher, app_dir, python, *args],
+                cwd=tempfile.gettempdir(),
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            # If we can't spawn the relauncher, fall back to a plain exit so the
+            # user can reopen manually (bootstrap will apply on next launch).
+            self.logger.error(f"Relauncher spawn failed ({e}); exiting for manual restart.")
+
+        # HARD exit: release all file handles NOW. No thread teardown, no Qt drain.
+        os._exit(0)
 
     def _trigger_sparkybot_update(self, release_data: dict):
         """Trigger the SparkyBot update flow from release data."""
