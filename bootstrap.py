@@ -25,6 +25,7 @@ def apply_pending_update():
     nothing app-side is imported yet, so the swap always succeeds.
     """
     import shutil
+    import stat
     import time
     app_dir = Path(__file__).parent
     pending = app_dir / ".update_pending"
@@ -48,39 +49,82 @@ def apply_pending_update():
 
     print("Applying pending SparkyBot update...")
 
-    # On Windows + network shares, os.execv leaves the OLD process briefly alive
-    # while the new one starts, so it still locks main.py / core/*.py for a moment.
-    # A short initial wait + per-file retry waits that dying process out instead of
-    # failing on the first PermissionError (which is what caused the upgrade loop).
-    time.sleep(1.0)
+    def _force_writable(p):
+        try:
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            pass
+
+    def _apply_one(src, dst):
+        """Replace dst with src, even if dst is locked/held by another process.
+
+        On Windows network shares the SMB *server* shows no lock, yet a plain
+        truncate-overwrite (shutil.copy2 -> open(dst,'wb')) still fails with
+        PermissionError — the block is client-side (Defender real-time scan, the
+        SMB redirector, or a read-only attribute). The robust technique is to
+        rename the in-use file out of the way (a directory metadata op that
+        succeeds even while the file is open) and then write the new file fresh.
+        """
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            _force_writable(dst)
+        # Fast path: straight copy when the file isn't held.
+        try:
+            shutil.copy2(src, dst)
+            return True
+        except PermissionError:
+            pass
+        # Held/locked: move the old file aside, then create a fresh one.
+        try:
+            if dst.exists():
+                aside = dst.with_name(dst.name + ".old_update")
+                try:
+                    if aside.exists():
+                        _force_writable(aside)
+                        aside.unlink()
+                except OSError:
+                    pass
+                os.replace(dst, aside)   # rename the open file out of the way
+            shutil.copy2(src, dst)       # dst path is now free
+            return True
+        except (PermissionError, OSError):
+            return False
+
+    # A couple of retry rounds still help for a genuinely transient overlap.
     remaining = list(work)
     applied = 0
-    MAX_ROUNDS = 20  # ~20s total worst case
+    MAX_ROUNDS = 12  # ~12s worst case
     for attempt in range(MAX_ROUNDS):
         still_locked = []
         for src, dst in remaining:
             try:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                applied += 1
-            except PermissionError:
-                still_locked.append((src, dst))
+                if _apply_one(src, dst):
+                    applied += 1
+                else:
+                    still_locked.append((src, dst))
             except Exception as e:
-                # Non-lock error: don't spin on it, just report and skip.
                 print(f"WARNING: could not apply {dst.name}: {e}")
         remaining = still_locked
         if not remaining:
             break
         if attempt < MAX_ROUNDS - 1:
-            print(f"  {len(remaining)} file(s) still locked by the closing app; "
-                  f"waiting (try {attempt + 1}/{MAX_ROUNDS})...")
+            print(f"  {len(remaining)} file(s) still held; retrying "
+                  f"(try {attempt + 1}/{MAX_ROUNDS})...")
             time.sleep(1.0)
 
+    # Best-effort cleanup of the renamed-aside originals.
+    for old in app_dir.rglob("*.old_update"):
+        try:
+            _force_writable(old)
+            old.unlink()
+        except OSError:
+            pass
+
     if remaining:
-        # Keep .update_pending so a clean manual relaunch (old process fully dead)
-        # finishes the job. Do NOT delete it — that is what triggers a re-download loop.
-        print(f"WARNING: {len(remaining)} file(s) still locked; update NOT fully applied.\n"
-              f"Fully close SparkyBot and relaunch to finish installing.")
+        # Keep .update_pending so a clean relaunch finishes the job. Do NOT
+        # delete it — that is what triggers a re-download loop.
+        print(f"WARNING: {len(remaining)} file(s) could not be replaced; update NOT "
+              f"fully applied.\nClose SparkyBot completely and relaunch to finish.")
     else:
         shutil.rmtree(pending, ignore_errors=True)
         print(f"Update applied: {applied} files updated. Continuing startup...\n")
