@@ -20,17 +20,27 @@ The pre_digester (M1) calls bucket_player() and infer_build() for each
 player in get_ai_summary's top_X arrays, exposing the results to the v2
 system prompt so Sparky can reference *behavior tags* instead of numbers.
 
-Recalibration: run tools/recalc_thresholds.py against an updated corpus
-to regenerate _PERFORMANCE_THRESHOLDS.
+Recalibration: operators can now recalibrate from their own guild's fights
+entirely through the Settings GUI (the "Calibration" tab), which writes an
+override file (calibration_thresholds.json) loaded here at import. The built-in
+_DEFAULT_THRESHOLDS below are the fallback when no override is present.
 """
 from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Calibrated thresholds — derived from 802-fight corpus 2026-05-09.
 # Each axis: (p25_solid, p50_strong, p75_dominant, p90_exceptional, p95_legendary)
 # Pool = top-N performers per fight (top-5 for DPS, top-3 for the rest).
+# These are the BUILT-IN DEFAULTS; an operator override (written by the GUI
+# Calibration tab to calibration_thresholds.json) takes precedence when present.
 # ---------------------------------------------------------------------------
-_PERFORMANCE_THRESHOLDS: dict[str, tuple[float, float, float, float, float]] = {
+_DEFAULT_THRESHOLDS: dict[str, tuple[float, float, float, float, float]] = {
     # Computed from 802-fight corpus (2026-02-06 .. 2026-05-08), 766 fights
     # used after short-fight (<30s) filter. Pool obs counts vary per axis.
     'dps':              (1225,    2003,    3121,    4552,    5509),     # n=3811
@@ -55,10 +65,68 @@ _PERFORMANCE_THRESHOLDS: dict[str, tuple[float, float, float, float, float]] = {
 
 _BUCKET_LABELS = ('solid', 'strong', 'dominant', 'exceptional', 'legendary')
 
+# ---------------------------------------------------------------------------
+# Runtime-loadable thresholds.
+#
+# On import we load the active set: the operator override
+# (calibration_thresholds.json in the app dir) merged over the built-in
+# defaults, or the defaults alone if no valid override exists. Merge (rather
+# than full replace) means an axis the guild had too little data to recalibrate
+# keeps its built-in default instead of becoming unbucketable.
+#
+# Apply timing: the override takes effect immediately in-process when the GUI
+# calls reload_thresholds() after a confirmed recalibrate, AND on the next
+# launch (loaded here at import). No restart required.
+# ---------------------------------------------------------------------------
+_OVERRIDE_PATH = Path(__file__).resolve().parent.parent / "calibration_thresholds.json"
+
+
+def load_thresholds(path: Path = _OVERRIDE_PATH) -> dict:
+    """Return the active threshold dict: defaults merged with the override file.
+
+    Always returns an independent dict (callers may mutate it freely). A missing
+    or corrupt override silently yields the built-in defaults.
+    """
+    active = {k: tuple(v) for k, v in _DEFAULT_THRESHOLDS.items()}
+    path = Path(path)
+    if not path.exists():
+        return active
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Ignoring corrupt calibration override %s: %s", path, exc)
+        return active
+    if not isinstance(raw, dict):
+        logger.warning("Ignoring calibration override %s: not a JSON object", path)
+        return active
+    for axis, vals in raw.items():
+        if isinstance(vals, (list, tuple)) and len(vals) == len(_BUCKET_LABELS):
+            active[axis] = tuple(vals)
+    return active
+
+
+_ACTIVE_THRESHOLDS: dict = load_thresholds()
+
+
+def active_thresholds() -> dict:
+    """The currently active thresholds (override-aware)."""
+    return _ACTIVE_THRESHOLDS
+
+
+def reload_thresholds(path: Path = _OVERRIDE_PATH) -> dict:
+    """Re-read the override file and swap in the new active set (in-process).
+
+    Called by the GUI after a confirmed recalibrate so the change applies
+    without a restart.
+    """
+    global _ACTIVE_THRESHOLDS
+    _ACTIVE_THRESHOLDS = load_thresholds(path)
+    return _ACTIVE_THRESHOLDS
+
 
 def bucket_axis(value: float, axis: str) -> str | None:
     """Return tier label for `value` on `axis`, or None if below the solid floor."""
-    thresholds = _PERFORMANCE_THRESHOLDS.get(axis)
+    thresholds = active_thresholds().get(axis)
     if thresholds is None or value is None:
         return None
     label = None

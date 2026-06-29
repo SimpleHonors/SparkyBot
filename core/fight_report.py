@@ -1200,7 +1200,8 @@ class FightReport:
         # meaningless without time context. 5 kills in 30 seconds is legendary;
         # 5 kills in 8 minutes is mediocre. Old absolute floors silently
         # rewarded long fights for accumulating big totals on average play.
-        from performance_buckets import _PERFORMANCE_THRESHOLDS  # noqa: E402
+        from performance_buckets import active_thresholds  # noqa: E402
+        _active_thresholds = active_thresholds()
 
         # Optional cooldown tracker — when present, a (player, axis) pair on
         # cooldown is skipped and the NEXT qualifying player wins the slot.
@@ -1234,7 +1235,7 @@ class FightReport:
             order — after a skip, the new "first place" gets evaluated for
             the dispersion gate against the new "second place".
             """
-            floor = _PERFORMANCE_THRESHOLDS[axis][tier_idx]
+            floor = _active_thresholds[axis][tier_idx]
             qualifying = []
             for it in items:
                 raw = key_func(it)
