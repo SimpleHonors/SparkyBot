@@ -16,6 +16,16 @@ Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good 
 
 ---
 
+## 🔥 What's New in 1.8.0 — *"Grades on YOUR Curve"*
+
+Sparky's performance tiers used to be carved from a stock corpus of 800-some fights. Fine — but that's not *your* guild. **Now you can retune the entire grading curve to your own server, right from the Settings window. No spreadsheet, no code, no asking nicely.**
+
+Point the new **Calibration** tab at a pile of your `.evtc` logs, pick how many to grind through at once — up to **32 in parallel**, so a backlog that used to take *days* takes minutes — and when it's done it throws up a preview showing exactly how every tier moves: old → new, ↑ or ↓, color-coded, before you commit a thing. Run a sweat-lord guild? "Dominant" healing might jump +20% because your healers actually *heal*. Run a feeder comp? The bar drops to match reality. Either way it's **honest to a fault** — the numbers come straight out of your own fights, nothing invented, and a loud warning fires if you try to calibrate off too few of them. It even offers to recalibrate the *instant* an import finishes, because remembering to click a button is beneath you and we know it.
+
+The bot stops grading you against strangers and starts grading you against the only people who matter: your own squad, on its best and worst nights.
+
+---
+
 ## 🔥 What's New in 1.7.5 — *"It Remembers Its Own Tics"*
 
 Sparky now holds a *grudge*. It keeps a permanent rap sheet of its own verbal crutches across all of history — lean on a pet phrase too many times and it gets blacklisted automatically (no human maintains the list; it narcs on itself). And a player on cooldown now gets their stats **deleted from what the model can even see**, so it can't gush about the same hero under a fake nickname. Their numbers still count toward squad totals — they're benched from the spotlight, not erased.
@@ -128,7 +138,7 @@ And it grades **everything** independently — healing, cleanses, strips, hard C
 
 Then it fingerprints your stat shape against your class to figure out *what you actually were* — `burst evoker`, `rez druid`, `boon DPS` — and spotlights your single most unhinged number instead of parroting the damage chart.
 
-> **Tuned on real blood, not vibes.** Every threshold is recalibrated from recorded fights (`tools/recalc_thresholds.py`). Feed it your guild's logs and "what good looks like" reshapes itself to *your* server's meta.
+> **And it's YOUR blood, not some stranger's.** Don't like being graded against a stock corpus? **Settings → Calibration**: feed it a batch of your guild's logs (32 at a time), watch a preview show exactly how every tier moves up or down, and apply. The curve becomes *your* server's meta — the bar rises where your crew is filthy and drops where it isn't. Honest numbers, your fights, one click. (See *What's New in 1.8.0* up top.)
 
 ---
 
