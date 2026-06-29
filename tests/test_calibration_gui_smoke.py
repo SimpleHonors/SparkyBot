@@ -33,5 +33,16 @@ def test_settings_window_exposes_calibration_methods():
         "_refresh_calib_count",
         "_on_calib_progress",
         "_on_calib_import_done",
+        "_calib_axis_label",
+        "_set_calib_status",
     ):
         assert hasattr(SettingsWindow, name), f"SettingsWindow missing {name}"
+
+
+def test_axis_display_names_cover_all_axes():
+    # Every calibration axis must have a friendly display name so the preview
+    # never falls back to a raw snake_case key.
+    from core.gui_settings import SettingsWindow
+    from core.calibration import AXES
+    missing = [a[0] for a in AXES if a[0] not in SettingsWindow._CALIB_AXIS_NAMES]
+    assert not missing, f"axes without friendly names: {missing}"
