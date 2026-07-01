@@ -794,7 +794,7 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 're
         return True
 ```
 
-3d. In `analyze()`, wrap the legacy host-detection block. Replace lines ~463-484 (the three `if self._is_*_host():` blocks) so they only run when no strategy is configured:
+3d. In `analyze()`, wrap the legacy host-detection block. Replace the two `if self._is_*_host():` blocks (DeepSeek + Gemini-Pro; there is no MiniMax host method on this branch) so they only run when no strategy is configured:
 
 ```python
         # Probe-configured strategy wins; otherwise fall back to host detection.
@@ -806,9 +806,6 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 're
                     self._apply_reasoning_model_params(payload)
 
             if self._is_gemini_pro_host():
-                self._apply_reasoning_model_params(payload)
-
-            if self._is_minimax_reasoning_host():
                 self._apply_reasoning_model_params(payload)
 ```
 
@@ -1314,6 +1311,6 @@ git commit -m "feat: setup wizard reasoning probe parity with settings dialog"
 
 - [ ] Run the entire suite: `python -m pytest tests/ -q` — all green.
 - [ ] `grep -rn fallback_token_limit core/ tests/` returns nothing (fully renamed).
-- [ ] `grep -rn "_is_deepseek_host\|_is_gemini_pro_host\|_is_minimax_reasoning_host" core/fight_analyst.py` — still present, but only reached when `reasoning_strategy` is empty (legacy fallback).
+- [ ] `grep -rn "_is_deepseek_host\|_is_gemini_pro_host" core/fight_analyst.py` — still present, but only reached when `reasoning_strategy` is empty (legacy fallback). (No `_is_minimax_reasoning_host` on this branch — that parked fix was stashed; MiniMax is now handled by the probe + the `think_enable` strategy.)
 - [ ] Manual end-to-end: OpenRouter + `minimax/minimax-m3` through Test Connection auto-detects and applies a working config; a real fight then returns non-empty commentary.
 - [ ] Do NOT bump version / push / release — report completion and wait for the operator's "ship it".
