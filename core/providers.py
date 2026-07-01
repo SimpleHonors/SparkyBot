@@ -8,12 +8,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-# Preset configurations for popular providers
+# Preset configurations for popular providers, alphabetized by name.
 PRESETS = {
-    "OpenAI": {
-        "base_url": "https://api.openai.com/v1",
-        "default_model": "gpt-4o-mini",
-    },
     "Anthropic (Claude)": {
         # Anthropic's OpenAI-compatibility endpoint: same /chat/completions
         # shape as every other provider here, authenticated with your Anthropic
@@ -28,6 +24,18 @@ PRESETS = {
             "claude-opus-4-7",
         ],
     },
+    "Custom": {
+        "base_url": "",
+        "default_model": "",
+    },
+    "DeepSeek": {
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",  # cheap + fast for quick roasts
+        "models": [
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+        ],
+    },
     "Google Gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "default_model": "gemini-2.5-flash",
@@ -38,6 +46,14 @@ PRESETS = {
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
         ],
+    },
+    "Groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "default_model": "llama-3.1-8b-instant",
+    },
+    "LM Studio (Local)": {
+        "base_url": "http://localhost:1234/v1",
+        "default_model": "local-model",
     },
     "MiniMax": {
         "base_url": "https://api.minimaxi.chat/v1",
@@ -53,33 +69,31 @@ PRESETS = {
             "MiniMax-Text-01",
         ],
     },
-    "Groq": {
-        "base_url": "https://api.groq.com/openai/v1",
-        "default_model": "llama-3.1-8b-instant",
-    },
-    "Together AI": {
-        "base_url": "https://api.together.xyz/v1",
-        "default_model": "meta-llama/Llama-3.1-8B-Instruct-Turbo",
-    },
     "Mistral": {
         "base_url": "https://api.mistral.ai/v1",
         "default_model": "mistral-small-latest",
-    },
-    "OpenRouter": {
-        "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "meta-llama/llama-3.1-8b-instruct:free",
     },
     "Ollama (Local)": {
         "base_url": "http://localhost:11434/v1",
         "default_model": "llama3.1",
     },
-    "LM Studio (Local)": {
-        "base_url": "http://localhost:1234/v1",
-        "default_model": "local-model",
+    "OpenAI": {
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4o-mini",
     },
-    "Custom": {
-        "base_url": "",
-        "default_model": "",
+    "OpenRouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "default_model": "meta-llama/llama-3.1-8b-instruct:free",
+    },
+    "Together AI": {
+        "base_url": "https://api.together.xyz/v1",
+        "default_model": "meta-llama/Llama-3.1-8B-Instruct-Turbo",
+    },
+    "Xiaomi MiMo": {
+        # Supports both api-key and Authorization: Bearer auth; SparkyBot
+        # always sends Bearer, which the platform accepts.
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "default_model": "mimo-v2.5-pro",
     },
 }
 
