@@ -961,6 +961,7 @@ class AIAnalysisPage(QWizardPage):
         layout.addLayout(_make_row("Max Tokens:", self.ai_max_tokens))
 
         self.ai_disable_thinking = QCheckBox("Disable Thinking / Reasoning Mode")
+        self.ai_disable_thinking.setChecked(bool(getattr(self.config, "ai_disable_thinking", False)))
         layout.addLayout(_make_row("", self.ai_disable_thinking))
 
         # Probe-derived reasoning strategy (persisted in validatePage).
