@@ -336,6 +336,109 @@ def test_analyze_recovers_from_deepseek_silent_reasoning_failure(monkeypatch):
     assert fa._reasoning_headroom is True
 
 
+def test_gemini_pro_host_detected():
+    fa = _bare_analyst()
+    fa.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+    fa.model = "gemini-2.5-pro"
+    assert fa._is_gemini_pro_host() is True
+    fa.model = "gemini-2.5-flash"
+    assert fa._is_gemini_pro_host() is False
+    fa.model = "gemini-2.5-pro"
+    fa.base_url = "https://api.openai.com/v1"
+    assert fa._is_gemini_pro_host() is False
+
+
+def test_apply_gemini_never_sends_none_for_pro_but_still_does_for_flash():
+    """Regression: Google's own docs say reasoning cannot be disabled for
+    Gemini 2.5 Pro / 3 models -- reasoning_effort='none' (thinking_budget=0)
+    is a hard 400 ('this model only works in thinking mode') on Pro, but is
+    the documented way to disable thinking on Flash/Flash-Lite."""
+    from core.fight_analyst import FightAnalyst
+
+    pro_payload = {"messages": [], "temperature": 0.7}
+    FightAnalyst._apply_gemini(pro_payload, False, "gemini-2.5-pro")
+    assert "reasoning_effort" not in pro_payload
+
+    flash_payload = {"messages": [], "temperature": 0.7}
+    FightAnalyst._apply_gemini(flash_payload, False, "gemini-2.5-flash")
+    assert flash_payload["reasoning_effort"] == "none"
+
+
+def test_gemini_pro_gets_reasoning_headroom_floor_and_low_effort():
+    """reasoning_effort='low' maps to a fixed 1024-token thinking budget on
+    Gemini 2.5 (verified against Google's docs) -- floor max_tokens well
+    above that so a visible answer still fits after worst-case reasoning."""
+    fa = _bare_analyst()
+    fa.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+    fa.model = "gemini-2.5-pro"
+    payload = {"max_tokens": 450, "temperature": 0.7}
+    fa._apply_reasoning_model_params(payload)
+    assert payload["max_tokens"] == 4000
+    assert payload["reasoning_effort"] == "low"
+    assert fa._reasoning_headroom is True
+
+
+def _stub_gemini_pro_analyst_for_analyze():
+    fa = _stub_analyst_for_analyze()
+    fa.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+    fa.model = "gemini-2.5-pro"
+    fa.max_tokens = 450
+    return fa
+
+
+def test_analyze_recovers_from_gemini_pro_silent_reasoning_failure(monkeypatch):
+    """Regression for the exact reported log: gemini-2.5-pro's mandatory
+    dynamic thinking consumed the whole 450-token budget on hidden reasoning
+    (completion_tokens=0, content='', truncated at max_tokens) with no error
+    to react to. The first request must already carry the floored budget."""
+    import core.fight_analyst as fa_mod
+
+    fa = _stub_gemini_pro_analyst_for_analyze()
+
+    class _Guard:
+        fallback_token_limit = 400
+
+        def __init__(self):
+            self._calls = 0
+
+        def is_silent_failure(self, *a, **k):
+            self._calls += 1
+            return self._calls == 1
+
+        def handle_failure(self, *a, **k):
+            return "", "retry_required"
+    fa._silent_guard = _Guard()
+
+    sent_payloads = []
+    responses = iter([
+        _FakeResponse(200, json_body={
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 0},
+        }),
+        _FakeResponse(200, json_body=_ok_body()),
+    ])
+
+    def fake_post(endpoint, headers=None, json=None, timeout=None):
+        sent_payloads.append(copy.deepcopy(json))
+        return next(responses)
+
+    monkeypatch.setattr(fa_mod, "requests", type("R", (), {
+        "post": staticmethod(fake_post),
+        "Timeout": fa_mod.requests.Timeout,
+        "ConnectionError": fa_mod.requests.ConnectionError,
+    }))
+    monkeypatch.setattr(fa_mod.time, "sleep", lambda *_: None)
+
+    result = fa.analyze({"outcome": "win"}, timeout=5)
+
+    assert result == "gg ez"
+    assert len(sent_payloads) == 2
+    assert sent_payloads[0]["max_tokens"] == 4000
+    assert sent_payloads[0]["reasoning_effort"] == "low"
+    assert sent_payloads[1]["max_tokens"] == 4000       # retry must not shrink it
+    assert fa._reasoning_headroom is True
+
+
 def test_analyze_switches_to_responses_api_on_not_a_chat_model_404(monkeypatch):
     """A '-pro' model 404s on /chat/completions with 'not a chat model'; analyze
     must switch this session to /responses, reshape the payload, and parse the

@@ -240,6 +240,20 @@ class FightAnalyst:
         host = urlparse(self.base_url).hostname or ""
         return host == "api.deepseek.com" or host.endswith(".deepseek.com")
 
+    def _is_gemini_pro_host(self) -> bool:
+        # Gemini 2.5 Pro (and 3 Pro) can't disable thinking and default to a
+        # dynamic thinking budget that can consume the entire small response
+        # budget with nothing left for visible output. Verified against
+        # Google's docs: reasoning_effort="low" maps to a fixed 1024-token
+        # thinking budget for Gemini 2.5, well inside the reasoning-safe
+        # floor this shares with the DeepSeek/OpenAI reasoning-model fix.
+        host = urlparse(self.base_url).hostname or ""
+        is_gemini_host = (
+            host == "generativelanguage.googleapis.com"
+            or host.endswith(".googleapis.com")
+        )
+        return is_gemini_host and "pro" in self.model.lower()
+
     # Pro/reasoning models on the Responses API reason heavily before emitting
     # text; give a generous output ceiling (a cap, not a target — billed only
     # for tokens actually used) so a short roast still fits after reasoning.
@@ -439,6 +453,13 @@ class FightAnalyst:
                 payload["thinking"] = {"type": "disabled"}
             else:
                 self._apply_reasoning_model_params(payload)
+
+        # Gemini "Pro" models can't disable thinking at all (see
+        # _is_gemini_pro_host docstring) -- cap the spend instead of leaving
+        # the model's default dynamic budget, which can eat the whole
+        # response budget and leave nothing for visible output.
+        if self._is_gemini_pro_host():
+            self._apply_reasoning_model_params(payload)
 
         # If we've already learned this endpoint is a reasoning model, give it
         # room to actually produce output (reasoning eats a small budget whole).
@@ -1466,7 +1487,7 @@ class FightAnalyst:
         return host == "api.minimaxi.chat" or host.endswith(".minimaxi.chat")
 
     @staticmethod
-    def _apply_minimax(payload: dict, _thinking: bool) -> None:
+    def _apply_minimax(payload: dict, _thinking: bool, _model: str) -> None:
         payload["think_enable"] = False
         payload["reasoning_split"] = True
         prefix = (
@@ -1483,7 +1504,7 @@ class FightAnalyst:
         return is_host or (is_openrouter and "kimi" in model)
 
     @staticmethod
-    def _apply_moonshot(payload: dict, _thinking: bool) -> None:
+    def _apply_moonshot(payload: dict, _thinking: bool, _model: str) -> None:
         for key in ("temperature", "top_p", "n",
                     "presence_penalty", "frequency_penalty"):
             payload.pop(key, None)
@@ -1494,8 +1515,15 @@ class FightAnalyst:
         return is_host or (is_openrouter and "gemini" in model)
 
     @staticmethod
-    def _apply_gemini(payload: dict, thinking: bool) -> None:
-        if not thinking:
+    def _apply_gemini(payload: dict, thinking: bool, model: str) -> None:
+        # Verified against Google's docs: reasoning cannot be turned off for
+        # Gemini 2.5 Pro or 3 models at all -- reasoning_effort="none" (or
+        # thinking_budget=0) is a hard 400 ("this model only works in
+        # thinking mode"). Only Flash/Flash-Lite variants can disable it.
+        # The reasoning-headroom floor for Pro models is applied separately
+        # in analyze() via _is_gemini_pro_host(), since it needs instance
+        # state this static dispatch table doesn't have access to.
+        if not thinking and "pro" not in model:
             payload["reasoning_effort"] = "none"
 
     _PROVIDER_DISPATCH: list = [
@@ -1515,7 +1543,7 @@ class FightAnalyst:
 
         for pred, apply in self._PROVIDER_DISPATCH:
             if pred(parsed_host, model_lower, is_openrouter, self.thinking):
-                apply(payload, self.thinking)
+                apply(payload, self.thinking, model_lower)
 
         # OpenRouter catch-all for any unmatched model
         if is_openrouter and not self.thinking and "reasoning_effort" not in payload:
