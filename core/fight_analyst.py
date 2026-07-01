@@ -217,6 +217,7 @@ class FightAnalyst:
         self.last_completion_tokens: "Optional[int]" = None
         self.last_finish_reason: "Optional[str]" = None
         self.last_empty: "Optional[bool]" = None
+        self._silent_guard.strategy_id = self.reasoning_strategy
 
     # Reasoning models (gpt-5.x, o-series) spend the output-token budget on
     # hidden reasoning before emitting any text, so a small cap gets fully
@@ -563,8 +564,19 @@ class FightAnalyst:
                                 payload["messages"][1]["content"] += hot_take
                                 self._apply_reasoning_model_params(payload)
                             else:
+                                # Never shrink the budget on retry: a model that
+                                # ate its budget on hidden reasoning needs MORE
+                                # room, not less. Engage the configured
+                                # off-switch if we have one, then floor the
+                                # budget at the reasoning-safe headroom.
                                 payload["messages"][1]["content"] += hot_take
-                                payload[self._token_budget_key()] = self._silent_guard.fallback_token_limit
+                                if self._silent_guard.strategy_id and self.thinking is False:
+                                    from core import reasoning_strategies as rs
+                                    rs.apply_strategy(payload, self._silent_guard.strategy_id,
+                                                      disable=True, budget_key=self._token_budget_key())
+                                key = self._token_budget_key()
+                                payload[key] = max(int(payload.get(key) or 0),
+                                                   self._silent_guard.headroom_floor)
                             attempt += 1
                             time.sleep(3)
                             continue

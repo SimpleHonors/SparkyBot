@@ -22,6 +22,8 @@ class SilentFailureGuard:
     # Tunable thresholds
     emptiness_threshold: float = 0.95  # completion_tokens / max_tokens to flag as "ate budget"
     fallback_token_limit: int = 400   # max_tokens for the HOT TAKE retry
+    headroom_floor: int = 4000        # retry budget floor for reasoning models (never shrink below this)
+    strategy_id: str = ""             # probe-configured off-switch to engage on retry
     max_retries: int = 1               # number of retry attempts before giving up
 
     _retry_count: int = field(default=0)
