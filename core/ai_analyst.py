@@ -48,6 +48,12 @@ from fight_analyst import (  # noqa: F401
     _REQUIRED_SUMMARY_KEYS,
 )
 
+# --- Provider presets ------------------------------------------------------
+# PRESETS moved to providers.py in the split; re-exported here so first-run
+# callers (setup_wizard, gui_settings) that do `from ai_analyst import PRESETS`
+# keep working.
+from providers import PRESETS  # noqa: F401
+
 __all__ = [
     # Constants
     "HYPE_HEAVY",
@@ -73,4 +79,6 @@ __all__ = [
     # Prompt metadata
     "DEFAULT_PROMPT_CHANGELOG",
     "DEFAULT_PROMPT_VERSION",
+    # Provider presets
+    "PRESETS",
 ]
