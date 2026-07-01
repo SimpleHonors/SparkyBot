@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
-from core.reasoning_strategies import HEADROOM_FLOOR
+from core.reasoning_strategies import HEADROOM_FLOOR, ordered_for
 
 
 @dataclass
@@ -99,3 +99,47 @@ def diagnose(baseline: ProbeOutcome, headroom: Optional[ProbeOutcome],
         detail=(best.error_msg or "Every attempt came back empty. Check the model name, key, and base URL.")[:400],
         failure=True,
     )
+
+
+def run_probe(analyst_factory, test_summary, *, user_budget, base_url, model,
+              headroom_floor: int = HEADROOM_FLOOR, timeout: int = 30,
+              progress: Optional[Callable[[str], None]] = None) -> ProbeReport:
+    def _emit(msg: str) -> None:
+        if progress:
+            progress(msg)
+
+    _emit("Testing connection…")
+    baseline = analyst_factory(strategy_id="none", disable=False, budget=user_budget).run(test_summary, timeout)
+    if baseline.ok:
+        return diagnose(baseline, None, [], user_budget, headroom_floor)
+
+    _emit("Empty response — checking whether the model just needs more room…")
+    headroom = analyst_factory(strategy_id="headroom_only", disable=False,
+                               budget=max(user_budget, headroom_floor)).run(test_summary, timeout)
+
+    _emit("Detecting the reasoning off-switch…")
+    outcomes: List[ProbeOutcome] = []
+    for s in ordered_for(base_url, model):
+        oc = analyst_factory(strategy_id=s.id, disable=True, budget=user_budget).run(test_summary, timeout)
+        outcomes.append(oc)
+        if oc.ok:
+            break
+
+    return diagnose(baseline, headroom, outcomes, user_budget, headroom_floor)
+
+
+def format_report(report: ProbeReport) -> str:
+    lines = [report.headline, "", report.detail]
+    if report.needs_choice:
+        lines.append("")
+        for key, _sid, _dis, tokens, blurb in report.alternatives:
+            lines.append(f"  • {key.upper()} ({tokens} max tokens): {blurb}")
+        lines.append("")
+        lines.append("Pick one below, then click Apply.")
+    elif report.auto_applicable and not report.failure:
+        strat = report.recommended_strategy_id
+        state = "OFF" if report.recommended_disable else "ON"
+        lines.append("")
+        lines.append(f"Applied: reasoning {state}, {report.recommended_max_tokens} max tokens"
+                     + (f" (via {strat})" if strat not in ("none", "headroom_only") else "") + ".")
+    return "\n".join(lines)
