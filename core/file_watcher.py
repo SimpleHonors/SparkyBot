@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Set, Callable, Optional
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +69,29 @@ class LogFileHandler(FileSystemEventHandler):
         self._stopping = False
 
     def on_created(self, event: FileCreatedEvent):
-        """Called when a new file is created"""
+        """Called when a new file is created (arcdps versions that write the
+        final .evtc/.zevtc name directly)."""
         if event.is_directory:
             return
+        self._maybe_dispatch(Path(event.src_path))
 
-        file_path = Path(event.src_path)
+    def on_moved(self, event: FileMovedEvent):
+        """Called when a file is renamed into place.
 
+        ArcDPS writes the log under a temporary/extensionless name (e.g.
+        '20260618-213011') and then renames it to the final '.evtc'/'.zevtc'.
+        The extension only appears on the rename's destination, which watchdog
+        delivers as a move event -- so without this handler the OS-native
+        watcher never sees a file whose suffix matches. Dispatch on the
+        destination path; the shared dedup set keeps this from double-firing
+        with on_created when both events carry the final name.
+        """
+        if event.is_directory:
+            return
+        self._maybe_dispatch(Path(event.dest_path))
+
+    def _maybe_dispatch(self, file_path: Path):
+        """Filter by extension, reserve the path, and kick off a stability check."""
         # Only process our log file types
         if file_path.suffix.lower() not in self.extensions:
             return

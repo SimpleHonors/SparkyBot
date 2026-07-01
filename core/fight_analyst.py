@@ -185,6 +185,60 @@ class FightAnalyst:
         self._pending_topic_emits: set[str] = set()
         self._pending_player_emits: set[str] = set()
         self._pending_commander_emit: Optional[str] = None
+        # Reactive OpenAI/Azure param adaptation, learned from 400s and cached
+        # for the session. Newer models (gpt-5.x, o-series) reject 'max_tokens'
+        # (they want 'max_completion_tokens') and a non-default 'temperature'.
+        # We can't detect this from the model name -- Azure deployment names are
+        # opaque -- so we learn it from the first rejection and stop re-sending
+        # the offending param on every subsequent fight.
+        self._use_max_completion_tokens = False
+        self._drop_temperature = False
+
+    def _token_budget_key(self) -> str:
+        """Request field carrying the output-token cap for this endpoint.
+
+        'max_completion_tokens' once we've learned the endpoint rejects the
+        legacy 'max_tokens', otherwise 'max_tokens'.
+        """
+        return "max_completion_tokens" if self._use_max_completion_tokens else "max_tokens"
+
+    def _remediate_unsupported_param(self, body: str, payload: dict) -> bool:
+        """Adapt the payload to an OpenAI-style 400 that names an unsupported
+        parameter, caching the fix on the instance so we don't repeat the
+        failed call next fight.
+
+        Handles the two walls newer OpenAI/Azure models put up:
+          * 'max_tokens' is not supported -> rename to 'max_completion_tokens'
+          * a non-default 'temperature' is not supported -> drop it (use default)
+
+        Returns True if the payload changed and the request is worth retrying.
+        """
+        low = body.lower()
+        changed = False
+
+        if (not self._use_max_completion_tokens
+                and "max_completion_tokens" in low
+                and "max_tokens" in payload):
+            self._use_max_completion_tokens = True
+            payload["max_completion_tokens"] = payload.pop("max_tokens")
+            logger.info(
+                "Endpoint rejected 'max_tokens'; retrying with "
+                "'max_completion_tokens' (learned for this session)"
+            )
+            changed = True
+
+        if (not self._drop_temperature
+                and "temperature" in low
+                and "temperature" in payload):
+            self._drop_temperature = True
+            payload.pop("temperature", None)
+            logger.info(
+                "Endpoint rejected custom 'temperature'; retrying with the "
+                "provider default (learned for this session)"
+            )
+            changed = True
+
+        return changed
 
     def analyze(self, fight_summary: Dict[str, Any], timeout: int = 30,
                 previous_response: Optional[str] = None) -> Optional[str]:
@@ -246,9 +300,12 @@ class FightAnalyst:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            "max_tokens": self.max_tokens,
-            "temperature": 0.7,
+            self._token_budget_key(): self.max_tokens,
         }
+        # Some newer models reject a non-default temperature; once learned we
+        # simply omit it and let the provider default (1) stand.
+        if not self._drop_temperature:
+            payload["temperature"] = 0.7
 
         # Provider-specific payload adjustments
         self._apply_provider_overrides(payload)
@@ -257,7 +314,10 @@ class FightAnalyst:
         debug_file = self._write_debug_request(endpoint, headers, payload)
 
         max_retries = 2
-        for attempt in range(max_retries + 1):
+        max_param_fixes = 2
+        attempt = 0
+        param_fixes = 0
+        while attempt <= max_retries:
             try:
                 logger.info(
                     "Requesting AI analysis from %s using %s%s",
@@ -287,7 +347,8 @@ class FightAnalyst:
                                 "Begin with 'HOT TAKE:' — no thinking, no preamble, "
                                 "just 2-3 sentences of Discord-ready text."
                             )
-                            payload["max_tokens"] = self._silent_guard.fallback_token_limit
+                            payload[self._token_budget_key()] = self._silent_guard.fallback_token_limit
+                            attempt += 1
                             time.sleep(3)
                             continue
                         if recovered:
@@ -313,10 +374,20 @@ class FightAnalyst:
                     return result
                 elif response.status_code >= 500 and attempt < max_retries:
                     logger.warning("AI API returned %d, retrying in 3s...", response.status_code)
+                    attempt += 1
                     time.sleep(3)
                     continue
                 else:
-                    logger.error("AI API error: %d - %s", response.status_code, response.text[:300])
+                    body = response.text
+                    # Reactive adaptation for newer OpenAI/Azure models that reject
+                    # 'max_tokens' or a custom 'temperature'. These retries are cheap
+                    # and deliberately do NOT consume the network-retry budget.
+                    if (response.status_code == 400
+                            and param_fixes < max_param_fixes
+                            and self._remediate_unsupported_param(body, payload)):
+                        param_fixes += 1
+                        continue
+                    logger.error("AI API error: %d - %s", response.status_code, body[:300])
                     return None
 
             except requests.Timeout:
@@ -325,6 +396,7 @@ class FightAnalyst:
                         "AI API timed out after %ds, retrying in 3s... (attempt %d/%d)",
                         timeout, attempt + 1, max_retries + 1
                     )
+                    attempt += 1
                     time.sleep(3)
                     continue
                 else:
@@ -333,6 +405,7 @@ class FightAnalyst:
             except requests.ConnectionError:
                 if attempt < max_retries:
                     logger.warning("AI API connection failed, retrying in 3s...")
+                    attempt += 1
                     time.sleep(3)
                     continue
                 else:
@@ -341,6 +414,9 @@ class FightAnalyst:
             except Exception as e:
                 logger.error("AI analysis failed: %s", e)
                 return None
+
+        # Retry budget exhausted without a definitive success/return.
+        return None
 
     # ------------------------------------------------------------------
     # Internal: prompt and payload construction
