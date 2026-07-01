@@ -193,6 +193,34 @@ class FightAnalyst:
         # the offending param on every subsequent fight.
         self._use_max_completion_tokens = False
         self._drop_temperature = False
+        # Reasoning models spend the budget on hidden reasoning first; once we
+        # detect one we send reasoning_effort=low. Flipped off only if a given
+        # endpoint rejects that param.
+        self._reasoning_effort_supported = True
+
+    # Reasoning models (gpt-5.x, o-series) spend the output-token budget on
+    # hidden reasoning before emitting any text, so a small cap gets fully
+    # consumed and the model returns empty content (completion_tokens == cap).
+    # When we detect one -- it demanded max_completion_tokens -- we cap the
+    # reasoning effort low and floor the budget so there's room for reasoning
+    # AND a short roast. The budget is a CEILING, not a target: the model is
+    # billed only for tokens it actually uses, and the system prompt still
+    # holds the output to 2-3 sentences.
+    _REASONING_MIN_BUDGET = 4000
+    _REASONING_EFFORT = "low"
+
+    def _apply_reasoning_model_params(self, payload: dict) -> None:
+        """Give a detected reasoning model enough headroom to emit output.
+
+        Idempotent: raises the completion budget to the floor (never lowers a
+        larger user setting) and requests low reasoning effort when supported.
+        """
+        payload["max_completion_tokens"] = max(
+            int(payload.get("max_completion_tokens") or 0),
+            self._REASONING_MIN_BUDGET,
+        )
+        if self._reasoning_effort_supported:
+            payload.setdefault("reasoning_effort", self._REASONING_EFFORT)
 
     def _token_budget_key(self) -> str:
         """Request field carrying the output-token cap for this endpoint.
@@ -221,9 +249,12 @@ class FightAnalyst:
                 and "max_tokens" in payload):
             self._use_max_completion_tokens = True
             payload["max_completion_tokens"] = payload.pop("max_tokens")
+            # This endpoint requiring max_completion_tokens marks it a reasoning
+            # model -> give it headroom + low effort so it can emit output.
+            self._apply_reasoning_model_params(payload)
             logger.info(
                 "Endpoint rejected 'max_tokens'; retrying with "
-                "'max_completion_tokens' (learned for this session)"
+                "'max_completion_tokens' + reasoning headroom (learned for this session)"
             )
             changed = True
 
@@ -235,6 +266,17 @@ class FightAnalyst:
             logger.info(
                 "Endpoint rejected custom 'temperature'; retrying with the "
                 "provider default (learned for this session)"
+            )
+            changed = True
+
+        if (self._reasoning_effort_supported
+                and "reasoning_effort" in low
+                and "reasoning_effort" in payload):
+            self._reasoning_effort_supported = False
+            payload.pop("reasoning_effort", None)
+            logger.info(
+                "Endpoint rejected 'reasoning_effort'; retrying without it "
+                "(learned for this session)"
             )
             changed = True
 
@@ -310,11 +352,16 @@ class FightAnalyst:
         # Provider-specific payload adjustments
         self._apply_provider_overrides(payload)
 
+        # If we've already learned this endpoint is a reasoning model, give it
+        # room to actually produce output (reasoning eats a small budget whole).
+        if self._use_max_completion_tokens:
+            self._apply_reasoning_model_params(payload)
+
         # Debug: dump full AI prompt + response if SPARKY_DEBUG_AI_PROMPT is set
         debug_file = self._write_debug_request(endpoint, headers, payload)
 
         max_retries = 2
-        max_param_fixes = 2
+        max_param_fixes = 3  # max_tokens, temperature, reasoning_effort
         attempt = 0
         param_fixes = 0
         while attempt <= max_retries:
@@ -347,7 +394,13 @@ class FightAnalyst:
                                 "Begin with 'HOT TAKE:' — no thinking, no preamble, "
                                 "just 2-3 sentences of Discord-ready text."
                             )
-                            payload[self._token_budget_key()] = self._silent_guard.fallback_token_limit
+                            if self._use_max_completion_tokens:
+                                # Reasoning model: shrinking the budget starves
+                                # output (reasoning consumes it first). Keep the
+                                # reasoning-safe floor instead of reducing it.
+                                self._apply_reasoning_model_params(payload)
+                            else:
+                                payload[self._token_budget_key()] = self._silent_guard.fallback_token_limit
                             attempt += 1
                             time.sleep(3)
                             continue

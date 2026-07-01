@@ -14,6 +14,20 @@ PRESETS = {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-4o-mini",
     },
+    "Anthropic (Claude)": {
+        # Anthropic's OpenAI-compatibility endpoint: same /chat/completions
+        # shape as every other provider here, authenticated with your Anthropic
+        # API key as a Bearer token. Not the native Messages API.
+        "base_url": "https://api.anthropic.com/v1",
+        "default_model": "claude-haiku-4-5",  # cheap + fast for quick roasts
+        "models": [
+            "claude-haiku-4-5",
+            "claude-sonnet-5",
+            "claude-sonnet-4-6",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+        ],
+    },
     "Google Gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "default_model": "gemini-2.5-flash",

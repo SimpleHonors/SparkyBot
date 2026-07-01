@@ -924,10 +924,25 @@ class AIAnalysisPage(QWizardPage):
         self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         layout.addLayout(_make_row("API Key:", self.ai_api_key))
 
+        # Model row: combo + a Refresh button that pulls the live model list
+        # from the provider (uses the Base URL + API Key above). Falls back to
+        # the provider's built-in preset list if the endpoint can't be reached.
         self.ai_model = QComboBox()
         self.ai_model.setEditable(True)
         self.ai_model.setPlaceholderText("model name")
-        layout.addLayout(_make_row("Model:", self.ai_model))
+        self.ai_refresh_btn = QPushButton("↻ Refresh")
+        self.ai_refresh_btn.setToolTip(
+            "Fetch the live model list from this provider (needs Base URL, and an API Key for hosted providers)"
+        )
+        self.ai_refresh_btn.clicked.connect(self._fetch_models)
+        _model_row = QHBoxLayout()
+        _model_label = QLabel("Model:")
+        _model_label.setFixedWidth(LABEL_WIDTH)
+        _model_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        _model_row.addWidget(_model_label)
+        _model_row.addWidget(self.ai_model, 1)
+        _model_row.addWidget(self.ai_refresh_btn)
+        layout.addLayout(_model_row)
 
         layout.addSpacing(12)
 

@@ -30,6 +30,7 @@ def _bare_analyst():
     fa = FightAnalyst.__new__(FightAnalyst)
     fa._use_max_completion_tokens = False
     fa._drop_temperature = False
+    fa._reasoning_effort_supported = True
     return fa
 
 
@@ -47,7 +48,9 @@ def test_remediate_renames_max_tokens():
             "model. Use 'max_completion_tokens' instead.")
     assert fa._remediate_unsupported_param(body, payload) is True
     assert "max_tokens" not in payload
-    assert payload["max_completion_tokens"] == 350       # budget preserved
+    # detecting a reasoning model floors the budget and adds low effort
+    assert payload["max_completion_tokens"] == 4000
+    assert payload["reasoning_effort"] == "low"
     assert fa._use_max_completion_tokens is True
     # temperature untouched: this 400 didn't mention it
     assert payload["temperature"] == 0.7
@@ -116,6 +119,7 @@ def _stub_analyst_for_analyze():
     fa.vocab_config = None
     fa._use_max_completion_tokens = False
     fa._drop_temperature = False
+    fa._reasoning_effort_supported = True
 
     # Short-circuit the heavy collaborators.
     fa._build_prompt = lambda *a, **k: ("user prompt", [])
@@ -165,15 +169,55 @@ def test_analyze_recovers_from_max_tokens_then_temperature_400(monkeypatch):
     # First attempt used the legacy shape...
     assert "max_tokens" in sent_payloads[0]
     assert "temperature" in sent_payloads[0]
-    # ...final attempt used the adapted shape.
+    # ...final attempt used the adapted shape, WITH reasoning headroom.
     final = sent_payloads[-1]
-    assert final.get("max_completion_tokens") == 350
+    assert final.get("max_completion_tokens") == 4000   # floored for reasoning
+    assert final.get("reasoning_effort") == "low"
     assert "max_tokens" not in final
     assert "temperature" not in final
 
     # Fixes cached on the instance for the rest of the session.
     assert fa._use_max_completion_tokens is True
     assert fa._drop_temperature is True
+
+
+def test_reasoning_model_gets_headroom_and_low_effort_on_detection():
+    """On the fight where we learn max_completion_tokens is required, the payload
+    must also gain a reasoning-safe budget floor and low reasoning effort so the
+    model has room to emit output (the gpt-5.5 empty-content symptom)."""
+    fa = _bare_analyst()
+    payload = {"max_tokens": 350, "temperature": 0.7}
+    fa._remediate_unsupported_param(
+        "Unsupported parameter: 'max_tokens' is not supported. "
+        "Use 'max_completion_tokens' instead.",
+        payload,
+    )
+    assert payload["max_completion_tokens"] == 4000
+    assert payload["reasoning_effort"] == "low"
+
+
+def test_reasoning_headroom_never_lowers_a_larger_user_budget():
+    fa = _bare_analyst()
+    fa._use_max_completion_tokens = True
+    payload = {"max_completion_tokens": 6000}
+    fa._apply_reasoning_model_params(payload)
+    assert payload["max_completion_tokens"] == 6000   # user's larger cap preserved
+
+
+def test_reasoning_effort_rejection_is_learned_and_stripped():
+    fa = _bare_analyst()
+    fa._use_max_completion_tokens = True
+    payload = {"max_completion_tokens": 4000, "reasoning_effort": "low"}
+    changed = fa._remediate_unsupported_param(
+        "Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+        payload,
+    )
+    assert changed is True
+    assert "reasoning_effort" not in payload
+    assert fa._reasoning_effort_supported is False
+    # and it won't be re-added afterwards
+    fa._apply_reasoning_model_params(payload)
+    assert "reasoning_effort" not in payload
 
 
 def test_silent_failure_retry_writes_learned_token_key(monkeypatch):
@@ -225,5 +269,7 @@ def test_silent_failure_retry_writes_learned_token_key(monkeypatch):
     assert result == "gg ez"
     assert len(sent_payloads) == 2, "expected a silent-failure retry"
     retry = sent_payloads[1]
-    assert retry.get("max_completion_tokens") == 400, "retry must lower the LEARNED key"
+    # Reasoning model: the retry must write the LEARNED key and keep a large
+    # budget (shrinking to fallback_token_limit would starve reasoning output).
+    assert retry.get("max_completion_tokens") == 4000, "retry must keep reasoning headroom"
     assert "max_tokens" not in retry, "retry must not reintroduce the rejected 'max_tokens'"
