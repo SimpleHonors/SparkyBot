@@ -885,8 +885,8 @@ git commit -m "feat: FightAnalyst honors probe-configured reasoning strategy ove
 ### Task 6: SilentFailureGuard — stop shrinking the budget on reasoning retries
 
 **Files:**
-- Modify: `core/silent_failure_guard.py` (rename `fallback_token_limit` → `headroom_floor`, default 4000; add optional `strategy_id`)
-- Modify: `core/fight_analyst.py` retry `else` branch (~547-548) so it never shrinks below the original budget
+- Modify: `core/silent_failure_guard.py` (ADD `headroom_floor: int = 4000` and `strategy_id: str = ""`; KEEP the existing `fallback_token_limit` field — it is still consumed by `call_with_guard` at ~line 121 and referenced by duck-typed stubs in `tests/test_openai_param_adaptation.py`, so a rename would needlessly break passing tests)
+- Modify: `core/fight_analyst.py` retry `else` branch (the non-reasoning fallback that currently sets the budget to `self._silent_guard.fallback_token_limit`) so it never shrinks below the original budget
 - Test: `tests/test_silent_failure_guard.py` (extend if present, else create)
 
 **Interfaces:**
@@ -922,7 +922,7 @@ Expected: FAIL with `AttributeError: 'SilentFailureGuard' object has no attribut
 
 - [ ] **Step 3: Write minimal implementation**
 
-3a. In `core/silent_failure_guard.py`, replace the `fallback_token_limit` field (~line 24) and add `strategy_id`:
+3a. In `core/silent_failure_guard.py`, ADD two new dataclass fields alongside the existing `fallback_token_limit` field (~line 24). Do NOT remove `fallback_token_limit` — leave it as-is (still used by `call_with_guard` and existing test stubs):
 
 ```python
     headroom_floor: int = 4000        # retry budget floor for reasoning models (never shrink below this)
@@ -970,8 +970,8 @@ Run: `python -m pytest tests/test_silent_failure_guard.py -q`
 Expected: PASS
 
 Full suite:
-Run: `python -m pytest tests/ -q`
-Expected: all green. (If any test referenced `fallback_token_limit`, update it to `headroom_floor` — grep: `grep -rn fallback_token_limit tests/ core/`.)
+Run: `python3 -m pytest tests/ -q`
+Expected: all green. `fallback_token_limit` is intentionally retained, so existing references to it stay valid — do not rename them. If a duck-typed guard stub in an existing test happens to reach the rewritten `else` branch and fails on a missing `headroom_floor` attribute, add `headroom_floor = 4000` to that stub (leave its `fallback_token_limit` in place).
 
 - [ ] **Step 5: Commit**
 
@@ -1310,7 +1310,7 @@ git commit -m "feat: setup wizard reasoning probe parity with settings dialog"
 ## Final verification
 
 - [ ] Run the entire suite: `python -m pytest tests/ -q` — all green.
-- [ ] `grep -rn fallback_token_limit core/ tests/` returns nothing (fully renamed).
+- [ ] `grep -rn "headroom_floor" core/silent_failure_guard.py` present; `fallback_token_limit` intentionally retained for `call_with_guard` + legacy stubs (not renamed — approach changed during execution to avoid breaking passing tests).
 - [ ] `grep -rn "_is_deepseek_host\|_is_gemini_pro_host" core/fight_analyst.py` — still present, but only reached when `reasoning_strategy` is empty (legacy fallback). (No `_is_minimax_reasoning_host` on this branch — that parked fix was stashed; MiniMax is now handled by the probe + the `think_enable` strategy.)
 - [ ] Manual end-to-end: OpenRouter + `minimax/minimax-m3` through Test Connection auto-detects and applies a working config; a real fight then returns non-empty commentary.
 - [ ] Do NOT bump version / push / release — report completion and wait for the operator's "ship it".
