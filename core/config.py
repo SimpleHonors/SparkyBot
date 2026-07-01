@@ -74,6 +74,7 @@ class Config:
             'aiVocabWeightGates': '33',
             'aiDisableThinking': 'false',
             'aiUseV3Pipeline': 'false',
+            'aiReasoningStrategy': '',
         },
         'Twitch': {
             'enableTwitchBot': 'false',
@@ -209,6 +210,7 @@ class Config:
         self.ai_vocab_weight_negative = self._get_int('AI', 'aiVocabWeightNegative', 33) / 100.0
         self.ai_vocab_weight_gates = self._get_int('AI', 'aiVocabWeightGates', 33) / 100.0
         self.ai_disable_thinking = self._config.getboolean('AI', 'aiDisableThinking', fallback=False)
+        self.ai_reasoning_strategy = self._config.get('AI', 'aiReasoningStrategy', fallback='')
 
         # Twitch settings
         self.enable_twitch = self._config.getboolean('Twitch', 'enableTwitchBot')
