@@ -1176,7 +1176,11 @@ class SettingsWindow(QWidget):
         import threading
         def _run_test():
             try:
-                result = analyst.analyze(test_summary, timeout=15)
+                # Use the currently-configured AI timeout spinbox value, not a
+                # hardcoded value — a short hardcoded timeout starves
+                # slow/reasoning models (e.g. OpenAI "-pro" models) on the test
+                # call even though a real fight would have had enough time.
+                result = analyst.analyze(test_summary, timeout=self.ai_timeout.value())
                 if result:
                     self._sig_ai_test_done.emit(f"Success! Response:\n{result[:200]}", True)
                 else:

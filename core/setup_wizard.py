@@ -1157,7 +1157,11 @@ class AIAnalysisPage(QWizardPage):
                     ],
                     "enemy_teams": {"Red": 30, "Blue": 20},
                 }
-                result = analyst.analyze(test_summary, timeout=15)
+                # Use the configured AI timeout, not a hardcoded value — a
+                # short hardcoded timeout starves slow/reasoning models (e.g.
+                # OpenAI "-pro" models) on the test call even though a real
+                # fight would have had enough time to complete.
+                result = analyst.analyze(test_summary, timeout=self.config.ai_timeout)
 
                 from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
                 if result:
