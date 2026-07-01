@@ -201,6 +201,13 @@ class FightAnalyst:
         # /chat/completions and must use the Responses API (/v1/responses).
         # Learned from a 404 and cached for the session.
         self._use_responses_api = False
+        # Set True by _apply_reasoning_model_params, regardless of *why* it
+        # was called (OpenAI/Azure learned via a 400, or a provider like
+        # DeepSeek whose reasoning models are detected directly by host).
+        # Retry logic checks this instead of the OpenAI-specific flag above so
+        # it keeps the floored budget instead of shrinking it for any model
+        # that reasons before writing.
+        self._reasoning_headroom = False
 
     # Reasoning models (gpt-5.x, o-series) spend the output-token budget on
     # hidden reasoning before emitting any text, so a small cap gets fully
@@ -218,13 +225,20 @@ class FightAnalyst:
 
         Idempotent: raises the completion budget to the floor (never lowers a
         larger user setting) and requests low reasoning effort when supported.
+        Uses whichever token-budget field this endpoint actually takes
+        (_token_budget_key()) rather than assuming max_completion_tokens, so
+        this also covers providers like DeepSeek that reason by default but
+        still take the plain 'max_tokens' field.
         """
-        payload["max_completion_tokens"] = max(
-            int(payload.get("max_completion_tokens") or 0),
-            self._REASONING_MIN_BUDGET,
-        )
+        self._reasoning_headroom = True
+        key = self._token_budget_key()
+        payload[key] = max(int(payload.get(key) or 0), self._REASONING_MIN_BUDGET)
         if self._reasoning_effort_supported:
             payload.setdefault("reasoning_effort", self._REASONING_EFFORT)
+
+    def _is_deepseek_host(self) -> bool:
+        host = urlparse(self.base_url).hostname or ""
+        return host == "api.deepseek.com" or host.endswith(".deepseek.com")
 
     # Pro/reasoning models on the Responses API reason heavily before emitting
     # text; give a generous output ceiling (a cap, not a target — billed only
@@ -415,6 +429,17 @@ class FightAnalyst:
         # Provider-specific payload adjustments
         self._apply_provider_overrides(payload)
 
+        # DeepSeek's v4 models default to thinking-mode ON and can silently
+        # spend the whole budget on hidden reasoning -- empty content,
+        # finish_reason=length -- with no error to react to (unlike OpenAI's
+        # 400). Respect the app's thinking toggle; when thinking stays on,
+        # give it real headroom instead of failing silently.
+        if self._is_deepseek_host():
+            if not self.thinking:
+                payload["thinking"] = {"type": "disabled"}
+            else:
+                self._apply_reasoning_model_params(payload)
+
         # If we've already learned this endpoint is a reasoning model, give it
         # room to actually produce output (reasoning eats a small budget whole).
         if self._use_max_completion_tokens:
@@ -474,7 +499,7 @@ class FightAnalyst:
                                     int(payload.get("max_output_tokens") or 0),
                                     self._RESPONSES_MIN_BUDGET,
                                 )
-                            elif self._use_max_completion_tokens:
+                            elif self._reasoning_headroom:
                                 # Reasoning model: shrinking the budget starves
                                 # output (reasoning consumes it first). Keep the
                                 # reasoning-safe floor instead of reducing it.

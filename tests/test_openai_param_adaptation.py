@@ -32,6 +32,7 @@ def _bare_analyst():
     fa._drop_temperature = False
     fa._reasoning_effort_supported = True
     fa._use_responses_api = False
+    fa._reasoning_headroom = False
     return fa
 
 
@@ -122,6 +123,7 @@ def _stub_analyst_for_analyze():
     fa._drop_temperature = False
     fa._reasoning_effort_supported = True
     fa._use_responses_api = False
+    fa._reasoning_headroom = False
 
     # Short-circuit the heavy collaborators.
     fa._build_prompt = lambda *a, **k: ("user prompt", [])
@@ -183,6 +185,28 @@ def test_analyze_recovers_from_max_tokens_then_temperature_400(monkeypatch):
     assert fa._drop_temperature is True
 
 
+def test_deepseek_host_detected():
+    fa = _bare_analyst()
+    fa.base_url = "https://api.deepseek.com"
+    assert fa._is_deepseek_host() is True
+    fa.base_url = "https://api.openai.com/v1"
+    assert fa._is_deepseek_host() is False
+
+
+def test_deepseek_reasoning_floors_max_tokens_not_max_completion_tokens():
+    """DeepSeek's v4 models default to thinking-on and take the plain
+    'max_tokens' field (they never 400 asking for max_completion_tokens), so
+    the floor must land on whichever key this endpoint actually uses."""
+    fa = _bare_analyst()
+    fa.base_url = "https://api.deepseek.com"
+    payload = {"max_tokens": 450, "temperature": 0.7}
+    fa._apply_reasoning_model_params(payload)
+    assert payload["max_tokens"] == 4000          # not max_completion_tokens
+    assert "max_completion_tokens" not in payload
+    assert payload["reasoning_effort"] == "low"
+    assert fa._reasoning_headroom is True
+
+
 def test_reasoning_model_gets_headroom_and_low_effort_on_detection():
     """On the fight where we learn max_completion_tokens is required, the payload
     must also gain a reasoning-safe budget floor and low reasoning effort so the
@@ -241,6 +265,75 @@ def test_responses_to_chat_shape_reads_output_text_and_array():
         {"output_text": "", "status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}
     )
     assert c["choices"][0]["finish_reason"] == "length"
+
+
+def _stub_deepseek_analyst_for_analyze():
+    """Same as _stub_analyst_for_analyze but pointed at DeepSeek, with
+    _apply_provider_overrides restored (unlike the OpenAI stub) since the
+    DeepSeek reasoning-headroom check runs independently of provider overrides
+    and needs a real base_url to detect the host from."""
+    fa = _stub_analyst_for_analyze()
+    fa.base_url = "https://api.deepseek.com"
+    fa.model = "deepseek-v4-flash"
+    fa.max_tokens = 450
+    return fa
+
+
+def test_analyze_recovers_from_deepseek_silent_reasoning_failure(monkeypatch):
+    """Regression for the exact reported log: deepseek-v4-flash defaults to
+    thinking-on, burns the whole 450-token budget on hidden reasoning with
+    empty content (completion_tokens==max_tokens, finish_reason=length), and
+    DeepSeek never 400s to signal it. The first request must already carry
+    the floored budget, and the silent-failure retry must NOT shrink it
+    further (shrinking is what the old code did and made things worse)."""
+    import core.fight_analyst as fa_mod
+
+    fa = _stub_deepseek_analyst_for_analyze()
+
+    class _Guard:
+        fallback_token_limit = 400
+
+        def __init__(self):
+            self._calls = 0
+
+        def is_silent_failure(self, *a, **k):
+            self._calls += 1
+            return self._calls == 1        # first response is the silent failure
+
+        def handle_failure(self, *a, **k):
+            return "", "retry_required"
+    fa._silent_guard = _Guard()
+
+    sent_payloads = []
+    responses = iter([
+        _FakeResponse(200, json_body={
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 450},
+        }),
+        _FakeResponse(200, json_body=_ok_body()),
+    ])
+
+    def fake_post(endpoint, headers=None, json=None, timeout=None):
+        sent_payloads.append(copy.deepcopy(json))
+        return next(responses)
+
+    monkeypatch.setattr(fa_mod, "requests", type("R", (), {
+        "post": staticmethod(fake_post),
+        "Timeout": fa_mod.requests.Timeout,
+        "ConnectionError": fa_mod.requests.ConnectionError,
+    }))
+    monkeypatch.setattr(fa_mod.time, "sleep", lambda *_: None)
+
+    result = fa.analyze({"outcome": "win"}, timeout=5)
+
+    assert result == "gg ez"
+    assert len(sent_payloads) == 2
+    # first request already carries the floor -- not the raw 450 default
+    assert sent_payloads[0]["max_tokens"] == 4000
+    assert sent_payloads[0]["reasoning_effort"] == "low"
+    # retry must NOT shrink to fallback_token_limit (400) -- that's the bug
+    assert sent_payloads[1]["max_tokens"] == 4000
+    assert fa._reasoning_headroom is True
 
 
 def test_analyze_switches_to_responses_api_on_not_a_chat_model_404(monkeypatch):
