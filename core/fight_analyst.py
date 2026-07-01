@@ -157,6 +157,7 @@ class FightAnalyst:
                  vocab_weights: dict = None,
                  session_history: "SessionHistoryTracker" = None,
                  thinking: bool = True,
+                 reasoning_strategy: str = "",
                  prompt_version: str = "v2",
                  callout_cooldown: "Optional[CalloutCooldown]" = None):
         self.base_url = base_url.rstrip("/")
@@ -208,6 +209,15 @@ class FightAnalyst:
         # it keeps the floored budget instead of shrinking it for any model
         # that reasons before writing.
         self._reasoning_headroom = False
+        # Probe-configured reasoning strategy id (from Test Connection). When
+        # set, it takes precedence over the legacy host-detection below and
+        # over the provider-override reasoning suppression.
+        self.reasoning_strategy = reasoning_strategy or ""
+        # Per-call diagnostics, read by the reasoning probe.
+        self.last_completion_tokens: "Optional[int]" = None
+        self.last_finish_reason: "Optional[str]" = None
+        self.last_empty: "Optional[bool]" = None
+        self._silent_guard.strategy_id = self.reasoning_strategy
 
     # Reasoning models (gpt-5.x, o-series) spend the output-token budget on
     # hidden reasoning before emitting any text, so a small cap gets fully
@@ -235,6 +245,31 @@ class FightAnalyst:
         payload[key] = max(int(payload.get(key) or 0), self._REASONING_MIN_BUDGET)
         if self._reasoning_effort_supported:
             payload.setdefault("reasoning_effort", self._REASONING_EFFORT)
+
+    def _apply_configured_strategy(self, payload: dict) -> bool:
+        """Apply the probe-configured reasoning strategy, if any.
+
+        Returns True when a configured strategy handled reasoning (so the
+        legacy host-detection block should be skipped).
+        """
+        sid = getattr(self, "reasoning_strategy", "")
+        if not sid:
+            return False
+        from core import reasoning_strategies as rs
+        key = self._token_budget_key()
+        if sid == "none":
+            return True
+        if sid == "headroom_only":
+            rs.ensure_headroom(payload, key)
+            self._reasoning_headroom = True
+            return True
+        # An off-switch strategy.
+        if not self.thinking:
+            rs.apply_strategy(payload, sid, disable=True, budget_key=key)
+        else:
+            rs.ensure_headroom(payload, key)
+            self._reasoning_headroom = True
+        return True
 
     def _is_deepseek_host(self) -> bool:
         host = urlparse(self.base_url).hostname or ""
@@ -448,18 +483,20 @@ class FightAnalyst:
         # finish_reason=length -- with no error to react to (unlike OpenAI's
         # 400). Respect the app's thinking toggle; when thinking stays on,
         # give it real headroom instead of failing silently.
-        if self._is_deepseek_host():
-            if not self.thinking:
-                payload["thinking"] = {"type": "disabled"}
-            else:
-                self._apply_reasoning_model_params(payload)
+        # Probe-configured strategy wins; otherwise fall back to host detection.
+        if not self._apply_configured_strategy(payload):
+            if self._is_deepseek_host():
+                if not self.thinking:
+                    payload["thinking"] = {"type": "disabled"}
+                else:
+                    self._apply_reasoning_model_params(payload)
 
-        # Gemini "Pro" models can't disable thinking at all (see
-        # _is_gemini_pro_host docstring) -- cap the spend instead of leaving
-        # the model's default dynamic budget, which can eat the whole
-        # response budget and leave nothing for visible output.
-        if self._is_gemini_pro_host():
-            self._apply_reasoning_model_params(payload)
+            # Gemini "Pro" models can't disable thinking at all (see
+            # _is_gemini_pro_host docstring) -- cap the spend instead of leaving
+            # the model's default dynamic budget, which can eat the whole
+            # response budget and leave nothing for visible output.
+            if self._is_gemini_pro_host():
+                self._apply_reasoning_model_params(payload)
 
         # If we've already learned this endpoint is a reasoning model, give it
         # room to actually produce output (reasoning eats a small budget whole).
@@ -527,8 +564,19 @@ class FightAnalyst:
                                 payload["messages"][1]["content"] += hot_take
                                 self._apply_reasoning_model_params(payload)
                             else:
+                                # Never shrink the budget on retry: a model that
+                                # ate its budget on hidden reasoning needs MORE
+                                # room, not less. Engage the configured
+                                # off-switch if we have one, then floor the
+                                # budget at the reasoning-safe headroom.
                                 payload["messages"][1]["content"] += hot_take
-                                payload[self._token_budget_key()] = self._silent_guard.fallback_token_limit
+                                if self._silent_guard.strategy_id and self.thinking is False:
+                                    from core import reasoning_strategies as rs
+                                    rs.apply_strategy(payload, self._silent_guard.strategy_id,
+                                                      disable=True, budget_key=self._token_budget_key())
+                                key = self._token_budget_key()
+                                payload[key] = max(int(payload.get(key) or 0),
+                                                   self._silent_guard.headroom_floor)
                             attempt += 1
                             time.sleep(3)
                             continue
@@ -1526,14 +1574,23 @@ class FightAnalyst:
         if not thinking and "pro" not in model:
             payload["reasoning_effort"] = "none"
 
-    _PROVIDER_DISPATCH: list = [
+    # Reasoning-suppression providers (skipped when an explicit strategy is set)
+    _PROVIDER_DISPATCH_REASONING: list = [
         (_minimax_predicate, _apply_minimax),
-        (_moonshot_predicate, _apply_moonshot),
         (_gemini_predicate, _apply_gemini),
+    ]
+    # Non-reasoning provider cleanups (always run)
+    _PROVIDER_DISPATCH_CLEANUP: list = [
+        (_moonshot_predicate, _apply_moonshot),
     ]
 
     def _apply_provider_overrides(self, payload: dict) -> None:
-        """Apply provider-specific payload fields (thinking/reasoning suppression)."""
+        """Apply provider-specific payload fields.
+
+        Non-reasoning cleanups always run. Host-based reasoning suppression is
+        skipped when an explicit probe strategy is configured (that strategy
+        owns reasoning control instead).
+        """
         parsed_host = urlparse(self.base_url).hostname or ""
         model_lower = self.model.lower()
         is_openrouter = (
@@ -1541,7 +1598,14 @@ class FightAnalyst:
             or parsed_host.endswith(".openrouter.ai")
         )
 
-        for pred, apply in self._PROVIDER_DISPATCH:
+        for pred, apply in self._PROVIDER_DISPATCH_CLEANUP:
+            if pred(parsed_host, model_lower, is_openrouter, self.thinking):
+                apply(payload, self.thinking, model_lower)
+
+        if getattr(self, "reasoning_strategy", ""):
+            return  # strategy owns reasoning control
+
+        for pred, apply in self._PROVIDER_DISPATCH_REASONING:
             if pred(parsed_host, model_lower, is_openrouter, self.thinking):
                 apply(payload, self.thinking, model_lower)
 
@@ -1819,6 +1883,11 @@ class FightAnalyst:
             logger.warning("AI response was truncated due to max_tokens limit (%d)", self.max_tokens)
         message = choice.get('message') or {}
         content = message.get('content') or ''
+
+        # Per-call diagnostics, read by the reasoning probe.
+        self.last_finish_reason = finish_reason
+        self.last_completion_tokens = data.get("usage", {}).get("completion_tokens")
+        self.last_empty = not content.strip()
 
         stripped = _strip_think_tags(content)
 
