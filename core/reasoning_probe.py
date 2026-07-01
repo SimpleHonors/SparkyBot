@@ -7,6 +7,7 @@ instead of matching model names.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
@@ -143,3 +144,41 @@ def format_report(report: ProbeReport) -> str:
         lines.append(f"Applied: reasoning {state}, {report.recommended_max_tokens} max tokens"
                      + (f" (via {strat})" if strat not in ("none", "headroom_only") else "") + ".")
     return "\n".join(lines)
+
+
+class _RealProbeCall:
+    def __init__(self, base_url, api_key, model, system_prompt, strategy_id, disable, budget):
+        self._args = (base_url, api_key, model, system_prompt)
+        self.strategy_id = strategy_id
+        self.disable = disable
+        self.budget = budget
+
+    def run(self, test_summary, timeout) -> ProbeOutcome:
+        from core.ai_analyst import FightAnalyst  # lazy — avoids import cost/cycle
+        base_url, api_key, model, system_prompt = self._args
+        t0 = time.monotonic()
+        try:
+            analyst = FightAnalyst(
+                base_url=base_url, api_key=api_key, model=model,
+                system_prompt=system_prompt, max_tokens=self.budget,
+                thinking=not self.disable, reasoning_strategy=self.strategy_id,
+            )
+            text = analyst.analyze(test_summary, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 — probe must never crash the UI
+            return ProbeOutcome(self.strategy_id, self.disable, self.budget,
+                                errored=True, error_msg=str(exc),
+                                elapsed_s=time.monotonic() - t0)
+        empty = not (text and text.strip())
+        return ProbeOutcome(
+            self.strategy_id, self.disable, self.budget,
+            ok=not empty, empty=empty,
+            preview=(text or "")[:200],
+            completion_tokens=getattr(analyst, "last_completion_tokens", None),
+            elapsed_s=time.monotonic() - t0,
+        )
+
+
+def make_real_factory(base_url, api_key, model, system_prompt=None):
+    def factory(*, strategy_id, disable, budget):
+        return _RealProbeCall(base_url, api_key, model, system_prompt, strategy_id, disable, budget)
+    return factory
