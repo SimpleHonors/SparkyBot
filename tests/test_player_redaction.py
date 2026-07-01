@@ -11,8 +11,9 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "core"))
 
-from core.narrative_facts import redact_players_from_summary, _TOP_ARRAYS
+from core.narrative_facts import redact_players_from_summary, _TOP_ARRAYS, _build_player_sentences
 from core.vocabulary_tracker import VocabularyTracker
+from core.callout_cooldown import CalloutCooldown
 
 
 def _summary():
@@ -116,3 +117,39 @@ def test_v3_prompt_redacts_cooldown_player_but_keeps_team_scale(tmp_path):
     # team scale survives redaction (always-fire line renders friendly/enemy + squad size)
     assert "50 vs 40" in body, "team scale (50 vs 40) was lost"
     assert "of 50" in body, "squad size was lost from the team line"
+
+
+def test_globally_cooled_down_player_is_skipped_not_role_named(monkeypatch):
+    """Regression: a player on the global callout cooldown must be benched
+    from the dominant/clutch spotlight sentences entirely -- never renamed to
+    a class/build nickname ("the burst evoker") as a substitute for their
+    real name. That nickname is still individually identifying and defeats
+    the whole point of the cooldown; the reported symptom was exactly this
+    phrase appearing across multiple fights in a row."""
+    import core.narrative_facts as nf
+
+    cooldown = CalloutCooldown(state_path=None)
+    cooldown.record_global("Dena", fights=3)  # Dena is benched this fight
+
+    summary = {
+        "duration_seconds": 60,
+        "top_bursts": [
+            {"name": "Dena", "profession": "Elementalist", "dmg_4s": 59000},
+            {"name": "Formuele", "profession": "Guardian", "dmg_4s": 40000},
+        ],
+    }
+
+    # Deterministic buckets, independent of the real calibration thresholds.
+    def fake_bucket_player(rec, duration_s):
+        return {"burst": "dominant"} if rec["name"] == "Dena" else {"dps": "dominant"}
+    monkeypatch.setattr(nf, "bucket_player", fake_bucket_player)
+    monkeypatch.setattr(nf, "is_clutch", lambda buckets: False)
+
+    sentences, names_emitted = _build_player_sentences(summary, cooldown)
+    text = " ".join(sentences)
+
+    assert "Dena" not in text, "benched player's real name leaked"
+    assert "evoker" not in text.lower(), "class/build nickname substituted for the benched name"
+    assert "elementalist" not in text.lower(), "profession-based periphrasis substituted for the benched name"
+    assert "Formuele" in text, "the eligible (non-cooldown) player should still be named normally"
+    assert names_emitted == {"Formuele"}

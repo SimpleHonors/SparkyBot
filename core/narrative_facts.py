@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from performance_buckets import bucket_player, infer_build, is_clutch
+from performance_buckets import bucket_player, is_clutch
 from pre_digester import bucket_v3
 
 if TYPE_CHECKING:
@@ -155,21 +155,6 @@ def _result_verb(outcome: str, deaths: int, count: int) -> str:
     if "draw" in o:
         return "drew"
     return "took"
-
-
-def _role_phrase(player_record: dict, build_role: str) -> str:
-    """How to refer to a player when their name is on cooldown.
-
-    Uses the inferred build role (e.g. 'burst evoker', 'rez druid') with
-    'the' or 'our' depending on phrasing. Single-class deduplication
-    intentionally not done here — a known limitation (anonymization is
-    "soft" when the role is unique).
-    """
-    role = (build_role or "").strip()
-    if not role:
-        prof = (player_record.get('profession') or '').strip()
-        return f"the {prof.lower()}" if prof else "a squad member"
-    return f"the {role}"
 
 
 def _select_dominant_axis(buckets: dict) -> Optional[str]:
@@ -339,7 +324,10 @@ def _build_player_sentences(summary: dict,
     Returns (sentences, names_emitted). Player cooldowns are applied:
     - Per-axis cooldown gates which axis a player can be named on
     - Global player cap blocks any further sentence about this player
-    - If gated, sentence falls back to role phrase (anonymous credit)
+    - If gated, the candidate is skipped -- benched from the spotlight for
+      this fight, not renamed. Never substitute a class/build nickname
+      ("the burst evoker") for a redacted name; that's still individually
+      identifying and defeats the point of the cooldown.
     """
     duration_s = summary.get('duration_seconds', 0) or 0
     if duration_s <= 0:
@@ -354,14 +342,12 @@ def _build_player_sentences(summary: dict,
         buckets = bucket_player(rec, duration_s)
         if not buckets:
             continue
-        condi_share = rec.get('condi_share', 0.0) or 0.0
-        role = infer_build(rec.get('profession', ''), condi_share, buckets)
         clutch = is_clutch(buckets)
         dom_axis = _select_dominant_axis(buckets)
         if not dom_axis and not clutch:
             continue
         candidates.append({
-            'rec': rec, 'buckets': buckets, 'role': role,
+            'rec': rec, 'buckets': buckets,
             'dom_axis': dom_axis, 'clutch': clutch,
         })
 
@@ -384,8 +370,14 @@ def _build_player_sentences(summary: dict,
         rec = c['rec']
         name = rec['name']
 
-        # Pick best axis NOT already taken by a previous dominant sentence.
-        # Walk this player's tier-ranked axes from most impressive down.
+        # Player benched from the spotlight entirely -- skip to the next
+        # candidate rather than naming them via a role nickname.
+        if cooldown and cooldown.is_globally_on_cooldown(name):
+            continue
+
+        # Pick best axis NOT already taken by a previous dominant sentence
+        # and not currently on cooldown for this player. Walk this player's
+        # tier-ranked axes from most impressive down.
         tier_rank = {'legendary': 4, 'exceptional': 3, 'dominant': 2}
         ranked_axes = sorted(
             ((axis, tier_rank.get(c['buckets'][axis], 0))
@@ -394,26 +386,21 @@ def _build_player_sentences(summary: dict,
             key=lambda kv: kv[1], reverse=True,
         )
         chosen_axis = next(
-            (axis for axis, _r in ranked_axes if axis not in used_axes),
+            (axis for axis, _r in ranked_axes
+             if axis not in used_axes
+             and not (cooldown and cooldown.is_on_cooldown(name, axis))),
             None,
         )
         if chosen_axis is None:
             continue
         used_axes.add(chosen_axis)
 
-        # Decide name vs. role substitution
-        on_axis_cd = cooldown.is_on_cooldown(name, chosen_axis) if cooldown else False
-        on_global_cd = cooldown.is_globally_on_cooldown(name) if cooldown else False
-        use_role = on_axis_cd or on_global_cd
-
-        subject = _role_phrase(rec, c['role']) if use_role else name
         category_label = _AXIS_LABEL.get(chosen_axis, chosen_axis)
         primary_stat = _format_primary_stat(rec, chosen_axis, duration_s)
         sentences.append(
-            f"{subject} was dominant in {category_label} with {primary_stat}."
+            f"{name} was dominant in {category_label} with {primary_stat}."
         )
-        if not use_role:
-            names_emitted.add(name)
+        names_emitted.add(name)
         dom_emits += 1
 
     # Emit clutch sentences (template 6) — max 1 per fight
@@ -428,20 +415,21 @@ def _build_player_sentences(summary: dict,
         # Don't double-emit the same player
         if name in names_emitted:
             continue
+        # Benched from the spotlight -- skip to the next clutch candidate
+        # rather than naming them via a role nickname.
         on_global_cd = cooldown.is_globally_on_cooldown(name) if cooldown else False
         on_axis_cd = (cooldown.is_on_cooldown(name, 'downed_damage')
                       if cooldown else False)
-        use_role = on_global_cd or on_axis_cd
-        subject = _role_phrase(rec, c['role']) if use_role else name
+        if on_global_cd or on_axis_cd:
+            continue
         downed_dmg = rec.get('downed_damage', 0) or 0
         downed_heal = rec.get('downed_healing', 0) or 0
         if downed_dmg >= downed_heal:
             tail = f"with {downed_dmg:,} down damage"
         else:
             tail = f"saving {downed_heal:,} healing in downed-state"
-        sentences.append(f"{subject} was clutch {tail}.")
-        if not use_role:
-            names_emitted.add(name)
+        sentences.append(f"{name} was clutch {tail}.")
+        names_emitted.add(name)
         clutch_emitted = True
 
     return sentences, names_emitted
