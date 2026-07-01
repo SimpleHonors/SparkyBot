@@ -1124,7 +1124,7 @@ class AIAnalysisPage(QWizardPage):
                     base_url=base_url,
                     api_key=api_key,
                     model=model,
-                    max_tokens=350,
+                    max_tokens=450,
                 )
                 test_summary = {
                     "zone": "Eternal Battlegrounds",

@@ -65,7 +65,7 @@ class Config:
             'aiApiKey': '',
             'aiModel': '',
             'aiSystemPrompt': '',
-            'aiMaxTokens': '350',
+            'aiMaxTokens': '450',
             'aiTimeout': '30',
             'aiPromptVersion': '0',
             'aiVocabWeightShock': '33',
@@ -200,7 +200,7 @@ class Config:
         self.ai_api_key = self._config.get('AI', 'aiApiKey')
         self.ai_model = self._config.get('AI', 'aiModel')
         self.ai_system_prompt = self._config.get('AI', 'aiSystemPrompt')
-        self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 350)
+        self.ai_max_tokens = self._get_int('AI', 'aiMaxTokens', 450)
         self.ai_timeout = self._get_int('AI', 'aiTimeout', 30)
         self.ai_prompt_version = self._get_int('AI', 'aiPromptVersion', 0)
         self.ai_use_v3_pipeline = self._config.getboolean('AI', 'aiUseV3Pipeline', fallback=False)

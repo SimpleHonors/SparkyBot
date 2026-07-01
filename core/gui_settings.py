@@ -559,7 +559,7 @@ class SettingsWindow(QWidget):
         # Max tokens
         self.ai_max_tokens = QSpinBox()
         self.ai_max_tokens.setRange(100, 8000)
-        self.ai_max_tokens.setValue(350)
+        self.ai_max_tokens.setValue(450)
         form.addRow("Max Tokens:", self.ai_max_tokens)
 
         # API Timeout

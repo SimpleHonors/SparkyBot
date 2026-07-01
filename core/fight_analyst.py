@@ -197,6 +197,10 @@ class FightAnalyst:
         # detect one we send reasoning_effort=low. Flipped off only if a given
         # endpoint rejects that param.
         self._reasoning_effort_supported = True
+        # Some models (OpenAI "-pro" reasoning models) aren't served on
+        # /chat/completions and must use the Responses API (/v1/responses).
+        # Learned from a 404 and cached for the session.
+        self._use_responses_api = False
 
     # Reasoning models (gpt-5.x, o-series) spend the output-token budget on
     # hidden reasoning before emitting any text, so a small cap gets fully
@@ -221,6 +225,61 @@ class FightAnalyst:
         )
         if self._reasoning_effort_supported:
             payload.setdefault("reasoning_effort", self._REASONING_EFFORT)
+
+    # Pro/reasoning models on the Responses API reason heavily before emitting
+    # text; give a generous output ceiling (a cap, not a target — billed only
+    # for tokens actually used) so a short roast still fits after reasoning.
+    _RESPONSES_MIN_BUDGET = 16000
+
+    def _to_responses_payload(self, payload: dict) -> dict:
+        """Translate a /chat/completions payload into an OpenAI Responses API
+        payload (/v1/responses), for models not served on /chat/completions
+        (e.g. OpenAI '-pro' reasoning models).
+
+        Maps the system message to `instructions`, the user message to `input`,
+        and the token cap to `max_output_tokens`. Reasoning effort is left to the
+        model's default — pro models manage their own reasoning and can reject an
+        explicit effort value.
+        """
+        messages = payload.get("messages", [])
+        system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+        user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+        budget = (payload.get("max_completion_tokens")
+                  or payload.get("max_tokens")
+                  or self._RESPONSES_MIN_BUDGET)
+        new_payload = {
+            "model": payload.get("model", self.model),
+            "input": user,
+            "max_output_tokens": max(int(budget or 0), self._RESPONSES_MIN_BUDGET),
+        }
+        if system:
+            new_payload["instructions"] = system
+        return new_payload
+
+    def _responses_to_chat_shape(self, data: dict) -> dict:
+        """Normalize an OpenAI Responses API result into the chat/completions
+        shape the rest of analyze() / _handle_success / the silent-failure guard
+        expect (choices[0].message.content + usage.completion_tokens)."""
+        text = data.get("output_text")
+        if text is None:
+            parts = []
+            for item in data.get("output", []) or []:
+                if item.get("type") == "message":
+                    for block in item.get("content", []) or []:
+                        if block.get("type") in ("output_text", "text"):
+                            parts.append(block.get("text", ""))
+            text = "".join(parts)
+        usage = data.get("usage", {}) or {}
+        completion_tokens = usage.get("output_tokens", 0)
+        incomplete = data.get("incomplete_details") or {}
+        finish_reason = "length" if (
+            data.get("status") == "incomplete"
+            and incomplete.get("reason") in ("max_output_tokens", "max_tokens")
+        ) else "stop"
+        return {
+            "choices": [{"message": {"content": text or ""}, "finish_reason": finish_reason}],
+            "usage": {"completion_tokens": completion_tokens},
+        }
 
     def _token_budget_key(self) -> str:
         """Request field carrying the output-token cap for this endpoint.
@@ -323,7 +382,11 @@ class FightAnalyst:
         prompt, comp_notes = self._build_prompt(fight_summary, active_terms,
                                                 overused_terms=overused,
                                                 streak_info=streak_info)
-        endpoint = f"{self.base_url}/chat/completions"
+        endpoint = (
+            f"{self.base_url}/responses"
+            if self._use_responses_api
+            else f"{self.base_url}/chat/completions"
+        )
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -357,6 +420,13 @@ class FightAnalyst:
         if self._use_max_completion_tokens:
             self._apply_reasoning_model_params(payload)
 
+        # If we've learned this model needs the Responses API, reshape the
+        # payload before sending (endpoint was already set to /responses above).
+        if self._use_responses_api:
+            new_payload = self._to_responses_payload(payload)
+            payload.clear()
+            payload.update(new_payload)
+
         # Debug: dump full AI prompt + response if SPARKY_DEBUG_AI_PROMPT is set
         debug_file = self._write_debug_request(endpoint, headers, payload)
 
@@ -380,6 +450,8 @@ class FightAnalyst:
 
                 if response.status_code == 200:
                     data = response.json()
+                    if self._use_responses_api:
+                        data = self._responses_to_chat_shape(data)
                     # M3: silent-failure guard — detect finish_reason=length + near-empty content
                     choice = data.get("choices", [{}])[0]
                     raw_content = choice.get("message", {}).get("content", "") or ""
@@ -389,17 +461,27 @@ class FightAnalyst:
                         if log_msg == "retry_required" and attempt < max_retries:
                             # Retry once with HOT TAKE forcing and reduced token budget
                             logger.warning("silent_failure detected — retrying with short format")
-                            payload["messages"][1]["content"] += (
+                            hot_take = (
                                 " Output the commentary now. "
                                 "Begin with 'HOT TAKE:' — no thinking, no preamble, "
                                 "just 2-3 sentences of Discord-ready text."
                             )
-                            if self._use_max_completion_tokens:
+                            if self._use_responses_api:
+                                # Responses API: prompt lives in `input`, cap in
+                                # `max_output_tokens`. Keep the generous ceiling.
+                                payload["input"] = payload.get("input", "") + hot_take
+                                payload["max_output_tokens"] = max(
+                                    int(payload.get("max_output_tokens") or 0),
+                                    self._RESPONSES_MIN_BUDGET,
+                                )
+                            elif self._use_max_completion_tokens:
                                 # Reasoning model: shrinking the budget starves
                                 # output (reasoning consumes it first). Keep the
                                 # reasoning-safe floor instead of reducing it.
+                                payload["messages"][1]["content"] += hot_take
                                 self._apply_reasoning_model_params(payload)
                             else:
+                                payload["messages"][1]["content"] += hot_take
                                 payload[self._token_budget_key()] = self._silent_guard.fallback_token_limit
                             attempt += 1
                             time.sleep(3)
@@ -438,6 +520,25 @@ class FightAnalyst:
                     if (response.status_code == 400
                             and param_fixes < max_param_fixes
                             and self._remediate_unsupported_param(body, payload)):
+                        param_fixes += 1
+                        continue
+                    # Some models (OpenAI "-pro" reasoning models) aren't served
+                    # on /chat/completions; switch this session to the Responses
+                    # API and retry. Free retry — doesn't consume the network budget.
+                    if (response.status_code == 404
+                            and not self._use_responses_api
+                            and param_fixes < max_param_fixes
+                            and ("not a chat model" in body.lower()
+                                 or "v1/responses" in body.lower())):
+                        self._use_responses_api = True
+                        new_payload = self._to_responses_payload(payload)
+                        payload.clear()
+                        payload.update(new_payload)
+                        endpoint = f"{self.base_url}/responses"
+                        logger.info(
+                            "Model is not a chat-completions model; switching to the "
+                            "Responses API and retrying (learned for this session)"
+                        )
                         param_fixes += 1
                         continue
                     logger.error("AI API error: %d - %s", response.status_code, body[:300])

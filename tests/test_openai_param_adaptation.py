@@ -31,6 +31,7 @@ def _bare_analyst():
     fa._use_max_completion_tokens = False
     fa._drop_temperature = False
     fa._reasoning_effort_supported = True
+    fa._use_responses_api = False
     return fa
 
 
@@ -120,6 +121,7 @@ def _stub_analyst_for_analyze():
     fa._use_max_completion_tokens = False
     fa._drop_temperature = False
     fa._reasoning_effort_supported = True
+    fa._use_responses_api = False
 
     # Short-circuit the heavy collaborators.
     fa._build_prompt = lambda *a, **k: ("user prompt", [])
@@ -202,6 +204,86 @@ def test_reasoning_headroom_never_lowers_a_larger_user_budget():
     payload = {"max_completion_tokens": 6000}
     fa._apply_reasoning_model_params(payload)
     assert payload["max_completion_tokens"] == 6000   # user's larger cap preserved
+
+
+def test_to_responses_payload_maps_chat_fields():
+    fa = _bare_analyst()
+    fa.model = "gpt-5.5-pro"
+    chat = {
+        "model": "gpt-5.5-pro",
+        "messages": [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "USER"},
+        ],
+        "max_tokens": 450,
+        "temperature": 0.7,
+    }
+    r = fa._to_responses_payload(chat)
+    assert r["input"] == "USER"
+    assert r["instructions"] == "SYS"
+    assert r["max_output_tokens"] == 16000       # floored for pro reasoning headroom
+    assert "messages" not in r and "temperature" not in r
+
+
+def test_responses_to_chat_shape_reads_output_text_and_array():
+    fa = _bare_analyst()
+    # convenience field
+    a = fa._responses_to_chat_shape({"output_text": "gg ez", "usage": {"output_tokens": 12}})
+    assert a["choices"][0]["message"]["content"] == "gg ez"
+    assert a["usage"]["completion_tokens"] == 12
+    # output array fallback
+    b = fa._responses_to_chat_shape(
+        {"output": [{"type": "message", "content": [{"type": "output_text", "text": "boom"}]}]}
+    )
+    assert b["choices"][0]["message"]["content"] == "boom"
+    # incomplete -> finish_reason length
+    c = fa._responses_to_chat_shape(
+        {"output_text": "", "status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}
+    )
+    assert c["choices"][0]["finish_reason"] == "length"
+
+
+def test_analyze_switches_to_responses_api_on_not_a_chat_model_404(monkeypatch):
+    """A '-pro' model 404s on /chat/completions with 'not a chat model'; analyze
+    must switch this session to /responses, reshape the payload, and parse the
+    Responses-API result."""
+    import core.fight_analyst as fa_mod
+
+    fa = _stub_analyst_for_analyze()
+    fa.model = "gpt-5.5-pro"
+
+    sent = []  # (endpoint, payload)
+    responses = iter([
+        _FakeResponse(404, text=("This is not a chat model and thus not supported in "
+                                 "the v1/chat/completions endpoint. Did you mean to use "
+                                 "v1/completions?")),
+        _FakeResponse(200, json_body={"output_text": "gg ez", "status": "completed",
+                                      "usage": {"output_tokens": 20}}),
+    ])
+
+    def fake_post(endpoint, headers=None, json=None, timeout=None):
+        sent.append((endpoint, copy.deepcopy(json)))
+        return next(responses)
+
+    monkeypatch.setattr(fa_mod, "requests", type("R", (), {
+        "post": staticmethod(fake_post),
+        "Timeout": fa_mod.requests.Timeout,
+        "ConnectionError": fa_mod.requests.ConnectionError,
+    }))
+    monkeypatch.setattr(fa_mod.time, "sleep", lambda *_: None)
+
+    result = fa.analyze({"outcome": "win"}, timeout=5)
+
+    assert result == "gg ez"
+    assert len(sent) == 2
+    # first hit /chat/completions with chat-shaped payload...
+    assert sent[0][0].endswith("/chat/completions")
+    assert "messages" in sent[0][1]
+    # ...then switched to /responses with the reshaped payload
+    assert sent[1][0].endswith("/responses")
+    assert sent[1][1].get("input") and "messages" not in sent[1][1]
+    assert sent[1][1].get("max_output_tokens") == 16000
+    assert fa._use_responses_api is True
 
 
 def test_reasoning_effort_rejection_is_learned_and_stripped():
