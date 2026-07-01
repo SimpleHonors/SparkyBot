@@ -83,7 +83,10 @@ auto-applies.
   2. **Headroom:** 1 call reasoning-on at headroom_budget (can the model produce text with room?).
   3. **Off-switch discovery:** iterate off-switch strategies in `hint` order,
      1 call each at user_budget, **stop at first success**.
-  Worst case ~4–5 calls, only when a model is reasoning-troubled.
+  Bounded and stops at the first working off-switch. Worst case = baseline
+  (1) + headroom (1) + all 6 off-switch strategies = 8 calls, only on a
+  pathological reasoning-troubled endpoint where nothing works; the common
+  troubled case resolves in 3–4.
 - `format_report(report) -> str` — plain-language rendering shared by both UIs.
 
 ### 3. `core/fight_analyst.py` (generalize)
