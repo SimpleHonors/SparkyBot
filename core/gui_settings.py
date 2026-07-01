@@ -52,6 +52,8 @@ class SettingsWindow(QWidget):
     # Thread-safe UI signals for test/refresh operations
     _sig_models_result = pyqtSignal(list, str)      # models, source
     _sig_ai_test_done = pyqtSignal(str, bool)        # message, success
+    _sig_ai_test_progress = pyqtSignal(str)          # staged probe status
+    _sig_ai_apply = pyqtSignal(dict)                 # reasoning settings to apply
     _sig_twitch_test_done = pyqtSignal(str, bool)    # message, success
     _sig_tts_test_done = pyqtSignal(str, bool)       # message, success
 
@@ -1120,17 +1122,9 @@ class SettingsWindow(QWidget):
             self.ai_test_status.setText("No models found — type a model name manually")
 
     def _test_ai_connection(self):
-        """Send a test request to verify the AI connection works."""
-        from core.ai_analyst import FightAnalyst
-
-        analyst = FightAnalyst(
-            base_url=self.ai_base_url.text(),
-            api_key=self.ai_api_key.text(),
-            model=self.ai_model.currentText(),
-            system_prompt=self.ai_system_prompt.toPlainText() or None,
-            max_tokens=self.ai_max_tokens.value(),
-            thinking=not self.ai_disable_thinking.isChecked(),
-        )
+        """Probe the AI connection both ways and auto-apply the reasoning fix."""
+        from core.reasoning_probe import run_probe, make_real_factory, format_report
+        from core.reasoning_settings_apply import apply_report_to_config
 
         test_summary = {
             "zone": "Eternal Battlegrounds",
@@ -1170,30 +1164,91 @@ class SettingsWindow(QWidget):
             ],
         }
 
-        self.ai_test_status.setText("Testing...")
+        base_url = self.ai_base_url.text()
+        api_key = self.ai_api_key.text()
+        model = self.ai_model.currentText()
+        system_prompt = self.ai_system_prompt.toPlainText() or None
+        user_budget = self.ai_max_tokens.value()
+        timeout = self.ai_timeout.value()
+
+        self.ai_test_status.setText("Testing…")
         self.ai_test_btn.setEnabled(False)
+        self._last_report = None
 
         import threading
+
         def _run_test():
             try:
-                # Use the currently-configured AI timeout spinbox value, not a
-                # hardcoded value — a short hardcoded timeout starves
-                # slow/reasoning models (e.g. OpenAI "-pro" models) on the test
-                # call even though a real fight would have had enough time.
-                result = analyst.analyze(test_summary, timeout=self.ai_timeout.value())
-                if result:
-                    self._sig_ai_test_done.emit(f"Success! Response:\n{result[:200]}", True)
-                else:
-                    self._sig_ai_test_done.emit("Failed — check URL, key, and model name", False)
-            except Exception as exc:
+                factory = make_real_factory(base_url, api_key, model, system_prompt)
+                report = run_probe(
+                    factory, test_summary, user_budget=user_budget,
+                    base_url=base_url, model=model, timeout=timeout,
+                    progress=lambda m: self._sig_ai_test_progress.emit(m),
+                )
+                self._last_report = report
+                if report.auto_applicable and not report.failure:
+                    applied = apply_report_to_config(report)
+                    self._sig_ai_apply.emit(applied)
+                self._sig_ai_test_done.emit(format_report(report), not report.failure)
+            except Exception as exc:  # noqa: BLE001
                 self._sig_ai_test_done.emit(f"Test failed: {exc}", False)
 
         threading.Thread(target=_run_test, daemon=True).start()
+
+    def _apply_reasoning_settings(self, applied: dict):
+        """Slot (main thread): push probe-derived reasoning settings into the widgets."""
+        self.ai_disable_thinking.setChecked(applied["ai_disable_thinking"])
+        self.ai_max_tokens.setValue(applied["ai_max_tokens"])
+        self._reasoning_strategy = applied["ai_reasoning_strategy"]  # saved on Save
 
     def _on_ai_test_done(self, message: str, success: bool):
         """Slot: display AI test result (main thread)."""
         self.ai_test_status.setText(message)
         self.ai_test_btn.setEnabled(True)
+
+        report = getattr(self, "_last_report", None)
+        if report is not None and getattr(report, "needs_choice", False):
+            self._show_reasoning_choice(report)
+
+    def _show_reasoning_choice(self, report):
+        """Offer the user OFF vs ON reasoning alternatives with an Apply button."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QRadioButton, QButtonGroup, QPushButton, QLabel
+        )
+        from core.reasoning_settings_apply import apply_report_to_config
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Choose reasoning mode")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(
+            "The model supports reasoning both ways. Pick which to apply:"
+        ))
+
+        group = QButtonGroup(dialog)
+        buttons = {}  # alt_key -> QRadioButton
+        for idx, alt in enumerate(report.alternatives):
+            key, _sid, _dis, tokens, blurb = alt
+            label = blurb or f"{key} ({tokens} max tokens)"
+            rb = QRadioButton(label)
+            if idx == 0:
+                rb.setChecked(True)
+            group.addButton(rb)
+            buttons[key] = rb
+            layout.addWidget(rb)
+
+        apply_btn = QPushButton("Apply")
+        layout.addWidget(apply_btn)
+
+        def _do_apply():
+            selected = next((k for k, rb in buttons.items() if rb.isChecked()), None)
+            if selected is not None:
+                self._apply_reasoning_settings(
+                    apply_report_to_config(report, alt_key=selected)
+                )
+            dialog.accept()
+
+        apply_btn.clicked.connect(_do_apply)
+        dialog.exec()
 
     def _edit_vocabulary(self, initial_tab: str = "shock"):
         """Open a structured dialog for editing vocabulary terms.
@@ -2248,6 +2303,8 @@ class SettingsWindow(QWidget):
         # Test/refresh operation signals
         self._sig_models_result.connect(self._on_models_result)
         self._sig_ai_test_done.connect(self._on_ai_test_done)
+        self._sig_ai_test_progress.connect(lambda m: self.ai_test_status.setText(m))
+        self._sig_ai_apply.connect(self._apply_reasoning_settings)
         self._sig_twitch_test_done.connect(self._on_twitch_test_done)
         self._sig_tts_test_done.connect(self._on_tts_test_done)
 
@@ -2352,6 +2409,7 @@ class SettingsWindow(QWidget):
         self.ai_max_tokens.setValue(self.config.ai_max_tokens)
         self.ai_timeout.setValue(self.config.ai_timeout)
         self.ai_disable_thinking.setChecked(self.config.ai_disable_thinking)
+        self._reasoning_strategy = self.config.ai_reasoning_strategy or ""
         if self.config.ai_system_prompt:
             self.ai_prompt_mode.setCurrentText("Custom")
             self.ai_system_prompt.setPlainText(self.config.ai_system_prompt)
@@ -2495,6 +2553,7 @@ class SettingsWindow(QWidget):
         cfg('AI', 'aiMaxTokens', str(self.ai_max_tokens.value()))
         cfg('AI', 'aiTimeout', str(self.ai_timeout.value()))
         cfg('AI', 'aiDisableThinking', str(self.ai_disable_thinking.isChecked()).lower())
+        cfg('AI', 'aiReasoningStrategy', getattr(self, '_reasoning_strategy', ''))
         if self.ai_prompt_mode.currentText().startswith("Default"):
             cfg('AI', 'aiSystemPrompt', '')
             from core.ai_analyst import DEFAULT_PROMPT_VERSION
