@@ -114,7 +114,29 @@ auto-applies.
   max-tokens widgets. Add minimal ones (or write config directly) so the probe
   behaves identically on both surfaces.
 
-### 6. Tests
+### 6. `core/silent_failure_guard.py` (runtime recovery fix — rolled in)
+The current guard's Tier-2 recovery **shrinks** `max_tokens` (450 → 400) and
+appends a short-format "HOT TAKE" prefix on retry. For a reasoning model that
+ate its budget, a *smaller* budget guarantees the retry also comes back empty —
+this is exactly the production loop (`450 → 400 → 400`, all `content='\n'`).
+Shrinking is only ever right for a non-reasoning length-runaway.
+
+New recovery policy, in order:
+1. **Engage the off-switch:** if a reasoning strategy is configured (from the
+   probe) and thinking was not already disabled on this call, retry with
+   `apply_strategy(disable=True)` at the **same or larger** budget.
+2. **Give headroom:** otherwise retry at a budget floor (≥ 4000), never below
+   the original. The prompt nudge to "output directly, skip preamble" is kept
+   (it's a soft off-switch), but the budget is **raised, never shrunk**.
+3. Only fall back to the legacy short/shrink behavior for a genuine
+   non-reasoning runaway (content present but over-length) — or drop it if no
+   such case remains after (1)/(2).
+
+Config knob: `fallback_token_limit` is replaced/renamed to a `headroom_floor`
+(default 4000). `SilentFailureGuard` gains an optional `strategy_id` so it can
+re-apply the off-switch on retry.
+
+### 7. Tests
 - `tests/test_reasoning_strategies.py` — each strategy's `apply()` payload
   mutation (disable + on); `ordered_for` priority given a host/model.
 - `tests/test_reasoning_probe.py` — `diagnose` matrix: baseline-ok /
@@ -124,6 +146,10 @@ auto-applies.
   call counts (healthy = 1 call; troubled stops at first off-switch hit).
 - `tests/test_fight_analyst_strategy.py` — explicit configured strategy beats
   host-detection in the request path; `last_*` diagnostics populated.
+- `tests/test_silent_failure_guard.py` (extend) — silent failure on a reasoning
+  model retries with **equal-or-larger** budget (never < original) and engages
+  the configured off-switch; asserts the `450 → 400` shrink regression cannot
+  recur.
 
 ## Data flow
 
@@ -153,10 +179,11 @@ Real fight → FightAnalyst reads ai_reasoning_strategy → apply_strategy()
   connection is enough (changing model/provider re-probes).
 - **No** probing on launch — only on Test Connection.
 - Token-burn read is best-effort; the report works without it.
-- Do **not** rip out `SilentFailureGuard` here; the probe's headroom budget just
-  avoids tripping it. (Its shrink-on-retry misbehavior for reasoning models is a
-  separate follow-up.)
+- `SilentFailureGuard` is kept as a runtime safety net but its shrink-on-retry
+  misbehavior is fixed here (see §6): retries raise the budget / engage the
+  off-switch, never shrink.
 
 ## Non-goals
 - Auto-switching providers/models.
-- Changing the runtime retry pipeline beyond honoring the configured strategy.
+- Rewriting the runtime retry pipeline beyond the guard fix in §6 (honor the
+  configured strategy; stop shrinking the budget).
