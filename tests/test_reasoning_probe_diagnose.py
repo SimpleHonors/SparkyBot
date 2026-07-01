@@ -48,3 +48,12 @@ def test_nothing_works_is_failure():
     r = diagnose(base, _oc("headroom_only", False), [_oc("think_enable", False, disable=True)], 450)
     assert r.failure is True
     assert "401" in r.detail
+
+
+def test_failure_surfaces_offswitch_error():
+    base = ProbeOutcome("none", False, 450, ok=False, empty=True)
+    headroom = ProbeOutcome("headroom_only", False, 4000, ok=False, empty=True)
+    offs = [ProbeOutcome("think_enable", True, 450, ok=False, errored=True, error_msg="429 rate limited")]
+    r = diagnose(base, headroom, offs, 450)
+    assert r.failure is True
+    assert "429" in r.detail

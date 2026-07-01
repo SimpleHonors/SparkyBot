@@ -90,7 +90,7 @@ def diagnose(baseline: ProbeOutcome, headroom: Optional[ProbeOutcome],
             auto_applicable=True,
         )
 
-    best = baseline if baseline.error_msg else (headroom or baseline)
+    best = next((o for o in [baseline, headroom, *offswitch_outcomes] if o and o.error_msg), baseline)
     return ProbeReport(
         recommended_strategy_id="none",
         recommended_disable=False,
