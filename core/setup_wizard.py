@@ -6,7 +6,8 @@ import importlib.metadata
 from PyQt6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox,
-    QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout
+    QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout,
+    QSpinBox
 )
 from PyQt6.QtCore import Qt, pyqtSlot, Q_ARG, QMetaObject, QUrl
 from PyQt6.QtGui import QColor, QPalette, QIcon
@@ -102,6 +103,14 @@ class SetupWizard(QWizard):
             cfg('AI', 'aiBaseUrl', self.ai_page.ai_base_url.text().strip())
             cfg('AI', 'aiApiKey', self.ai_page.ai_api_key.text().strip())
             cfg('AI', 'aiModel', self.ai_page.ai_model.currentText().strip())
+            # Reasoning-probe parity: persist max-tokens + reasoning controls so
+            # the probe's auto-applied fix survives to disk (config.save() writes
+            # from the ConfigParser and reloads, so in-memory attrs alone are
+            # dropped — these must go through cfg(), same as the settings dialog).
+            if hasattr(self.ai_page, 'ai_max_tokens'):
+                cfg('AI', 'aiMaxTokens', str(self.ai_page.ai_max_tokens.value()))
+                cfg('AI', 'aiDisableThinking', str(self.ai_page.ai_disable_thinking.isChecked()).lower())
+                cfg('AI', 'aiReasoningStrategy', getattr(self.ai_page, '_reasoning_strategy', ''))
 
         # TTS
         if hasattr(self.tts_page, 'enable_tts'):
@@ -944,6 +953,19 @@ class AIAnalysisPage(QWizardPage):
         _model_row.addWidget(self.ai_refresh_btn)
         layout.addLayout(_model_row)
 
+        # Max tokens + reasoning controls (parity with the settings dialog).
+        # The reasoning probe run by "Test Connection" auto-applies into these.
+        self.ai_max_tokens = QSpinBox()
+        self.ai_max_tokens.setRange(100, 8000)
+        self.ai_max_tokens.setValue(self.config.ai_max_tokens or 450)
+        layout.addLayout(_make_row("Max Tokens:", self.ai_max_tokens))
+
+        self.ai_disable_thinking = QCheckBox("Disable Thinking / Reasoning Mode")
+        layout.addLayout(_make_row("", self.ai_disable_thinking))
+
+        # Probe-derived reasoning strategy (persisted in validatePage).
+        self._reasoning_strategy = self.config.ai_reasoning_strategy or ""
+
         layout.addSpacing(12)
 
         # Model fetch status (compact hint)
@@ -1103,6 +1125,14 @@ class AIAnalysisPage(QWizardPage):
         self.model_status.setText(f"Loaded {len(models)} models")
 
     def _test_ai_connection(self):
+        """Probe the AI connection both ways and auto-apply the reasoning fix.
+
+        Parity with the settings dialog (core/gui_settings.py). The worker
+        thread NEVER touches a widget — it marshals every UI update back to the
+        main thread via QMetaObject.invokeMethod (the wizard's threading idiom),
+        and auto-apply results are stashed on self._pending_apply then applied
+        by the no-arg _apply_pending_reasoning slot.
+        """
         base_url = self.ai_base_url.text().strip()
         api_key = self.ai_api_key.text().strip()
         model = self.ai_model.currentText().strip() if isinstance(self.ai_model, QComboBox) else self.ai_model.text().strip()
@@ -1112,79 +1142,173 @@ class AIAnalysisPage(QWizardPage):
             self.ai_test_status.setText("Enter a Base URL and Model first.")
             return
 
+        test_summary = {
+            "zone": "Eternal Battlegrounds",
+            "duration": "05m 30s",
+            "duration_seconds": 330,
+            "outcome": "Decisive Win",
+            "friendly_count": 35,
+            "enemy_count": 50,
+            "squad_count": 35,
+            "ally_count": 10,
+            "enemy_deaths": 27,
+            "squad_damage": 5000000,
+            "squad_dps": 15000,
+            "squad_downs": 40,
+            "squad_kills": 27,
+            "squad_deaths": 6,
+            "squad_healing": 8000000,
+            "squad_barrier": 0,
+            "enemy_total_damage": 6000000,
+            "squad_strips": 45,
+            "top_strips": [{"name": "TestPlayer", "profession": "Guardian", "boon_strips": 15}],
+            "squad_cleanses": 30,
+            "top_damage": [{"name": "TestPlayer", "profession": "Guardian", "damage": 800000}],
+            "enemy_breakdown": {
+                "Guardian": {"count": 8, "damage_per_player": 75000},
+                "Necromancer": {"count": 6, "damage_per_player": 82000},
+                "Elementalist": {"count": 5, "damage_per_player": 90000},
+            },
+            "top_enemy_skills": [
+                {"name": "Meteor Shower", "damage": 120000},
+                {"name": "Whirlwind", "damage": 95000},
+            ],
+            "enemy_teams": {"Red": 30, "Blue": 20},
+            "squad_tag_distance": [
+                {"name": "TestPlayer", "distance": 800.0},
+                {"name": "TestPlayer2", "distance": 1200.0},
+            ],
+        }
+
+        # The wizard AI page has no system-prompt field; use the analyst
+        # default. Timeout comes from config (no per-page timeout widget here).
+        system_prompt = None
+        user_budget = self.ai_max_tokens.value()
+        timeout = self.config.ai_timeout
+
         self.ai_test_btn.setEnabled(False)
         self.ai_test_status.setStyleSheet("color: #ffffff;")
-        self.ai_test_status.setText("Testing...")
+        self.ai_test_status.setText("Testing…")
+        self._last_report = None
+        self._pending_apply = None
 
         import threading
-        def _run():
-            try:
-                from core.ai_analyst import FightAnalyst
-                analyst = FightAnalyst(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=model,
-                    max_tokens=450,
-                )
-                test_summary = {
-                    "zone": "Eternal Battlegrounds",
-                    "duration": "05m 30s",
-                    "duration_seconds": 330,
-                    "outcome": "Decisive Win",
-                    "friendly_count": 35,
-                    "enemy_count": 50,
-                    "squad_count": 35,
-                    "ally_count": 10,
-                    "enemy_deaths": 27,
-                    "squad_damage": 5000000,
-                    "squad_dps": 15000,
-                    "squad_downs": 40,
-                    "squad_kills": 27,
-                    "squad_deaths": 6,
-                    "squad_healing": 8000000,
-                    "squad_barrier": 0,
-                    "enemy_total_damage": 6000000,
-                    "squad_strips": 45,
-                    "top_strips": [{"name": "TestPlayer", "profession": "Guardian", "boon_strips": 15}],
-                    "squad_cleanses": 30,
-                    "top_damage": [{"name": "TestPlayer", "profession": "Guardian", "damage": 800000}],
-                    "enemy_breakdown": {
-                        "Guardian": {"count": 8, "damage_per_player": 75000},
-                        "Necromancer": {"count": 6, "damage_per_player": 82000},
-                    },
-                    "top_enemy_skills": [
-                        {"name": "Meteor Shower", "damage": 120000},
-                    ],
-                    "enemy_teams": {"Red": 30, "Blue": 20},
-                }
-                # Use the configured AI timeout, not a hardcoded value — a
-                # short hardcoded timeout starves slow/reasoning models (e.g.
-                # OpenAI "-pro" models) on the test call even though a real
-                # fight would have had enough time to complete.
-                result = analyst.analyze(test_summary, timeout=self.config.ai_timeout)
 
-                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-                if result:
-                    preview = result[:150].replace('\n', ' ')
-                    QMetaObject.invokeMethod(self, "_set_ai_test_result", Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, f"Success! Response: {preview}..."), Q_ARG(str, "#4CAF50"))
-                else:
-                    QMetaObject.invokeMethod(self, "_set_ai_test_result", Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, "No response. Check URL, API key, and model name."), Q_ARG(str, "#ff4444"))
-            except Exception as e:
-                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-                QMetaObject.invokeMethod(self, "_set_ai_test_result", Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, f"Error: {e}"), Q_ARG(str, "#ff4444"))
+        def _run():
+            from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+            from core.reasoning_probe import run_probe, make_real_factory, format_report
+            from core.reasoning_settings_apply import apply_report_to_config
+            try:
+                factory = make_real_factory(base_url, api_key, model, system_prompt)
+                report = run_probe(
+                    factory, test_summary, user_budget=user_budget,
+                    base_url=base_url, model=model, timeout=timeout,
+                    progress=lambda m: QMetaObject.invokeMethod(
+                        self, "_set_ai_test_result",
+                        Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, m), Q_ARG(str, "#ffffff"),
+                    ),
+                )
+                self._last_report = report
+                if report.auto_applicable and not report.failure:
+                    self._pending_apply = apply_report_to_config(report)
+                    QMetaObject.invokeMethod(
+                        self, "_apply_pending_reasoning",
+                        Qt.ConnectionType.QueuedConnection,
+                    )
+                QMetaObject.invokeMethod(
+                    self, "_on_ai_test_done",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, format_report(report)),
+                    Q_ARG(bool, not report.failure),
+                )
+            except Exception as exc:  # noqa: BLE001
+                QMetaObject.invokeMethod(
+                    self, "_on_ai_test_done",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, f"Test failed: {exc}"), Q_ARG(bool, False),
+                )
 
         threading.Thread(target=_run, daemon=True).start()
 
     @pyqtSlot(str, str)
     def _set_ai_test_result(self, text, color):
+        """Slot (main thread): progress updates from the probe worker."""
         self.ai_test_status.setStyleSheet(f"color: {color};")
         self.ai_test_status.setText(text)
+
+    @pyqtSlot()
+    def _apply_pending_reasoning(self):
+        """Slot (main thread): push probe-derived reasoning settings into widgets.
+
+        Reads the dict stashed on self._pending_apply by the worker (passing a
+        dict through Q_ARG is awkward in PyQt, so we stash + invoke no-arg).
+        """
+        applied = getattr(self, "_pending_apply", None)
+        if not applied:
+            return
+        self.ai_disable_thinking.setChecked(applied["ai_disable_thinking"])
+        self.ai_max_tokens.setValue(applied["ai_max_tokens"])
+        self._reasoning_strategy = applied["ai_reasoning_strategy"]  # saved on finish
+
+    @pyqtSlot(str, bool)
+    def _on_ai_test_done(self, message, success):
+        """Slot (main thread): final probe report + re-enable + choice prompt."""
+        self.ai_test_status.setStyleSheet("color: #4CAF50;" if success else "color: #ff4444;")
+        self.ai_test_status.setText(message)
         self.ai_test_btn.setEnabled(True)
 
+        report = getattr(self, "_last_report", None)
+        if report is not None and getattr(report, "needs_choice", False):
+            self._show_reasoning_choice(report)
+
+    def _show_reasoning_choice(self, report):
+        """Offer the user OFF vs ON reasoning alternatives with an Apply button.
+
+        Runs on the main thread (invoked from _on_ai_test_done), so applying the
+        chosen alternative directly through _apply_pending_reasoning is safe.
+        """
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QRadioButton, QButtonGroup, QPushButton, QLabel
+        )
+        from core.reasoning_settings_apply import apply_report_to_config
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Choose reasoning mode")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(
+            "The model supports reasoning both ways. Pick which to apply:"
+        ))
+
+        group = QButtonGroup(dialog)
+        buttons = {}  # alt_key -> QRadioButton
+        for idx, alt in enumerate(report.alternatives):
+            key, _sid, _dis, tokens, blurb = alt
+            label = blurb or f"{key} ({tokens} max tokens)"
+            rb = QRadioButton(label)
+            if idx == 0:
+                rb.setChecked(True)
+            group.addButton(rb)
+            buttons[key] = rb
+            layout.addWidget(rb)
+
+        apply_btn = QPushButton("Apply")
+        layout.addWidget(apply_btn)
+
+        def _do_apply():
+            selected = next((k for k, rb in buttons.items() if rb.isChecked()), None)
+            if selected is not None:
+                self._pending_apply = apply_report_to_config(report, alt_key=selected)
+                self._apply_pending_reasoning()
+            dialog.accept()
+
+        apply_btn.clicked.connect(_do_apply)
+        dialog.exec()
+
     def validatePage(self):
+        self.config.ai_max_tokens = self.ai_max_tokens.value()
+        self.config.ai_disable_thinking = self.ai_disable_thinking.isChecked()
+        self.config.ai_reasoning_strategy = getattr(self, "_reasoning_strategy", "")
         return True
 
 
