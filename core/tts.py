@@ -53,6 +53,8 @@ def generate_tts_bytes(text: str, config) -> Optional[bytes]:
 
     if provider == "elevenlabs":
         return _generate_elevenlabs(text, config)
+    if provider == "local":
+        return _generate_local(text, config)
     return _generate_edge(text, config)
 
 
@@ -145,6 +147,53 @@ def _generate_elevenlabs(text: str, config) -> Optional[bytes]:
             return None
         except Exception as e:
             logger.error(f"ElevenLabs generation failed: {e}")
+            return None
+
+    return None
+
+
+def _generate_local(text: str, config) -> Optional[bytes]:
+    """Generate audio via a self-hosted OpenAI-compatible speech server.
+
+    Works with any endpoint implementing POST {url}/v1/audio/speech
+    (e.g. a self-hosted Chatterbox or Kokoro server). The configured voice
+    name is resolved server-side; voice-cloning servers clone the selected
+    reference sample at generation time. Free, private, no API key.
+    """
+    base_url = getattr(config, "tts_local_url", "").strip().rstrip("/")
+    if not base_url:
+        logger.error("Local TTS server URL not configured")
+        return None
+    voice = getattr(config, "tts_local_voice", "").strip()
+    if not voice:
+        logger.error("Local TTS voice not configured")
+        return None
+
+    logger.info(f"Generating local TTS audio (url={base_url}, voice={voice})")
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = requests.post(
+                f"{base_url}/v1/audio/speech",
+                json={"input": text, "voice": voice, "response_format": "mp3"},
+                timeout=120,
+            )
+            if response.status_code in (500, 503) and attempt < MAX_RETRIES:
+                logger.warning(f"Local TTS returned {response.status_code}, retrying in 2s...")
+                time.sleep(2)
+                continue
+            response.raise_for_status()
+            return response.content
+
+        except requests.Timeout:
+            if attempt < MAX_RETRIES:
+                logger.warning("Local TTS timed out, retrying in 2s...")
+                time.sleep(2)
+                continue
+            logger.error("Local TTS request timed out after all retries")
+            return None
+        except Exception as e:
+            logger.error(f"Local TTS generation failed: {e}")
             return None
 
     return None

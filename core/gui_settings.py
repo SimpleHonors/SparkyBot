@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
     QGroupBox, QFormLayout, QScrollArea, QSizePolicy,
     QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog,
-    QTextEdit, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem
+    QTextEdit, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
+    QInputDialog
 )
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
@@ -803,10 +804,12 @@ class SettingsWindow(QWidget):
         provider_form = QFormLayout(provider_group)
 
         self.tts_provider = QComboBox()
-        self.tts_provider.addItems(["edge", "elevenlabs"])
+        self.tts_provider.addItems(["edge", "elevenlabs", "local"])
         self.tts_provider.setToolTip(
             "edge: Microsoft neural voices via edge-tts (free, no API key, online)\n"
-            "elevenlabs: ElevenLabs API (highest quality, API key required)"
+            "elevenlabs: ElevenLabs API (highest quality, API key required)\n"
+            "local: self-hosted OpenAI-compatible speech server\n"
+            "       (voice cloning, free, private — e.g. Chatterbox)"
         )
         self.tts_provider.currentTextChanged.connect(self._on_tts_provider_changed)
         provider_form.addRow("Provider:", self.tts_provider)
@@ -914,6 +917,39 @@ class SettingsWindow(QWidget):
         )
         provider_form.addRow(self.tts_el_speed_label, self.tts_el_speed)
 
+        # Local server fields (OpenAI-compatible /v1/audio/speech endpoint)
+        self.tts_local_url_label = QLabel("Server URL:")
+        self.tts_local_url = QLineEdit()
+        self.tts_local_url.setPlaceholderText("http://127.0.0.1:5820")
+        self.tts_local_url.setToolTip(
+            "Base URL of a self-hosted OpenAI-compatible speech server\n"
+            "(POST {url}/v1/audio/speech). Voices and uploaded samples are\n"
+            "listed from GET {url}/v1/voices when the server supports it."
+        )
+        provider_form.addRow(self.tts_local_url_label, self.tts_local_url)
+
+        self.tts_local_voice = QComboBox()
+        self.tts_local_voice.setEditable(True)
+        self.tts_local_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.tts_local_voice.setPlaceholderText("pick or type a voice name")
+        self.tts_local_refresh_btn = QPushButton("Refresh")
+        self.tts_local_refresh_btn.setFixedWidth(70)
+        self.tts_local_refresh_btn.clicked.connect(self._refresh_local_voices)
+        self.tts_local_upload_btn = QPushButton("Upload Sample...")
+        self.tts_local_upload_btn.setFixedWidth(110)
+        self.tts_local_upload_btn.setToolTip(
+            "Upload a short (>= 3 s) clean speech recording to the server.\n"
+            "It becomes a pickable voice that is cloned at generation time.\n"
+            "Only upload voices you own or have consent to clone."
+        )
+        self.tts_local_upload_btn.clicked.connect(self._upload_local_sample)
+        local_row = QHBoxLayout()
+        local_row.addWidget(self.tts_local_voice, 1)
+        local_row.addWidget(self.tts_local_refresh_btn)
+        local_row.addWidget(self.tts_local_upload_btn)
+        self.tts_local_voice_label = QLabel("Voice:")
+        provider_form.addRow(self.tts_local_voice_label, local_row)
+
         layout.addWidget(provider_group)
 
         # -- Test --
@@ -937,6 +973,13 @@ class SettingsWindow(QWidget):
     def _on_tts_provider_changed(self, provider: str):
         is_edge = provider.lower() == "edge"
         is_el = provider.lower() == "elevenlabs"
+        is_local = provider.lower() == "local"
+        self.tts_local_url_label.setVisible(is_local)
+        self.tts_local_url.setVisible(is_local)
+        self.tts_local_voice_label.setVisible(is_local)
+        self.tts_local_voice.setVisible(is_local)
+        self.tts_local_refresh_btn.setVisible(is_local)
+        self.tts_local_upload_btn.setVisible(is_local)
         self.tts_edge_voice_label.setVisible(is_edge)
         self.tts_edge_voice.setVisible(is_edge)
         self.tts_refresh_voices_btn.setVisible(is_edge)
@@ -1001,6 +1044,102 @@ class SettingsWindow(QWidget):
 
         threading.Thread(target=_fetch, daemon=True).start()
 
+    def _refresh_local_voices(self):
+        """Fetch voice/sample names from the local server's /v1/voices."""
+        base_url = self.tts_local_url.text().strip().rstrip("/")
+        if not base_url:
+            self.tts_test_status.setText("Set the local server URL first.")
+            return
+        self.tts_local_refresh_btn.setEnabled(False)
+        self.tts_test_status.setText("Fetching voices...")
+        import threading
+
+        def _fetch():
+            try:
+                import requests
+                response = requests.get(f"{base_url}/v1/voices", timeout=10)
+                response.raise_for_status()
+                names = [v["voice"] for v in response.json().get("voices", [])]
+                current = self.tts_local_voice.currentText().strip()
+                self.tts_local_voice.blockSignals(True)
+                self.tts_local_voice.clear()
+                self.tts_local_voice.addItems(names)
+                if current and current in names:
+                    self.tts_local_voice.setCurrentText(current)
+                elif current:
+                    self.tts_local_voice.setEditText(current)
+                self.tts_local_voice.blockSignals(False)
+                self.tts_test_status.setText(f"✓ {len(names)} voices/samples loaded.")
+            except Exception as e:
+                self.tts_test_status.setText(f"Failed to fetch voices: {e}")
+            finally:
+                self.tts_local_refresh_btn.setEnabled(True)
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _upload_local_sample(self):
+        """Upload a reference recording; it becomes a cloneable voice."""
+        base_url = self.tts_local_url.text().strip().rstrip("/")
+        if not base_url:
+            self.tts_test_status.setText("Set the local server URL first.")
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a voice sample (>= 3 s of clean speech)",
+            "", "Audio files (*.wav *.mp3 *.m4a *.flac);;All files (*)",
+        )
+        if not file_path:
+            return
+        import os as _os
+        import re as _re
+        raw_default = _os.path.splitext(_os.path.basename(file_path))[0]
+        # Pre-clean to a valid voice id (letters/digits/._-); the server does
+        # the same, but showing the cleaned name up front avoids surprises.
+        default_name = _re.sub(r"[^A-Za-z0-9._-]+", "-", raw_default).strip("-._") or "sample"
+        name, ok = QInputDialog.getText(
+            self, "Sample name",
+            "Name for this voice sample (letters, digits, . _ - only):",
+            text=default_name,
+        )
+        if not ok or not name.strip():
+            return
+        name = _re.sub(r"[^A-Za-z0-9._-]+", "-", name.strip()).strip("-._")
+        if not name:
+            self.tts_test_status.setText("Sample name needs at least one letter or digit.")
+            return
+        self.tts_local_upload_btn.setEnabled(False)
+        self.tts_test_status.setText("Uploading sample...")
+        import threading
+
+        def _upload():
+            try:
+                import requests
+                with open(file_path, "rb") as f:
+                    response = requests.post(
+                        f"{base_url}/v1/voices/samples",
+                        files={"file": f}, data={"name": name}, timeout=60,
+                    )
+                response.raise_for_status()
+                voice = response.json().get("voice", f"sample:{name}")
+                self.tts_local_voice.setEditText(voice)
+                self.tts_test_status.setText(
+                    f"✓ Sample uploaded as {voice} — it will be cloned at generation time."
+                )
+            except Exception as e:
+                detail = ""
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    try:
+                        detail = resp.json().get("detail", "")
+                    except Exception:
+                        detail = (resp.text or "")[:200]
+                self.tts_test_status.setText(
+                    f"Upload failed: {detail or e}"
+                )
+            finally:
+                self.tts_local_upload_btn.setEnabled(True)
+
+        threading.Thread(target=_upload, daemon=True).start()
+
     def _test_tts(self):
         self.tts_test_btn.setEnabled(False)
         self.tts_test_status.setText("Generating audio...")
@@ -1016,6 +1155,8 @@ class SettingsWindow(QWidget):
         cfg_el_style = self.tts_el_style.value() / 100.0
         cfg_el_speaker_boost = self.tts_el_speaker_boost.isChecked()
         cfg_el_speed = self.tts_el_speed.value()
+        cfg_local_url = self.tts_local_url.text().strip()
+        cfg_local_voice = self.tts_local_voice.currentText().strip()
         cfg_volume = self.tts_volume.value()
         tts_client = getattr(self, '_tts_client', None)
 
@@ -1035,6 +1176,8 @@ class SettingsWindow(QWidget):
                     tts_elevenlabs_style = cfg_el_style
                     tts_elevenlabs_speaker_boost = cfg_el_speaker_boost
                     tts_elevenlabs_speed = cfg_el_speed
+                    tts_local_url = cfg_local_url
+                    tts_local_voice = cfg_local_voice
 
                 audio_bytes = generate_tts_bytes(
                     "SparkyBot TTS is working. Let's get those bags.", _Cfg()
@@ -2486,6 +2629,8 @@ class SettingsWindow(QWidget):
         self.tts_el_style.setValue(int(self.config.tts_elevenlabs_style * 100))
         self.tts_el_speaker_boost.setChecked(self.config.tts_elevenlabs_speaker_boost)
         self.tts_el_speed.setValue(self.config.tts_elevenlabs_speed)
+        self.tts_local_url.setText(self.config.tts_local_url)
+        self.tts_local_voice.setEditText(self.config.tts_local_voice)
         self._on_tts_provider_changed(self.config.tts_provider)
 
     def _on_save_clicked(self):
@@ -2585,6 +2730,8 @@ class SettingsWindow(QWidget):
         cfg('TTS', 'ttsElevenLabsStyle', str(self.tts_el_style.value() / 100.0))
         cfg('TTS', 'ttsElevenLabsSpeakerBoost', str(self.tts_el_speaker_boost.isChecked()).lower())
         cfg('TTS', 'ttsElevenLabsSpeed', str(self.tts_el_speed.value()))
+        cfg('TTS', 'ttsLocalUrl', self.tts_local_url.text().strip())
+        cfg('TTS', 'ttsLocalVoice', self.tts_local_voice.currentText().strip())
 
         # Write to file and reload attributes
         if self.config.save():

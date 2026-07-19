@@ -90,7 +90,7 @@ Everything lives in the GUI (right-click the system tray icon → Settings); the
 
 **AI Settings:** pick a **Provider** preset or set a custom **base URL**, drop in your **API Key** (blank for local models), choose a **Model**, and tweak the **System Prompt** in the full editor (with Reset to Default). Commentary posts as a separate embed *after* the fight report, so it **never delays your stats** — it retries on failure, and the silent-failure guard catches empty responses.
 
-**TTS (optional):** reads commentary aloud and/or attaches audio to Discord. Choose `edge` (free Microsoft neural voices) or `elevenlabs` (API key, with voice/stability/style controls).
+**TTS (optional):** reads commentary aloud and/or attaches audio to Discord. Choose `edge` (free Microsoft neural voices), `elevenlabs` (API key, with voice/stability/style controls), or `local` (a self-hosted OpenAI-compatible speech server — point it at your own voice-cloning endpoint such as Chatterbox, pick a voice from the server, or upload a short reference sample that gets cloned at generation time; free and fully private).
 
 ---
 
