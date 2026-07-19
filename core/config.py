@@ -96,6 +96,8 @@ class Config:
             'ttsElevenLabsStyle': '0.15',
             'ttsElevenLabsSpeakerBoost': 'true',
             'ttsElevenLabsSpeed': '1.0',
+            'ttsLocalUrl': 'http://127.0.0.1:5820',
+            'ttsLocalVoice': '',
         }
     }
 
@@ -242,6 +244,10 @@ class Config:
         self.tts_elevenlabs_speed = float(
             self._config.get('TTS', 'ttsElevenLabsSpeed', fallback='1.0')
         )
+        self.tts_local_url = self._config.get(
+            'TTS', 'ttsLocalUrl', fallback='http://127.0.0.1:5820'
+        )
+        self.tts_local_voice = self._config.get('TTS', 'ttsLocalVoice', fallback='')
 
     def get_thumbnail_path(self):
         if not self.guild_icon:
