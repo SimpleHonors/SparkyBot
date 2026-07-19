@@ -1090,13 +1090,22 @@ class SettingsWindow(QWidget):
         if not file_path:
             return
         import os as _os
-        default_name = _os.path.splitext(_os.path.basename(file_path))[0]
+        import re as _re
+        raw_default = _os.path.splitext(_os.path.basename(file_path))[0]
+        # Pre-clean to a valid voice id (letters/digits/._-); the server does
+        # the same, but showing the cleaned name up front avoids surprises.
+        default_name = _re.sub(r"[^A-Za-z0-9._-]+", "-", raw_default).strip("-._") or "sample"
         name, ok = QInputDialog.getText(
-            self, "Sample name", "Name for this voice sample:", text=default_name
+            self, "Sample name",
+            "Name for this voice sample (letters, digits, . _ - only):",
+            text=default_name,
         )
         if not ok or not name.strip():
             return
-        name = name.strip()
+        name = _re.sub(r"[^A-Za-z0-9._-]+", "-", name.strip()).strip("-._")
+        if not name:
+            self.tts_test_status.setText("Sample name needs at least one letter or digit.")
+            return
         self.tts_local_upload_btn.setEnabled(False)
         self.tts_test_status.setText("Uploading sample...")
         import threading
@@ -1116,7 +1125,16 @@ class SettingsWindow(QWidget):
                     f"✓ Sample uploaded as {voice} — it will be cloned at generation time."
                 )
             except Exception as e:
-                self.tts_test_status.setText(f"Upload failed: {e}")
+                detail = ""
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    try:
+                        detail = resp.json().get("detail", "")
+                    except Exception:
+                        detail = (resp.text or "")[:200]
+                self.tts_test_status.setText(
+                    f"Upload failed: {detail or e}"
+                )
             finally:
                 self.tts_local_upload_btn.setEnabled(True)
 
