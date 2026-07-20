@@ -48,7 +48,7 @@ WORD_CAP = 100
 
 # v1.7.x data-leak scrub: render raw FIGHT-BUCKET tokens as natural language and
 # drop data-key words (median/ratio) echoed from NARRATIVE FACTS. Deterministic,
-# model-agnostic. See tests/test_post_processor.py.
+# model-agnostic so every provider uses the same cleanup behavior.
 _BUCKET_TOKEN_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 _DATA_KEY_RE = re.compile(r"\b(?:median|ratio)\b", re.IGNORECASE)
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,;:!?])")
