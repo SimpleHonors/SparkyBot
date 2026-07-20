@@ -30,6 +30,11 @@ All notable changes to SparkyBot will be documented in this file.
 
 ### Fixed
 
+- Start Run records processing events, so copied or manually replayed logs
+  count even when their filenames contain an older fight date. The event
+  ledger survives application restarts and deduplicates repeated paths.
+- Manual processing reports the real parse/skip/post result instead of
+  marking every non-throwing pipeline return as successful.
 - Hardened report titles, HTML packing, payload validation, collision
   ordering, and atomic output handling.
 - Fixed fresh-install report output failures, incorrect fight counts,

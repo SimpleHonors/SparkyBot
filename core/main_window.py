@@ -47,7 +47,7 @@ from core.raid_session import discover_logs
 # panel's inline bar must behave exactly like the page's.
 from core.raid_report_tab import _STAGE_BASE, _STAGE_SPAN
 from core.run_session import (
-    RESUME_WINDOW_HOURS, STALE_HINT_HOURS, RunSession, fights_in_window,
+    RESUME_WINDOW_HOURS, STALE_HINT_HOURS, RunSession, collect_run_logs,
     format_elapsed,
 )
 from core.version import VERSION
@@ -495,9 +495,13 @@ class MainWindow(QMainWindow):
             self._show_run_idle()
             return
         logs = self._discover_run_logs()
-        in_window = fights_in_window(logs, self._run_session.started_at)
-        newest = (in_window[-1].timestamp if in_window
-                  else self._run_session.started_at)
+        in_window = self._collect_run_logs(logs=logs)
+        candidates = [self._run_session.started_at]
+        if in_window:
+            candidates.append(in_window[-1].timestamp)
+        if self._run_session.last_activity_at:
+            candidates.append(self._run_session.last_activity_at)
+        newest = max(candidates)
         self._show_run_open()
         if self._clock() - newest < timedelta(hours=RESUME_WINDOW_HOURS):
             self.feed_event("run", "Run resumed")
@@ -518,6 +522,23 @@ class MainWindow(QMainWindow):
         except OSError:
             logger.warning("Log discovery failed", exc_info=True)
             return []
+
+    def _collect_run_logs(self, logs=None, started_at=None, ended_at=None,
+                          recorded_paths=None):
+        """Timestamp-window fights plus processing events recorded this run."""
+        session = self._run_session
+        if session is None:
+            return []
+        if logs is None:
+            logs = self._discover_run_logs()
+        if started_at is None:
+            started_at = session.started_at
+        if started_at is None:
+            return []
+        if recorded_paths is None:
+            recorded_paths = session.recorded_logs
+        return collect_run_logs(
+            logs, started_at, ended_at, recorded_paths)
 
     def _on_run_button_clicked(self):
         self._toggle_run()
@@ -543,7 +564,7 @@ class MainWindow(QMainWindow):
         """End Run: exactly ONE confirm dialog, remembered auto-post."""
         session = self._run_session
         logs = self._discover_run_logs()
-        count = len(fights_in_window(logs, session.started_at))
+        count = len(self._collect_run_logs(logs=logs))
         elapsed_text = format_elapsed(session.elapsed())
         confirmed, auto_post = self._exec_end_run_dialog(count, elapsed_text)
         if not confirmed:
@@ -555,8 +576,10 @@ class MainWindow(QMainWindow):
                                'true' if auto_post else 'false')
             self.config.save()
 
+        recorded_paths = session.recorded_logs
         started, ended = session.end()
-        selected = fights_in_window(self._discover_run_logs(), started, ended)
+        selected = collect_run_logs(
+            self._discover_run_logs(), started, ended, recorded_paths)
         if not selected:
             self.feed_event(
                 "run",
@@ -635,7 +658,7 @@ class MainWindow(QMainWindow):
             return
         logs = self._discover_run_logs()
         self._run_fight_count = len(
-            fights_in_window(logs, self._run_session.started_at))
+            self._collect_run_logs(logs=logs))
         self._update_run_panel_clock()
 
     def _update_run_panel_clock(self):
@@ -680,7 +703,7 @@ class MainWindow(QMainWindow):
         ending the next morning never sweeps in newer logs."""
         logs = self._discover_run_logs()
         started = self._run_session.started_at
-        in_window = fights_in_window(logs, started)
+        in_window = self._collect_run_logs(logs=logs, started_at=started)
         self._hide_stale_banner()
         if not in_window:
             self._run_session.discard()
@@ -689,9 +712,14 @@ class MainWindow(QMainWindow):
                 "Run ended — no fights were recorded, nothing was posted.")
             self._show_run_idle()
             return
-        ended_at = in_window[-1].timestamp
+        ended_at = max(
+            in_window[-1].timestamp,
+            self._run_session.last_activity_at or started,
+            started,
+        )
+        recorded_paths = self._run_session.recorded_logs
         started, ended = self._run_session.end(ended_at=ended_at)
-        selected = fights_in_window(logs, started, ended)
+        selected = collect_run_logs(logs, started, ended, recorded_paths)
         name = (f"Raid Report {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
         self._start_run_report(selected, name,
@@ -832,8 +860,12 @@ class MainWindow(QMainWindow):
                 "error", f"{name} processed but the Discord post failed")
         else:
             self.feed_event("error", f"{name} failed to process")
-        # Every processed file may change fights-so-far (skips count too).
+        # A successfully parsed file counts when it was processed during the
+        # open run, even if a copied log keeps an older filename timestamp.
         if self._run_open():
+            if result_name in {
+                    "success", "skipped_threshold", "error_discord"}:
+                self._run_session.record_log(filename)
             self._refresh_run_counter()
 
     def _on_feed_context_menu(self, pos):
@@ -1177,8 +1209,10 @@ class MainWindow(QMainWindow):
         """Quit path 'End run & quit': the 3-way WAS the confirm, so the
         run ends with the remembered auto-post setting, the inline report
         runs to completion, then the app quits."""
+        recorded_paths = self._run_session.recorded_logs
         started, ended = self._run_session.end()
-        selected = fights_in_window(self._discover_run_logs(), started, ended)
+        selected = collect_run_logs(
+            self._discover_run_logs(), started, ended, recorded_paths)
         if not selected:
             self.feed_event(
                 "run",

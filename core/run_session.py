@@ -38,6 +38,38 @@ def fights_in_window(logs, started_at: datetime,
             and (ended_at is None or log.timestamp <= ended_at)]
 
 
+def collect_run_logs(logs, started_at: datetime,
+                     ended_at: datetime | None = None,
+                     recorded_paths=()) -> list:
+    """Collect timestamp-window fights plus files processed during the run.
+
+    A copied/replayed log keeps its original filename timestamp. Recording
+    the processing event prevents that old timestamp from hiding a fight the
+    user deliberately processed after pressing Start Run.
+    """
+    from core.raid_session import log_info_for_path
+
+    selected = fights_in_window(logs, started_at, ended_at)
+    by_path = {str(log.path.resolve()): log for log in logs}
+    included = {str(log.path.resolve()) for log in selected}
+    for raw_path in recorded_paths:
+        path = Path(raw_path)
+        key = str(path.resolve())
+        if key in included:
+            continue
+        info = by_path.get(key)
+        if info is None:
+            try:
+                info = log_info_for_path(path)
+            except OSError:
+                logger.warning("Recorded run log is no longer readable: %s", path)
+                continue
+        selected.append(info)
+        included.add(key)
+    selected.sort(key=lambda log: (log.timestamp, str(log.path)))
+    return selected
+
+
 def format_elapsed(delta: timedelta) -> str:
     """Human elapsed time for the run panel: '45 m', '2 h 14 m'."""
     total_minutes = int(max(delta.total_seconds(), 0) // 60)
@@ -58,6 +90,8 @@ class RunSession:
         self._path = Path(home_dir) / STATE_FILENAME
         self._clock = clock or datetime.now
         self._started_at: datetime | None = None
+        self._last_activity_at: datetime | None = None
+        self._recorded_logs: list[Path] = []
         self._load()
 
     # ------------------------------------------------------------------
@@ -76,6 +110,14 @@ class RunSession:
     def started_at(self) -> datetime | None:
         return self._started_at
 
+    @property
+    def recorded_logs(self) -> tuple[Path, ...]:
+        return tuple(self._recorded_logs)
+
+    @property
+    def last_activity_at(self) -> datetime | None:
+        return self._last_activity_at
+
     def elapsed(self, now: datetime | None = None) -> timedelta:
         if not self.is_open:
             return timedelta(0)
@@ -93,6 +135,17 @@ class RunSession:
             started = raw.get("started_at")
             if started and raw.get("ended_at") is None:
                 self._started_at = datetime.fromisoformat(started)
+                activity = raw.get("last_activity_at")
+                self._last_activity_at = (
+                    datetime.fromisoformat(activity) if activity
+                    else self._started_at)
+                recorded = raw.get("recorded_logs", [])
+                if not isinstance(recorded, list):
+                    recorded = []
+                self._recorded_logs = [
+                    Path(path) for path in recorded
+                    if isinstance(path, str) and path
+                ]
         except (OSError, ValueError, TypeError) as exc:
             # A corrupt state file must never block launch; the run is
             # simply not resumed (the logs on disk are the real record).
@@ -103,6 +156,9 @@ class RunSession:
             "version": STATE_VERSION,
             "started_at": self._started_at.isoformat(timespec="seconds"),
             "ended_at": None,
+            "last_activity_at": self._last_activity_at.isoformat(
+                timespec="seconds"),
+            "recorded_logs": [str(path) for path in self._recorded_logs],
         }
         tmp = self._path.parent / (self._path.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -117,8 +173,24 @@ class RunSession:
         if self.is_open:
             raise RuntimeError("a run is already open")
         self._started_at = now or self._clock()
+        self._last_activity_at = self._started_at
+        self._recorded_logs = []
         self._write()
         return self._started_at
+
+    def record_log(self, path) -> bool:
+        """Persist a log processed while this run is open; deduplicate paths."""
+        if not self.is_open:
+            return False
+        path = Path(path)
+        key = str(path.resolve())
+        if any(str(existing.resolve()) == key
+               for existing in self._recorded_logs):
+            return False
+        self._recorded_logs.append(path)
+        self._last_activity_at = self._clock()
+        self._write()
+        return True
 
     def end(self, ended_at: datetime | None = None):
         """Close the run: returns the (started_at, ended_at) window and
@@ -132,6 +204,8 @@ class RunSession:
     def discard(self):
         """Drop the open run without reporting anything."""
         self._started_at = None
+        self._last_activity_at = None
+        self._recorded_logs = []
         try:
             self._path.unlink()
         except FileNotFoundError:

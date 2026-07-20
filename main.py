@@ -112,7 +112,8 @@ def _get_ai_components():
 class FileProcessorWorker(QThread):
     """Background worker for processing log files."""
     file_started = Signal(int, int, str)    # index, total, filename
-    file_finished = Signal(object, bool)     # file_path, success
+    # file_path, ProcessResult.value, exact skip detail
+    file_finished = Signal(object, str, str)
     all_done = Signal(int)                   # total processed
 
     def __init__(self, file_paths: list, config, tts_client=None, parent=None):
@@ -128,14 +129,22 @@ class FileProcessorWorker(QThread):
         for i, file_path in enumerate(self.file_paths, 1):
             self.file_started.emit(i, len(self.file_paths), file_path.name)
             try:
-                process_log_file(
+                skip_reasons = []
+
+                def _events(kind: str, text: str):
+                    if kind == "skipped":
+                        skip_reasons.append(text)
+
+                result = process_log_file(
                     file_path, self.config, gw2ei, discord,
-                    tts_client=self.tts_client,
+                    tts_client=self.tts_client, events=_events,
                 )
-                self.file_finished.emit(file_path, True)
+                detail = skip_reasons[-1] if skip_reasons else ""
+                self.file_finished.emit(file_path, result.value, detail)
             except Exception as e:
                 logger.error(f"Failed to process {file_path.name}: {e}")
-                self.file_finished.emit(file_path, False)
+                self.file_finished.emit(
+                    file_path, ProcessResult.ERROR_OTHER.value, "")
 
         self.all_done.emit(len(self.file_paths))
 
@@ -859,8 +868,16 @@ class SparkyBotApp(QApplication):
         self.logger.info(f"Manual processing ({index}/{total}): {filename}")
         self.settings_window.process_files_widget.show_progress(index, total, filename)
 
-    def _on_file_finished(self, file_path, success: bool):
-        self.settings_window.process_files_widget.mark_file_result(file_path, success)
+    def _on_file_finished(self, file_path, result_name: str, detail: str):
+        parsed = result_name in {
+            ProcessResult.SUCCESS.value,
+            ProcessResult.SKIPPED_THRESHOLD.value,
+            ProcessResult.ERROR_DISCORD.value,
+        }
+        self.settings_window.process_files_widget.mark_file_result(
+            file_path, parsed)
+        self.settings_window.feed_file_event(
+            str(file_path), result_name, detail)
 
     def _on_all_files_done(self, total: int):
         self.settings_window.process_files_widget.finish_processing(total)

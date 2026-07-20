@@ -20,6 +20,27 @@ class LogInfo:
     source: str                  # "filename" or "mtime"
 
 
+def log_info_for_path(path: Path) -> LogInfo:
+    """Build LogInfo for one file using the same rules as discovery."""
+    path = Path(path)
+    m = _LOG_STEM_RE.match(path.stem)
+    if m:
+        ts_str = m.group(1) + m.group(2)
+        try:
+            return LogInfo(
+                path=path,
+                timestamp=datetime.strptime(ts_str, '%Y%m%d%H%M%S'),
+                source='filename',
+            )
+        except ValueError:
+            pass
+    return LogInfo(
+        path=path,
+        timestamp=datetime.fromtimestamp(path.stat().st_mtime),
+        source='mtime',
+    )
+
+
 def discover_logs(log_folder: Path) -> list[LogInfo]:
     """Recursive scan for *.zevtc + *.evtc log files.
 
@@ -35,19 +56,7 @@ def discover_logs(log_folder: Path) -> list[LogInfo]:
                 logger.debug("Skipping unreadable file: %s", path)
                 continue
 
-            m = _LOG_STEM_RE.match(path.stem)
-            if m:
-                ts_str = m.group(1) + m.group(2)
-                try:
-                    ts = datetime.strptime(ts_str, '%Y%m%d%H%M%S')
-                    results.append(LogInfo(path=path, timestamp=ts,
-                                          source='filename'))
-                    continue
-                except ValueError:
-                    pass
-
-            mtime = datetime.fromtimestamp(path.stat().st_mtime)
-            results.append(LogInfo(path=path, timestamp=mtime, source='mtime'))
+            results.append(log_info_for_path(path))
 
     results.sort(key=lambda x: x.timestamp)
     return results

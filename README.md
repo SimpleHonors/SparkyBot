@@ -18,13 +18,13 @@ Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good 
 
 ## What's New in 2.0 — *"It Has a Front Door Now"*
 
-SparkyBot used to be a powerful pile of tabs wearing a trench coat. Version
-2.0 gives it a real Home screen, a proper sidebar, and Settings grouped by
-what humans are trying to do—not where a config file happened to put it.
+Version 2.0 gives SparkyBot a Home screen, sidebar navigation, and Settings
+grouped around the jobs you want to accomplish.
 
 - **Start Run. End Run. Report done.** SparkyBot counts the fights, remembers
-  an open run after a restart, builds the report, and can post it to Discord.
-  You raid; it handles the paperwork.
+  an open run after a restart, includes copied or manually processed logs,
+  builds the report, and can post it to Discord. You raid; it handles the
+  paperwork.
 - **Raid Reports without the ritual.** Pick the last 12 hours, today, or only
   the fights you want. Reports reuse work SparkyBot already did, generate
   faster, and shrink themselves so Discord is less likely to throw a fit.
@@ -32,21 +32,19 @@ what humans are trying to do—not where a config file happened to put it.
   fights, detected/processing status, commentary, voice, and reports land in
   one activity feed. Drop log files straight onto the window when you want to
   process them manually.
-- **AI is actually optional.** Decline it in setup and the AI, Voice,
-  Vocabulary, and Calibration screens disappear. No guilt trip. No mystery
-  checkbox maze. You can turn it on later.
+- **AI is optional.** Decline it in setup and SparkyBot stays focused on fight
+  reports and Raid Reports. You can enable AI commentary and voice later.
 - **Native Windows installer.** Download, double-click, done. No Python
   scavenger hunt and no command prompt audition.
 
-Under the fresh paint: safer report names, clearer errors, honest progress,
-smaller temporary files, fewer console-window jump scares, and enough tests
-to make the bugs feel personally unwelcome.
+Reports include clearer progress and errors, safer filenames, smaller
+temporary files, and automatic cleanup.
 
 ![Run and report settings](docs/screenshots/v2-settings-raid-reports.png)
 
-The first-run choices now look like choices—not faint little bubbles playing
-hide-and-seek—and empty pages point you at the button that actually gets work
-into them.
+The first-run wizard walks through report workflow and optional AI features.
+Empty Raid Report and Calibration pages explain what they need and provide a
+direct action to continue.
 
 ![Clear first-run choices](docs/screenshots/v2-setup-ai-choice.png)
 <br><br>
@@ -98,7 +96,7 @@ Discord gets color-coded code blocks with configurable guild icons; Twitch gets 
 
 1. Download `SparkyBot-v2.0.0-setup.exe` from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases).
 2. Double-click it.
-3. Launch SparkyBot. That is the whole list. We checked twice.
+3. Launch SparkyBot.
 
 On first launch the setup wizard handles the essentials. You do not need
 Python or a command line. Source installs remain available for people who
@@ -182,8 +180,6 @@ Then it fingerprints your stat shape against your class to figure out *what you 
 ---
 
 ## Raid Report
-
-> 📸 *[Screenshot placeholder — Raid Report tab + baked HTML report]*
 
 Other tools make you wait. SparkyBot was already working the whole time you played — parsing every fight live, caching the results. By the time you call it a night, the heavy lifting is done. One click finishes the job.
 
