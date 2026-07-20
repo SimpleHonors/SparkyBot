@@ -119,8 +119,8 @@ _NOUNS_KITCHEN_FOOD = [
 ]
 
 _NOUNS_WEATHER_TIME = [
-    "morning fog", "afternoon glare", "evening squall", "midnight watch",
-    "rush hour", "dead of night", "wee hours", "pre-dawn chill",
+    "morning fog", "afternoon glare", "evening squall", "raid watch",
+    "rush hour", "dead of raid", "late hours", "late-session chill",
     "high noon", "blue hour", "golden hour", "twilight gap",
     "yesterday's weather", "tomorrow's storm", "stalled front",
     "warm front", "cold front", "occluded front", "low pressure system",
@@ -299,7 +299,7 @@ REGISTERS: list = [
     ("oral historian", "as if collecting the squad's account years later, quoting the survivors"),
     ("mock-heroic", "inflate a skirmish to epic register, then let the numbers deflate it"),
     ("bureaucratic", "render it as an incident report — passive voice, no blame assigned, file and forget"),
-    ("superstitious", "blame the RNG gods, reset-night curses, bad omens — superstition as cope, layered over the real facts, never inventing what didn't happen"),
+    ("superstitious", "blame the RNG gods, reset-session curses, bad omens — superstition as cope, layered over the real facts, never inventing what didn't happen"),
     ("documentarian", "fly-on-the-wall narration; observe without judgment, let the moment speak"),
     ("storyteller", "a tale with a turn — setup, complication, reversal, in three beats"),
     ("optimist's spin", "find the usable lesson even in a rout, without denying the rout"),

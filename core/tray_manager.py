@@ -1,16 +1,16 @@
 """System tray manager for SparkyBot"""
 
 from pathlib import Path
-from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QIcon, QAction
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtWidgets import QSystemTrayIcon, QMenu
+from PySide6.QtGui import QIcon, QAction
+from PySide6.QtCore import QObject, Signal
 
 
 class TrayManager(QObject):
     """Manages system tray icon and menu"""
 
-    activated = pyqtSignal(str)  # Signal when tray action is triggered
-    quit_requested = pyqtSignal()
+    activated = Signal(str)  # Signal when tray action is triggered
+    quit_requested = Signal()
 
     def __init__(self, app_name: str = "SparkyBot"):
         super().__init__()
@@ -73,7 +73,7 @@ class TrayManager(QObject):
     def _create_default_icon(self) -> QIcon:
         """Create a simple default icon"""
         # Create a 16x16 red/yellow icon using pixmap
-        from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
+        from PySide6.QtGui import QPixmap, QPainter, QColor, QPen
 
         pixmap = QPixmap(32, 32)
         pixmap.fill(QColor(50, 50, 50))

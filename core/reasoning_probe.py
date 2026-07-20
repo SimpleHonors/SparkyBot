@@ -13,6 +13,9 @@ from typing import Callable, List, Optional
 
 from core.reasoning_strategies import HEADROOM_FLOOR, ordered_for
 
+PROBE_CALL_TIMEOUT = 10
+MAX_PROBE_CALLS = 4
+
 
 @dataclass
 class ProbeOutcome:
@@ -109,19 +112,29 @@ def run_probe(analyst_factory, test_summary, *, user_budget, base_url, model,
         if progress:
             progress(msg)
 
+    call_timeout = max(1, min(int(timeout), PROBE_CALL_TIMEOUT))
+    calls_left = MAX_PROBE_CALLS
+
     _emit("Testing connection…")
-    baseline = analyst_factory(strategy_id="none", disable=False, budget=user_budget).run(test_summary, timeout)
+    baseline = analyst_factory(
+        strategy_id="none", disable=False, budget=user_budget
+    ).run(test_summary, call_timeout)
+    calls_left -= 1
     if baseline.ok:
         return diagnose(baseline, None, [], user_budget, headroom_floor)
 
     _emit("Empty response — checking whether the model just needs more room…")
     headroom = analyst_factory(strategy_id="headroom_only", disable=False,
-                               budget=max(user_budget, headroom_floor)).run(test_summary, timeout)
+                               budget=max(user_budget, headroom_floor)).run(
+                                   test_summary, call_timeout)
+    calls_left -= 1
 
     _emit("Detecting the reasoning off-switch…")
     outcomes: List[ProbeOutcome] = []
-    for s in ordered_for(base_url, model):
-        oc = analyst_factory(strategy_id=s.id, disable=True, budget=user_budget).run(test_summary, timeout)
+    for s in ordered_for(base_url, model)[:calls_left]:
+        oc = analyst_factory(
+            strategy_id=s.id, disable=True, budget=user_budget
+        ).run(test_summary, call_timeout)
         outcomes.append(oc)
         if oc.ok:
             break
@@ -163,7 +176,11 @@ class _RealProbeCall:
                 system_prompt=system_prompt, max_tokens=self.budget,
                 thinking=not self.disable, reasoning_strategy=self.strategy_id,
             )
-            text = analyst.analyze(test_summary, timeout=timeout)
+            # A probe attempt is already one item in a bounded multi-call
+            # diagnostic. Runtime retry stacking here turned one button click
+            # into minutes of nested 30-second waits.
+            text = analyst.analyze(
+                test_summary, timeout=timeout, max_retries=0, retry_delay=0)
         except Exception as exc:  # noqa: BLE001 — probe must never crash the UI
             return ProbeOutcome(self.strategy_id, self.disable, self.budget,
                                 errored=True, error_msg=str(exc),

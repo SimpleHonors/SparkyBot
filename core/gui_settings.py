@@ -6,18 +6,20 @@ import hashlib
 import logging
 import threading
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QTabWidget,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
     QGroupBox, QFormLayout, QScrollArea, QSizePolicy,
     QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog,
     QTextEdit, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
-    QInputDialog
+    QInputDialog, QRadioButton, QButtonGroup
 )
-from PyQt6.QtGui import QColor, QIcon
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QEvent
+from PySide6.QtGui import QColor, QIcon
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from pathlib import Path
-from version import VERSION
+from core import theme
+from core.update_flow import UpdateFlow
+from core.version import VERSION
 
 
 def _parse_version(version_str: str) -> tuple:
@@ -32,42 +34,238 @@ def _parse_version(version_str: str) -> tuple:
     return tuple(parts)
 
 
-class SettingsWindow(QWidget):
-    """Main settings window with tabs for different configuration sections"""
+class ProcessFilesWidget(QWidget):
+    """Manual log-processing queue (the Process Files tab).
 
-    settings_changed = pyqtSignal()
-    watcher_toggled = pyqtSignal()
+    The app controller drives processing exclusively through the method API
+    (set_processing / show_progress / mark_file_result / finish_processing) —
+    child widgets are an implementation detail and must not be poked from
+    outside this class.
+    """
 
-    # Signals for thread-safe UI updates from background threads
-    sig_status_text = pyqtSignal(str)
-    sig_button_state = pyqtSignal(str, bool)
-    sig_progress = pyqtSignal(bool, int)
-    sig_progress_value = pyqtSignal(int)
-    sig_ei_status_refresh = pyqtSignal()
-    sig_ei_latest = pyqtSignal(str)
-    sig_sparkybot_status = pyqtSignal(str)
-    sig_sparkybot_button_state = pyqtSignal(str, bool)
-    sig_sparkybot_latest = pyqtSignal(str)
-    sig_update_complete = pyqtSignal(str)  # version string
+    # Signal emitted when user clicks Process — sends list of Path objects
+    process_requested = Signal(list)
 
-    # Thread-safe UI signals for test/refresh operations
-    _sig_models_result = pyqtSignal(list, str)      # models, source
-    _sig_ai_test_done = pyqtSignal(str, bool)        # message, success
-    _sig_ai_test_progress = pyqtSignal(str)          # staged probe status
-    _sig_ai_apply = pyqtSignal(dict)                 # reasoning settings to apply
-    _sig_twitch_test_done = pyqtSignal(str, bool)    # message, success
-    _sig_tts_test_done = pyqtSignal(str, bool)       # message, success
-
-    # Calibration tab signals (background EI import)
-    _sig_calib_status = pyqtSignal(str)              # status text
-    _sig_calib_progress = pyqtSignal(int, int)       # value, maximum (max 0 hides)
-    _sig_calib_import_done = pyqtSignal(int, int)    # imported_ok, total
+    # Per-item data roles: the queued file's path string, and the outcome of
+    # the last processing pass (True/False; unset while pending). Outcome
+    # state lives HERE, not in the visible text prefix, so the display can
+    # change without breaking row bookkeeping.
+    PATH_ROLE = Qt.ItemDataRole.UserRole
+    RESULT_ROLE = Qt.ItemDataRole.UserRole + 1
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
+        self.setAcceptDrops(True)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Header description
+        header = QLabel(
+            "Manually process individual log files without the file watcher. "
+            "Drop or browse for .evtc/.zevtc files below — they'll run through "
+            "the full pipeline (GW2EI parse → report → Discord) as a one-off."
+        )
+        header.setWordWrap(True)
+        theme.mark_hint(header)
+        layout.addWidget(header)
+
+        # Drop zone — QLabel[dropzone="true"] in the central QSS;
+        # drag hover flips the "drag" state property.
+        self.drop_label = QLabel("Drag & drop .evtc / .zevtc files here\nor use Browse below")
+        self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_label.setMinimumHeight(120)
+        self.drop_label.setProperty("dropzone", True)
+        layout.addWidget(self.drop_label)
+
+        # Browse button
+        browse_btn = QPushButton("Browse Files...")
+        browse_btn.clicked.connect(self._browse_files)
+        layout.addWidget(browse_btn)
+
+        # File queue list
+        self.file_list = QListWidget()
+        layout.addWidget(self.file_list)
+
+        # Button row
+        btn_row = QHBoxLayout()
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.clicked.connect(self._remove_selected)
+        clear_btn = QPushButton("Clear All")
+        clear_btn.clicked.connect(self.file_list.clear)
+        self.process_btn = QPushButton("Process Files")
+        self.process_btn.setEnabled(False)
+        self.process_btn.clicked.connect(self._process)
+        btn_row.addWidget(remove_btn)
+        btn_row.addWidget(clear_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self.process_btn)
+        layout.addLayout(btn_row)
+
+        # Status label
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
+
+    # ------------------------------------------------------------------
+    # Method API for the app controller
+    # ------------------------------------------------------------------
+
+    def add_files(self, paths):
+        """Queue log files programmatically (Home drag-drop routes here).
+        Duplicates are ignored, same as the drop zone."""
+        for path in paths:
+            self._add_file(str(path))
+
+    def set_processing(self, active: bool):
+        """Lock the Process button during a run; restore it afterwards
+        (enabled only while the queue is non-empty)."""
+        if active:
+            self.process_btn.setEnabled(False)
+        else:
+            self.process_btn.setEnabled(self.file_list.count() > 0)
+
+    def show_progress(self, index: int, total: int, filename: str):
+        """Show per-file progress while the controller works the queue."""
+        self.status_label.setText(f"Processing {index} of {total}: {filename}")
+
+    def mark_file_result(self, file_path, success: bool):
+        """Record a file's outcome on its queue row (and display it)."""
+        # Normalize to resolve slash differences between Path objects and stored strings
+        target = str(Path(str(file_path)).resolve())
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            stored = str(Path(item.data(self.PATH_ROLE)).resolve())
+            if stored == target:
+                item.setData(self.RESULT_ROLE, success)
+                item.setText(Path(str(file_path)).name)
+                item.setToolTip(
+                    f"{Path(str(file_path)).name}: "
+                    f"{'processed' if success else 'failed'}")
+                break
+
+    def finish_processing(self, total: int):
+        """End-of-run bookkeeping: drop succeeded rows, keep failures."""
+        self.status_label.setText(f"Done — processed {total} file(s)")
+
+        # Remove successfully processed files by their recorded outcome (never
+        # by parsing the visible text), in reverse so indices don't shift.
+        for i in reversed(range(self.file_list.count())):
+            item = self.file_list.item(i)
+            if item and item.data(self.RESULT_ROLE) is True:
+                self.file_list.takeItem(i)
+
+        self.set_processing(False)
+
+    # ------------------------------------------------------------------
+    # Internal queue handling
+    # ------------------------------------------------------------------
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().lower().endswith(('.evtc', '.zevtc')):
+                    event.acceptProposedAction()
+                    theme.set_state(self.drop_label, "drag")
+                    return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        theme.set_state(self.drop_label, None)
+
+    def dropEvent(self, event):
+        self.dragLeaveEvent(event)
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path.lower().endswith(('.evtc', '.zevtc')):
+                self._add_file(path)
+
+    def _browse_files(self):
+        # Default to the first configured log folder
+        start_dir = ""
+        log_folders = self.config.get_log_folders()
+        if log_folders:
+            folder = str(log_folders[0])
+            if Path(folder).exists():
+                start_dir = folder
+
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Log Files", start_dir,
+            "ArcDPS Logs (*.evtc *.zevtc);;All Files (*)"
+        )
+        for f in files:
+            self._add_file(f)
+
+    def _add_file(self, path: str):
+        # Avoid duplicates
+        for i in range(self.file_list.count()):
+            if self.file_list.item(i).data(self.PATH_ROLE) == path:
+                return
+        item = QListWidgetItem(Path(path).name)
+        item.setData(self.PATH_ROLE, path)
+        item.setToolTip(path)
+        self.file_list.addItem(item)
+        self.process_btn.setEnabled(True)
+
+    def _remove_selected(self):
+        for item in self.file_list.selectedItems():
+            self.file_list.takeItem(self.file_list.row(item))
+        self.process_btn.setEnabled(self.file_list.count() > 0)
+
+    def _process(self):
+        paths = []
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            paths.append(Path(item.data(self.PATH_ROLE)))
+        if paths:
+            self.process_requested.emit(paths)
+
+
+class SettingsWindow(QWidget):
+    """Main settings window with tabs for different configuration sections"""
+
+    settings_changed = Signal()
+    watcher_toggled = Signal()
+
+    # Signals for thread-safe UI updates from background threads
+    sig_status_text = Signal(str)
+    sig_button_state = Signal(str, bool)
+    sig_progress = Signal(bool, int)
+    sig_progress_value = Signal(int)
+    sig_ei_status_refresh = Signal()
+    sig_ei_latest = Signal(str)
+    sig_sparkybot_status = Signal(str)
+    sig_sparkybot_latest = Signal(str)
+
+    # Thread-safe UI signals for test/refresh operations
+    _sig_models_result = Signal(list, str)      # models, source
+    _sig_ai_test_done = Signal(str, bool)        # message, success
+    _sig_ai_test_progress = Signal(str)          # staged probe status
+    _sig_ai_apply = Signal(dict)                 # reasoning settings to apply
+    _sig_twitch_test_done = Signal(str, bool)    # message, success
+    _sig_tts_test_done = Signal(str, bool)       # message, success
+
+    # Calibration tab signals (background EI import)
+    _sig_calib_status = Signal(str)              # status text
+    _sig_calib_progress = Signal(int, int)       # value, maximum (max 0 hides)
+    _sig_calib_import_done = Signal(int, int)    # imported_ok, total
+
+    def __init__(self, config, parent=None, update_flow=None):
+        super().__init__(parent)
+        self.config = config
+        # Window-free update engine. The app controller passes its own so the
+        # launch check and this window share one flow; standalone construction
+        # (tests, direct use) gets a private instance.
+        self.update_flow = update_flow if update_flow is not None else UpdateFlow(config, parent=self)
+        # Release data armed by a successful check — while set, the morphing
+        # update button is in "Download & Install Update" mode.
+        self._sparkybot_release_data = None
+        self._sparkybot_latest_version = None
         self.setWindowTitle("SparkyBot Settings")
-        self.setMinimumSize(600, 500)  # height only; width computed after tabs are added
+        # No minimum/fit-all-tabs sizing here anymore: the MainWindow shell
+        # owns window geometry and embeds this widget as a page. (The old
+        # 13-tab-label width computation forced a ~1000px window.)
 
         # Set window icon to sbtray.ico
         icon_path = Path(__file__).parent.parent / "assets" / "sbtray.ico"
@@ -77,13 +275,6 @@ class SettingsWindow(QWidget):
         self._setup_ui()
         self._load_settings()
         self._connect_thread_signals()
-
-        # Dynamically size window to fit all tabs without scrolling
-        tab_bar = self.tab_widget.tabBar()
-        tabs_width = sum(tab_bar.tabRect(i).width() for i in range(tab_bar.count()))
-        min_width = tabs_width + 40
-        self.setMinimumWidth(min_width)
-        self.resize(max(min_width, self.width()), self.height())
 
     def _setup_ui(self):
         """Setup the user interface"""
@@ -102,9 +293,19 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._create_updates_tab(), "Updates")
         tabs.addTab(self._create_ai_tab(), "AI")
         tabs.addTab(self._create_tts_tab(), "TTS")
-        tabs.addTab(self._create_process_files_tab(), "Process Files")
         tabs.addTab(self._create_calibration_tab(), "Calibration")
-        tabs.addTab(self._create_about_tab(), "About")
+        tabs.addTab(self._create_raid_report_settings_tab(), "Raid Report Settings")
+
+        from core.raid_report_wiring import build_raid_report_tab
+        about_idx = tabs.count()  # About hasn't been added yet — insert just before it
+        tabs.insertTab(about_idx, build_raid_report_tab(self.config, parent=self), "Raid Report")
+        self.about_widget = self._create_about_tab()
+        tabs.addTab(self.about_widget, "About")
+
+        # GitHub status checks run the first time the update surface is
+        # actually shown (the Settings dialog's Application page) — never at
+        # construction. run_update_checks_once() is the single entry point.
+        self._updates_checked = False
 
         layout.addWidget(tabs)
 
@@ -113,10 +314,9 @@ class SettingsWindow(QWidget):
 
         self.start_button = QPushButton("Start Watcher")
         self.start_button.setMinimumHeight(40)
-        self.start_button.setStyleSheet("""
-            QPushButton { background-color: #4CAF50; color: white; font-weight: bold; border-radius: 5px; }
-            QPushButton:pressed { background-color: #45a049; }
-        """)
+        # Primary CTA; set_watcher_state() flips the "running" state property
+        # (green start / red stop) via the central QSS.
+        theme.set_widget_class(self.start_button, "primary")
         self.start_button.clicked.connect(self._on_start_clicked)
         button_layout.addWidget(self.start_button)
 
@@ -154,10 +354,10 @@ class SettingsWindow(QWidget):
         thumb_layout = QHBoxLayout()
         self.guild_icon = QLineEdit()
         self.guild_icon.setPlaceholderText("assets/wvw_icon.png")
-        browse_thumb_btn = QPushButton("Browse...")
-        browse_thumb_btn.clicked.connect(self._browse_guild_icon)
+        self.guild_icon_browse_btn = QPushButton("Browse...")
+        self.guild_icon_browse_btn.clicked.connect(self._browse_guild_icon)
         thumb_layout.addWidget(self.guild_icon)
-        thumb_layout.addWidget(browse_thumb_btn)
+        thumb_layout.addWidget(self.guild_icon_browse_btn)
         form.addRow("Guild Icon:", thumb_layout)
 
         # Embed color picker
@@ -201,11 +401,14 @@ class SettingsWindow(QWidget):
         layout.addWidget(options_group)
 
         # Twitch Integration group box
-        twitch_group = QGroupBox("Twitch Integration")
+        self.twitch_group = QGroupBox("Twitch Integration")
+        twitch_group = self.twitch_group
         twitch_layout = QFormLayout(twitch_group)
 
         self.enable_twitch = QCheckBox("Enable Twitch Bot")
-        self.enable_twitch.setToolTip("Post fight summaries and AI commentary to a Twitch chat channel.")
+        # AI-off default wording; the Settings dialog upgrades it to the
+        # "and AI commentary" form only while AI features are on (LAW #2).
+        self.enable_twitch.setToolTip("Posts fight summaries to a Twitch chat channel.")
         twitch_layout.addRow("", self.enable_twitch)
 
         self.twitch_channel = QLineEdit()
@@ -226,20 +429,20 @@ class SettingsWindow(QWidget):
         )
         twitch_layout.addRow("", self.twitch_use_tls)
 
-        twitch_tls_note = QLabel(
-            "⚠ Disabling TLS sends your OAuth token in plaintext over port 6667. "
+        self.twitch_tls_note = QLabel(
+            "Disabling TLS sends your OAuth token in plaintext over port 6667. "
             "Only disable this if TLS connections fail due to firewall or network restrictions."
         )
-        twitch_tls_note.setWordWrap(True)
-        twitch_tls_note.setStyleSheet("font-size: 10px; color: #888; padding-left: 4px;")
-        twitch_layout.addRow("", twitch_tls_note)
+        self.twitch_tls_note.setWordWrap(True)
+        theme.mark_hint(self.twitch_tls_note)
+        twitch_layout.addRow("", self.twitch_tls_note)
 
-        twitch_help = QLabel(
-            'Get a token at <a href="https://twitchtokengenerator.com" style="color: #5bc0de;">twitchtokengenerator.com</a>'
+        self.twitch_help_link = QLabel(
+            'Get a token at <a href="https://twitchtokengenerator.com">twitchtokengenerator.com</a>'
         )
-        twitch_help.setOpenExternalLinks(True)
-        twitch_help.setStyleSheet("font-size: 11px; color: #aaa;")
-        twitch_layout.addRow("", twitch_help)
+        self.twitch_help_link.setOpenExternalLinks(True)
+        theme.mark_hint(self.twitch_help_link)
+        twitch_layout.addRow("", self.twitch_help_link)
 
         self.twitch_test_btn = QPushButton("Test Connection")
         self.twitch_test_btn.clicked.connect(self._test_twitch_connection)
@@ -256,7 +459,7 @@ class SettingsWindow(QWidget):
 
     def _browse_guild_icon(self):
         """Browse for the thumbnail/guild icon image."""
-        from PyQt6.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Thumbnail Icon",
@@ -291,9 +494,9 @@ class SettingsWindow(QWidget):
                 bot = TwitchBot(token, channel, use_tls=use_tls)
                 bot.send_message("SparkyBot Twitch connection test — if you see this, it works!")
                 bot.close()
-                self._sig_twitch_test_done.emit("✓ Message sent successfully!", True)
+                self._sig_twitch_test_done.emit("Message sent successfully.", True)
             except Exception as e:
-                self._sig_twitch_test_done.emit(f"✗ Connection failed: {e}", False)
+                self._sig_twitch_test_done.emit(f"Connection failed: {e}", False)
 
         threading.Thread(target=_test, daemon=True).start()
 
@@ -303,11 +506,8 @@ class SettingsWindow(QWidget):
         self.twitch_test_btn.setEnabled(True)
 
     def _update_color_preview(self):
-        """Update the color preview button's background."""
-        self.color_preview.setStyleSheet(
-            f"background-color: {self._current_embed_color.name()}; "
-            f"border: 1px solid #555; border-radius: 3px;"
-        )
+        """Update the color preview button's background (data-driven color)."""
+        theme.set_swatch_color(self.color_preview, self._current_embed_color)
 
     def _pick_embed_color(self):
         """Open Qt color picker dialog."""
@@ -333,10 +533,10 @@ class SettingsWindow(QWidget):
         log_layout = QHBoxLayout()
         self.log_folder = QLineEdit()
         self.log_folder.setPlaceholderText("Path to GW2 logs folder")
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(lambda: self._browse_folder(self.log_folder))
+        self.log_folder_browse_btn = QPushButton("Browse...")
+        self.log_folder_browse_btn.clicked.connect(lambda: self._browse_folder(self.log_folder))
         log_layout.addWidget(self.log_folder)
-        log_layout.addWidget(browse_btn)
+        log_layout.addWidget(self.log_folder_browse_btn)
         form.addRow("Log Folder:", log_layout)
 
         layout.addWidget(group)
@@ -348,10 +548,10 @@ class SettingsWindow(QWidget):
         gw2ei_layout = QHBoxLayout()
         self.gw2ei_exe = QLineEdit()
         self.gw2ei_exe.setPlaceholderText("Path to GuildWars2EliteInsights-CLI.exe")
-        browse_gw2ei = QPushButton("Browse...")
-        browse_gw2ei.clicked.connect(self._browse_gw2ei_exe)
+        self.gw2ei_browse_btn = QPushButton("Browse...")
+        self.gw2ei_browse_btn.clicked.connect(self._browse_gw2ei_exe)
         gw2ei_layout.addWidget(self.gw2ei_exe)
-        gw2ei_layout.addWidget(browse_gw2ei)
+        gw2ei_layout.addWidget(self.gw2ei_browse_btn)
         form.addRow("CLI Executable:", gw2ei_layout)
 
         layout.addWidget(group)
@@ -515,10 +715,13 @@ class SettingsWindow(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        group = QGroupBox("AI Fight Analysis")
+        self.ai_group = QGroupBox("AI Fight Analysis")
+        group = self.ai_group
         form = QFormLayout(group)
 
-        self.enable_ai = QCheckBox("Enable AI Fight Analysis")
+        # Master switch — re-homed by the Settings dialog onto the
+        # Application page as "AI features" (design-B §5.2, same config key).
+        self.enable_ai = QCheckBox("Enable AI features (fight commentary and voice)")
         form.addRow("", self.enable_ai)
 
         # Provider + Model on one row
@@ -598,7 +801,7 @@ class SettingsWindow(QWidget):
             "Fight data, pre-analysis, and vocabulary are still injected into the user message."
         )
         prompt_note.setWordWrap(True)
-        prompt_note.setStyleSheet("font-size: 10px; color: #888; padding: 4px 0;")
+        theme.mark_hint(prompt_note)
         prompt_layout.addWidget(prompt_note)
 
         self.ai_system_prompt = QTextEdit()
@@ -606,9 +809,9 @@ class SettingsWindow(QWidget):
         self.ai_system_prompt.setPlaceholderText("Using default SparkyBot analyst prompt")
         prompt_layout.addWidget(self.ai_system_prompt)
 
-        edit_prompt_btn = QPushButton("Edit System Prompt...")
-        edit_prompt_btn.clicked.connect(self._edit_system_prompt)
-        prompt_layout.addWidget(edit_prompt_btn)
+        self.ai_edit_prompt_btn = QPushButton("Edit System Prompt...")
+        self.ai_edit_prompt_btn.clicked.connect(self._edit_system_prompt)
+        prompt_layout.addWidget(self.ai_edit_prompt_btn)
 
         form.addRow("System Prompt:", prompt_layout)
 
@@ -622,7 +825,8 @@ class SettingsWindow(QWidget):
         form.addRow("", self.ai_test_status)
 
         # Vocabulary
-        vocab_group = QGroupBox("Vocabulary")
+        self.ai_vocab_group = QGroupBox("Vocabulary")
+        vocab_group = self.ai_vocab_group
         vocab_form = QFormLayout()
 
         vocab_note = QLabel(
@@ -633,7 +837,7 @@ class SettingsWindow(QWidget):
             "At 100%, every available term in the category is offered to the AI each time."
         )
         vocab_note.setWordWrap(True)
-        vocab_note.setStyleSheet("font-size: 10px; color: #888; padding-bottom: 4px;")
+        theme.mark_hint(vocab_note)
         vocab_form.addRow(vocab_note)
 
         # Shock row: mode + spinbox + edit
@@ -765,7 +969,8 @@ class SettingsWindow(QWidget):
         layout = QVBoxLayout(widget)
 
         # -- General --
-        general_group = QGroupBox("General")
+        self.tts_general_group = QGroupBox("General")
+        general_group = self.tts_general_group
         general_form = QFormLayout(general_group)
 
         self.enable_tts = QCheckBox("Play AI commentary through speakers")
@@ -783,12 +988,12 @@ class SettingsWindow(QWidget):
         )
         general_form.addRow("", self.tts_discord_attach)
 
-        discord_attach_note = QLabel(
-            "⚠ Discord mobile does not support inline audio playback for file attachments."
+        self.tts_discord_attach_note = QLabel(
+            "Discord mobile does not support inline audio playback for file attachments."
         )
-        discord_attach_note.setWordWrap(True)
-        discord_attach_note.setStyleSheet("font-size: 10px; color: #888; padding-left: 4px;")
-        general_form.addRow("", discord_attach_note)
+        self.tts_discord_attach_note.setWordWrap(True)
+        theme.mark_hint(self.tts_discord_attach_note)
+        general_form.addRow("", self.tts_discord_attach_note)
 
         self.tts_volume = QSpinBox()
         self.tts_volume.setRange(0, 100)
@@ -800,7 +1005,8 @@ class SettingsWindow(QWidget):
         layout.addWidget(general_group)
 
         # -- Provider --
-        provider_group = QGroupBox("Provider")
+        self.tts_provider_group = QGroupBox("Provider")
+        provider_group = self.tts_provider_group
         provider_form = QFormLayout(provider_group)
 
         self.tts_provider = QComboBox()
@@ -953,7 +1159,8 @@ class SettingsWindow(QWidget):
         layout.addWidget(provider_group)
 
         # -- Test --
-        test_group = QGroupBox("Test")
+        self.tts_test_group = QGroupBox("Test")
+        test_group = self.tts_test_group
         test_form = QFormLayout(test_group)
         self.tts_test_btn = QPushButton("Test TTS")
         self.tts_test_btn.clicked.connect(self._test_tts)
@@ -1033,7 +1240,7 @@ class SettingsWindow(QWidget):
                 elif current:
                     self.tts_edge_voice.setEditText(current)
                 self.tts_edge_voice.blockSignals(False)
-                self.tts_test_status.setText(f"✓ {len(ordered)} voices loaded.")
+                self.tts_test_status.setText(f"{len(ordered)} voices loaded.")
             except ImportError:
                 self.tts_test_status.setText("edge-tts is not installed.")
             except Exception as e:
@@ -1069,7 +1276,7 @@ class SettingsWindow(QWidget):
                 elif current:
                     self.tts_local_voice.setEditText(current)
                 self.tts_local_voice.blockSignals(False)
-                self.tts_test_status.setText(f"✓ {len(names)} voices/samples loaded.")
+                self.tts_test_status.setText(f"{len(names)} voices/samples loaded.")
             except Exception as e:
                 self.tts_test_status.setText(f"Failed to fetch voices: {e}")
             finally:
@@ -1122,7 +1329,7 @@ class SettingsWindow(QWidget):
                 voice = response.json().get("voice", f"sample:{name}")
                 self.tts_local_voice.setEditText(voice)
                 self.tts_test_status.setText(
-                    f"✓ Sample uploaded as {voice} — it will be cloned at generation time."
+                    f"Sample uploaded as {voice} — it will be cloned at generation time."
                 )
             except Exception as e:
                 detail = ""
@@ -1183,16 +1390,16 @@ class SettingsWindow(QWidget):
                     "SparkyBot TTS is working. Let's get those bags.", _Cfg()
                 )
                 if not audio_bytes:
-                    self._sig_tts_test_done.emit("✗ Audio generation failed — check logs.", False)
+                    self._sig_tts_test_done.emit("Audio generation failed — check logs.", False)
                     return
 
                 if tts_client is not None:
                     tts_client.update_volume(cfg_volume)
                     tts_client.speak_from_bytes(audio_bytes)
-                    self._sig_tts_test_done.emit("✓ Audio queued — check your speakers.", True)
+                    self._sig_tts_test_done.emit("Audio queued — check your speakers.", True)
                 else:
                     self._sig_tts_test_done.emit(
-                        "✓ Audio generated successfully. Save & restart to enable local playback.", True
+                        "Audio generated successfully. Save and restart to enable local playback.", True
                     )
             except Exception as e:
                 self._sig_tts_test_done.emit(f"Test failed: {e}", False)
@@ -1355,7 +1562,7 @@ class SettingsWindow(QWidget):
 
     def _show_reasoning_choice(self, report):
         """Offer the user OFF vs ON reasoning alternatives with an Apply button."""
-        from PyQt6.QtWidgets import (
+        from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QRadioButton, QButtonGroup, QPushButton, QLabel
         )
         from core.reasoning_settings_apply import apply_report_to_config
@@ -1458,7 +1665,7 @@ class SettingsWindow(QWidget):
                     "(e.g., siege detected, decisive loss, PUGs feeding rallies)"
                 )
                 note.setWordWrap(True)
-                note.setStyleSheet("font-size: 10px; color: #888; padding-bottom: 4px;")
+                theme.mark_hint(note)
                 tab_layout.addWidget(note)
 
             # --- Button row ---
@@ -1682,7 +1889,7 @@ class SettingsWindow(QWidget):
 
         # Validation
         validation = QLabel("")
-        validation.setStyleSheet("color: #ff4444;")
+        theme.set_state(validation, "error")
         layout.addRow("", validation)
 
         buttons = QDialogButtonBox(
@@ -1835,8 +2042,7 @@ class SettingsWindow(QWidget):
             self.ai_prompt_mode.setCurrentText("Default (SparkyBot Analyst)")
             new_default = FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
             self.ai_system_prompt.setPlainText(new_default)
-            self.ai_system_prompt.setReadOnly(True)
-            self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+            theme.set_read_only(self.ai_system_prompt, True)
         elif clicked == view_btn:
             new_default = FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
             view_dialog = QDialog(self)
@@ -1860,15 +2066,13 @@ class SettingsWindow(QWidget):
     def _on_prompt_mode_changed(self, mode: str):
         """Toggle system prompt between default and custom."""
         if mode.startswith("Default"):
-            self.ai_system_prompt.setReadOnly(True)
-            self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+            theme.set_read_only(self.ai_system_prompt, True)
             from core.ai_analyst import FightAnalyst
             self.ai_system_prompt.setPlainText(
                 FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
             )
         else:
-            self.ai_system_prompt.setReadOnly(False)
-            self.ai_system_prompt.setStyleSheet("")
+            theme.set_read_only(self.ai_system_prompt, False)
             # If switching to custom and the text is still the default, clear it
             # so the user starts fresh
             from core.ai_analyst import FightAnalyst
@@ -1878,8 +2082,8 @@ class SettingsWindow(QWidget):
 
     def _edit_system_prompt(self):
         """Open a larger dialog for editing the system prompt."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QLabel
-        from PyQt6.QtCore import Qt
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QLabel
+        from PySide6.QtCore import Qt
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit System Prompt")
@@ -1888,7 +2092,7 @@ class SettingsWindow(QWidget):
         # Apply same icon as main window
         icon_path = Path(__file__).parent.parent / "assets" / "sbtray.ico"
         if icon_path.exists():
-            from PyQt6.QtGui import QIcon
+            from PySide6.QtGui import QIcon
             dialog.setWindowIcon(QIcon(str(icon_path)))
 
         layout = QVBoxLayout(dialog)
@@ -1927,6 +2131,11 @@ class SettingsWindow(QWidget):
 
     def _get_startup_command(self) -> str:
         """Build the command that Windows will run at startup."""
+        import core.apppaths
+
+        if core.apppaths.is_frozen():
+            return f'"{sys.executable}"'
+
         python_exe = sys.executable
         if self.config.hide_console:
             pythonw = python_exe.replace("python.exe", "pythonw.exe")
@@ -1978,7 +2187,8 @@ class SettingsWindow(QWidget):
         layout = QVBoxLayout(widget)
 
         # SparkyBot section
-        sparkybot_group = QGroupBox("SparkyBot")
+        self.sparkybot_update_group = QGroupBox("SparkyBot")
+        sparkybot_group = self.sparkybot_update_group
         sparkybot_layout = QVBoxLayout(sparkybot_group)
 
         # Current version
@@ -2015,7 +2225,8 @@ class SettingsWindow(QWidget):
         layout.addWidget(sparkybot_group)
 
         # Elite Insights section
-        ei_group = QGroupBox("Elite Insights Parser")
+        self.ei_update_group = QGroupBox("Elite Insights Parser")
+        ei_group = self.ei_update_group
         ei_layout = QVBoxLayout(ei_group)
 
         # Info label
@@ -2057,11 +2268,20 @@ class SettingsWindow(QWidget):
 
         layout.addStretch()
 
-        # Check initial status
-        QTimer.singleShot(100, self._check_ei_status)
-        QTimer.singleShot(100, self._check_sparkybot_status)
+        # Initial status checks are deferred to the first view of the
+        # Settings dialog's Application page — see run_update_checks_once.
 
         return widget
+
+    def run_update_checks_once(self):
+        """Fire the SparkyBot/EI GitHub status checks the first time the
+        update surface becomes visible (the Settings dialog calls this when
+        the Application page is first opened). Construction never checks."""
+        if self._updates_checked:
+            return
+        self._updates_checked = True
+        self._check_sparkybot_status()
+        self._check_ei_status()
 
     def _check_sparkybot_status(self):
         """Check current SparkyBot version and latest from GitHub"""
@@ -2118,191 +2338,53 @@ class SettingsWindow(QWidget):
             self.sig_sparkybot_status.emit(f"Error: {e}")
 
     def _on_update_sparkybot_clicked(self):
-        """Handle SparkyBot update button click"""
-        if hasattr(self, '_sparkybot_update_url') and self._sparkybot_update_url:
-            url = self._sparkybot_update_url
-            version = getattr(self, '_sparkybot_latest_version', 'unknown')
-            self._sparkybot_update_url = None
+        """Morphing update button: check first; once a release is armed, install it."""
+        if self._sparkybot_release_data is not None:
+            release_data = self._sparkybot_release_data
+            version = self._sparkybot_latest_version or "unknown"
+            self._sparkybot_release_data = None
             self.update_sparkybot_button.setEnabled(False)
-            thread = threading.Thread(
-                target=self._do_sparkybot_install,
-                args=(url, version),
-                daemon=True
-            )
-            thread.start()
+            self.update_sparkybot_button.setText("Downloading...")
+            self.update_flow.start_update(release_data, version)
         else:
             self.update_sparkybot_button.setEnabled(False)
             self.update_sparkybot_button.setText("Checking...")
-            thread = threading.Thread(target=self._do_sparkybot_update_check, daemon=True)
-            thread.start()
+            self.update_flow.check_now()
 
-    def _do_sparkybot_update_check(self):
-        """Background thread for SparkyBot update check"""
-        try:
-            import requests
-            import re
-            self.sig_sparkybot_status.emit("Checking GitHub for updates...")
+    # -- UpdateFlow → Updates tab slots (signals fire from worker threads and
+    # -- queue back to the GUI thread, so touching widgets here is safe) -----
 
-            response = requests.get(
-                "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
-                headers={"User-Agent": "SparkyBot"},
-                timeout=10
-            )
+    def _on_update_flow_progress(self, text: str):
+        self.sparkybot_status_label.setText(text)
 
-            if response.status_code == 404:
-                self.sig_sparkybot_status.emit("No releases found on GitHub yet.")
-                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
-                return
+    def _on_update_flow_available(self, latest_version: str, release_data):
+        """Arm the morphing button with the release the flow found."""
+        self._sparkybot_release_data = release_data
+        self._sparkybot_latest_version = latest_version
+        self.sparkybot_status_label.setText(
+            f"Update available: v{VERSION} → v{latest_version}"
+        )
+        self.update_sparkybot_button.setText("Download & Install Update")
+        self.update_sparkybot_button.setEnabled(True)
 
-            if response.status_code != 200:
-                self.sig_sparkybot_status.emit(f"GitHub API returned {response.status_code}")
-                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
-                return
+    def _on_update_flow_not_available(self, message: str):
+        self.sparkybot_status_label.setText(message)
+        self.update_sparkybot_button.setText("Already Up to Date")
+        self.update_sparkybot_button.setEnabled(True)
 
-            data = response.json()
-            # Try tag_name first (most consistent from GitHub), fall back to release name
-            raw_version = data.get("tag_name", "") or data.get("name", "")
-            match = re.search(r'(\d+\.\d+(?:\.\d+)*)', raw_version)
-            latest_version = match.group(1) if match else ""
+    def _on_update_flow_error(self, message: str):
+        self.sparkybot_status_label.setText(message)
+        self.update_sparkybot_button.setText("Check for SparkyBot Update")
+        self.update_sparkybot_button.setEnabled(True)
 
-            # Validate it looks like a version number (digits and dots)
-            if not re.match(r'^\d+\.\d+', latest_version):
-                self.sig_sparkybot_status.emit("Could not parse version from GitHub API.")
-                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
-                return
-
-            current_version = VERSION
-            latest_tuple = _parse_version(latest_version)
-            current_tuple = _parse_version(current_version)
-
-            if latest_tuple > current_tuple:
-                # Update available — find the download URL
-                pass  # continues to download URL logic below
-            elif latest_tuple == current_tuple:
-                self.sig_sparkybot_status.emit(f"You have the latest SparkyBot (v{current_version}).")
-                self.sig_sparkybot_button_state.emit("Already Up to Date", True)
-                return
-            else:
-                # Current is newer than latest release (dev/pre-release build)
-                self.sig_sparkybot_status.emit(
-                    f"v{current_version} is newer than latest release (v{latest_version})"
-                )
-                self.sig_sparkybot_button_state.emit("Already Up to Date", True)
-                return
-
-            # Update available — find the download URL
-            assets = data.get("assets", [])
-            download_url = None
-            for asset in assets:
-                if asset.get("name", "").endswith(".zip"):
-                    download_url = asset.get("browser_download_url")
-                    break
-
-            if not download_url:
-                download_url = data.get("zipball_url")
-
-            # Log what we found for debugging
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"SparkyBot update: assets={len(assets)}, zipball_url={data.get('zipball_url')}, download_url={download_url}")
-
-            if not download_url or download_url == "None":
-                self.sig_sparkybot_status.emit(
-                    f"Update available: v{current_version} → v{latest_version}\n"
-                    f"Could not find download URL. Visit GitHub manually."
-                )
-                self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
-                return
-
-            self._sparkybot_update_url = download_url
-            self._sparkybot_latest_version = latest_version
-            self.sig_sparkybot_status.emit(
-                f"Update available: v{current_version} → v{latest_version}"
-            )
-            self.sig_sparkybot_button_state.emit("Download & Install Update", True)
-
-        except Exception as e:
-            self.sig_sparkybot_status.emit(f"Error: {e}")
-            self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
-
-    def _do_sparkybot_install(self, url, version):
-        """Download and install SparkyBot update."""
-        try:
-            import requests
-            import zipfile
-            import shutil
-            import tempfile
-            import logging
-            logger = logging.getLogger(__name__)
-
-            logger.info(f"Starting SparkyBot update download from: {url}")
-
-            app_dir = Path(__file__).parent.parent
-
-            self.sig_sparkybot_status.emit("Downloading update...")
-            self.sig_sparkybot_button_state.emit("Downloading...", False)
-
-            # Download to temp file
-            response = requests.get(url, stream=True, timeout=60)
-            response.raise_for_status()
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
-                tmp_path = Path(tmp.name)
-                for chunk in response.iter_content(chunk_size=8192):
-                    tmp.write(chunk)
-
-            self.sig_sparkybot_status.emit("Downloading update...")
-
-            # --- STAGE the update; do NOT overwrite live files here ---
-            # On Windows (and especially over a network share), the OS locks the
-            # .py files the running app has already imported, so an in-place
-            # overwrite of main.py / core/*.py fails with PermissionError. Instead
-            # we extract into a `.update_pending/` staging folder (always writable
-            # — these files aren't loaded), and bootstrap.py applies it on the next
-            # launch, BEFORE importing the app, when nothing is locked.
-            PROTECTED_PATHS = {'config.properties', 'GW2EI'}
-            SKIP_PATHS = {'.github', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', '.gitignore'}
-
-            staging = app_dir / '.update_pending'
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
-            staging.mkdir(parents=True, exist_ok=True)
-
-            staged = 0
-            with zipfile.ZipFile(tmp_path, 'r') as zf:
-                names = zf.namelist()
-                logger.info(f"Zip contains {len(names)} entries; staging to {staging}")
-                for member in names:
-                    # Strip the zip's top-level directory entry
-                    parts = member.split('/', 1)
-                    if len(parts) < 2 or not parts[1]:
-                        continue
-                    relative_path = parts[1]
-                    top_level = relative_path.split('/')[0]
-                    if top_level in PROTECTED_PATHS:
-                        continue  # never stage over user config/data
-                    if top_level in SKIP_PATHS or member in SKIP_PATHS:
-                        continue  # repo-only files
-                    if member.endswith('/'):
-                        continue
-                    target = staging / relative_path
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(member) as src, open(target, 'wb') as dst:
-                        dst.write(src.read())
-                    staged += 1
-
-            logger.info(f"Staged {staged} files to {staging}; will apply on next launch")
-            tmp_path.unlink()
-
-            self.sig_sparkybot_status.emit(
-                f"Update v{version} downloaded. Restart SparkyBot to finish installing."
-            )
-            self.sig_sparkybot_button_state.emit("Restart Required", False)
-            self.sig_update_complete.emit(version)
-
-        except Exception as e:
-            self.sig_sparkybot_status.emit(f"Update failed: {e}")
-            self.sig_sparkybot_button_state.emit("Check for SparkyBot Update", True)
+    def _on_update_flow_staged(self, version: str):
+        """Update staged into .update_pending/ — restart applies it. The app
+        controller owns the restart prompt (it hooks sig_staged directly)."""
+        self.sparkybot_status_label.setText(
+            f"Update v{version} downloaded. Restart SparkyBot to finish installing."
+        )
+        self.update_sparkybot_button.setText("Restart Required")
+        self.update_sparkybot_button.setEnabled(False)
 
     def _check_ei_status(self):
         """Check current EI status and latest version from GitHub"""
@@ -2436,12 +2518,17 @@ class SettingsWindow(QWidget):
         self.sig_sparkybot_status.connect(
             lambda t: self.sparkybot_status_label.setText(t)
         )
-        self.sig_sparkybot_button_state.connect(
-            lambda t, e: (self.update_sparkybot_button.setText(t), self.update_sparkybot_button.setEnabled(e))
-        )
         self.sig_sparkybot_latest.connect(
             lambda t: self.sparkybot_latest_label.setText(t)
         )
+
+        # UpdateFlow → Updates tab (the window is a thin view over the
+        # window-free flow owned by the app controller)
+        self.update_flow.sig_progress.connect(self._on_update_flow_progress)
+        self.update_flow.sig_available.connect(self._on_update_flow_available)
+        self.update_flow.sig_not_available.connect(self._on_update_flow_not_available)
+        self.update_flow.sig_error.connect(self._on_update_flow_error)
+        self.update_flow.sig_staged.connect(self._on_update_flow_staged)
 
         # Test/refresh operation signals
         self._sig_models_result.connect(self._on_models_result)
@@ -2480,8 +2567,13 @@ class SettingsWindow(QWidget):
             except ValueError:
                 self.gw2ei_exe.setText(file_path)
 
-    def _load_settings(self):
-        """Load settings from config into UI"""
+    def _load_settings(self, prompt_updates: bool = True):
+        """Load settings from config into UI.
+
+        prompt_updates=False (the Settings dialog's reload-on-open path)
+        skips the vocabulary/prompt update-available dialogs — those may
+        only fire once, at first construction.
+        """
         # Discord
         self.discord_webhook.setText(self.config.discord_webhook)
         self.discord_webhook_label.setText(self.config.discord_webhook_label)
@@ -2562,8 +2654,7 @@ class SettingsWindow(QWidget):
             self.ai_system_prompt.setPlainText(
                 FightAnalyst._core_system_prompt() + FightAnalyst._rules_section()
             )
-            self.ai_system_prompt.setReadOnly(True)
-            self.ai_system_prompt.setStyleSheet("background-color: #333; color: #aaa;")
+            theme.set_read_only(self.ai_system_prompt, True)
 
         # AI Vocabulary Weights — load custom_categories and sync mode/weight state
         from core.ai_analyst import VocabularyConfig
@@ -2587,27 +2678,28 @@ class SettingsWindow(QWidget):
                 spinbox.setEnabled(False)
                 edit_btn.setEnabled(False)
 
-        # Check for vocabulary updates
-        try:
-            from core.ai_analyst import VocabularyConfig
-            vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
-            vc = VocabularyConfig(config_path=vocab_path)
-            if vc.update_available():
-                if vc.is_user_modified():
-                    self._prompt_vocab_update(vc)
-                else:
-                    # User never customized, silently merge
-                    vc.apply_default_update(merge=True)
-        except Exception as e:
-            logging.getLogger(__name__).warning("Could not check vocabulary updates: %s", e)
+        if prompt_updates:
+            # Check for vocabulary updates
+            try:
+                from core.ai_analyst import VocabularyConfig
+                vocab_path = self.config.home_dir / "sparkybot_vocabulary.json"
+                vc = VocabularyConfig(config_path=vocab_path)
+                if vc.update_available():
+                    if vc.is_user_modified():
+                        self._prompt_vocab_update(vc)
+                    else:
+                        # User never customized, silently merge
+                        vc.apply_default_update(merge=True)
+            except Exception as e:
+                logging.getLogger(__name__).warning("Could not check vocabulary updates: %s", e)
 
-        # Check if user is on a custom prompt and the default has been updated
-        try:
-            from core.ai_analyst import DEFAULT_PROMPT_VERSION
-            if self.config.ai_system_prompt and self.config.ai_prompt_version < DEFAULT_PROMPT_VERSION:
-                self._prompt_system_prompt_update()
-        except Exception as e:
-            logging.getLogger(__name__).warning("Could not check prompt updates: %s", e)
+            # Check if user is on a custom prompt and the default has been updated
+            try:
+                from core.ai_analyst import DEFAULT_PROMPT_VERSION
+                if self.config.ai_system_prompt and self.config.ai_prompt_version < DEFAULT_PROMPT_VERSION:
+                    self._prompt_system_prompt_update()
+            except Exception as e:
+                logging.getLogger(__name__).warning("Could not check prompt updates: %s", e)
 
         # Twitch
         self.enable_twitch.setChecked(self.config.enable_twitch)
@@ -2633,8 +2725,24 @@ class SettingsWindow(QWidget):
         self.tts_local_voice.setEditText(self.config.tts_local_voice)
         self._on_tts_provider_changed(self.config.tts_provider)
 
-    def _on_save_clicked(self):
-        """Save settings from UI to config"""
+        # Raid Report settings
+        self.raidreport_viewer_html.setText(self.config.raidreport_viewer_html)
+        self.raidreport_output_dir.setText(self.config.raidreport_output_dir)
+        self.raidreport_cache_enabled.setChecked(self.config.raidreport_cache_enabled)
+        self.raidreport_poison_tab.setChecked(self.config.raidreport_poison_tab)
+        self.raidreport_always_zip.setChecked(self.config.raidreport_always_zip)
+        manual = self.config.raidreport_run_mode == 'manual'
+        self.runmode_manual.setChecked(manual)
+        self.runmode_run_button.setChecked(not manual)
+        self.run_autopost.setChecked(self.config.run_auto_post)
+
+    def _save_settings(self) -> tuple:
+        """Persist every settings widget into config (no dialogs).
+
+        The single writer for the whole settings surface — the modal
+        Settings dialog's OK/Apply and the legacy Save button both route
+        here. Returns (saved, relaunch_needed).
+        """
         cfg = self.config.update
         cfg('Discord', 'discordWebhook', self.discord_webhook.text())
         cfg('Discord', 'discordWebhookLabel', self.discord_webhook_label.text())
@@ -2733,27 +2841,45 @@ class SettingsWindow(QWidget):
         cfg('TTS', 'ttsLocalUrl', self.tts_local_url.text().strip())
         cfg('TTS', 'ttsLocalVoice', self.tts_local_voice.currentText().strip())
 
+        # Raid Report
+        cfg('RaidReport', 'raidreportViewerHtml', self.raidreport_viewer_html.text())
+        cfg('RaidReport', 'raidreportOutputDir', self.raidreport_output_dir.text())
+        cfg('RaidReport', 'raidreportCacheEnabled', str(self.raidreport_cache_enabled.isChecked()).lower())
+        cfg('RaidReport', 'raidreportPoisonTab', str(self.raidreport_poison_tab.isChecked()).lower())
+        cfg('RaidReport', 'raidreportAlwaysZip', str(self.raidreport_always_zip.isChecked()).lower())
+        cfg('RaidReport', 'runMode',
+            'manual' if self.runmode_manual.isChecked() else 'run-button')
+        cfg('RaidReport', 'runAutoPost',
+            str(self.run_autopost.isChecked()).lower())
+
         # Write to file and reload attributes
-        if self.config.save():
-            self.settings_changed.emit()
+        if not self.config.save():
+            return False, False
+
+        self.settings_changed.emit()
+
+        # Relaunch notice if console or startup settings changed
+        relaunch_needed = (
+            self.hide_console.isChecked() != self._initial_hide_console
+            or self.start_with_windows.isChecked() != self._initial_start_with_windows
+        )
+        if relaunch_needed:
+            # Update so we don't nag again on next save
+            self._initial_hide_console = self.hide_console.isChecked()
+            self._initial_start_with_windows = self.start_with_windows.isChecked()
+        return True, relaunch_needed
+
+    def _on_save_clicked(self):
+        """Legacy Save Settings button: persist, then modal feedback."""
+        saved, relaunch_needed = self._save_settings()
+        if saved:
             QMessageBox.information(self, "Settings", "Settings saved successfully!")
-
-            # Relaunch notice if console or startup settings changed
-            relaunch_needed = False
-            if self.hide_console.isChecked() != self._initial_hide_console:
-                relaunch_needed = True
-            if self.start_with_windows.isChecked() != self._initial_start_with_windows:
-                relaunch_needed = True
-
             if relaunch_needed:
                 QMessageBox.information(
                     self,
                     "Relaunch Required",
                     "Console window and Windows startup changes will take effect the next time SparkyBot is launched.",
                 )
-                # Update so we don't nag again on next save
-                self._initial_hide_console = self.hide_console.isChecked()
-                self._initial_start_with_windows = self.start_with_windows.isChecked()
         else:
             QMessageBox.warning(self, "Settings", "Failed to save settings.")
 
@@ -2762,19 +2888,13 @@ class SettingsWindow(QWidget):
         self.watcher_toggled.emit()
 
     def set_watcher_state(self, running: bool):
-        """Update UI to reflect watcher state"""
+        """Update UI to reflect watcher state (QSS keys off the state prop)"""
         if running:
             self.start_button.setText("Stop Watcher")
-            self.start_button.setStyleSheet("""
-                QPushButton { background-color: #f44336; color: white; font-weight: bold; border-radius: 5px; }
-                QPushButton:pressed { background-color: #da190b; }
-            """)
+            theme.set_state(self.start_button, "running")
         else:
             self.start_button.setText("Start Watcher")
-            self.start_button.setStyleSheet("""
-                QPushButton { background-color: #4CAF50; color: white; font-weight: bold; border-radius: 5px; }
-                QPushButton:pressed { background-color: #45a049; }
-            """)
+            theme.set_state(self.start_button, "stopped")
 
     def closeEvent(self, event):
         """Handle window close button - minimize to tray or quit based on config"""
@@ -2793,140 +2913,8 @@ class SettingsWindow(QWidget):
                 return
         super().changeEvent(event)
 
-    def _create_process_files_tab(self) -> QWidget:
-        """Create process files tab for manual log processing."""
-        from PyQt6.QtCore import QMimeData
-        from pathlib import Path as P
-
-        class ProcessFilesWidget(QWidget):
-            # Signal emitted when user clicks Process — sends list of Path objects
-            process_requested = pyqtSignal(list)
-
-            def __init__(self, config, parent=None):
-                super().__init__(parent)
-                self.config = config
-                self.setAcceptDrops(True)
-                self._build_ui()
-
-            def _build_ui(self):
-                layout = QVBoxLayout(self)
-
-                # Header description
-                header = QLabel(
-                    "Manually process individual log files without the file watcher. "
-                    "Drop or browse for .evtc/.zevtc files below — they'll run through "
-                    "the full pipeline (GW2EI parse → report → Discord) as a one-off."
-                )
-                header.setWordWrap(True)
-                header.setStyleSheet("color: #aaa; padding: 4px 0 8px 0;")
-                layout.addWidget(header)
-
-                # Drop zone
-                self.drop_label = QLabel("Drag & drop .evtc / .zevtc files here\nor use Browse below")
-                self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self.drop_label.setMinimumHeight(120)
-                self.drop_label.setStyleSheet(
-                    "border: 2px dashed #666; border-radius: 8px; "
-                    "padding: 20px; font-size: 14px; color: #999;"
-                )
-                layout.addWidget(self.drop_label)
-
-                # Browse button
-                browse_btn = QPushButton("Browse Files...")
-                browse_btn.clicked.connect(self._browse_files)
-                layout.addWidget(browse_btn)
-
-                # File queue list
-                self.file_list = QListWidget()
-                layout.addWidget(self.file_list)
-
-                # Button row
-                btn_row = QHBoxLayout()
-                remove_btn = QPushButton("Remove Selected")
-                remove_btn.clicked.connect(self._remove_selected)
-                clear_btn = QPushButton("Clear All")
-                clear_btn.clicked.connect(self.file_list.clear)
-                self.process_btn = QPushButton("Process Files")
-                self.process_btn.setEnabled(False)
-                self.process_btn.clicked.connect(self._process)
-                btn_row.addWidget(remove_btn)
-                btn_row.addWidget(clear_btn)
-                btn_row.addStretch()
-                btn_row.addWidget(self.process_btn)
-                layout.addLayout(btn_row)
-
-                # Status label
-                self.status_label = QLabel("")
-                layout.addWidget(self.status_label)
-
-            def dragEnterEvent(self, event):
-                if event.mimeData().hasUrls():
-                    for url in event.mimeData().urls():
-                        if url.toLocalFile().lower().endswith(('.evtc', '.zevtc')):
-                            event.acceptProposedAction()
-                            self.drop_label.setStyleSheet(
-                                "border: 2px dashed #4CAF50; border-radius: 8px; "
-                                "padding: 20px; font-size: 14px; color: #4CAF50;"
-                            )
-                            return
-                event.ignore()
-
-            def dragLeaveEvent(self, event):
-                self.drop_label.setStyleSheet(
-                    "border: 2px dashed #666; border-radius: 8px; "
-                    "padding: 20px; font-size: 14px; color: #999;"
-                )
-
-            def dropEvent(self, event):
-                self.dragLeaveEvent(event)
-                for url in event.mimeData().urls():
-                    path = url.toLocalFile()
-                    if path.lower().endswith(('.evtc', '.zevtc')):
-                        self._add_file(path)
-
-            def _browse_files(self):
-                # Default to the first configured log folder
-                start_dir = ""
-                log_folders = self.config.get_log_folders()
-                if log_folders:
-                    folder = str(log_folders[0])
-                    if P(folder).exists():
-                        start_dir = folder
-
-                files, _ = QFileDialog.getOpenFileNames(
-                    self, "Select Log Files", start_dir,
-                    "ArcDPS Logs (*.evtc *.zevtc);;All Files (*)"
-                )
-                for f in files:
-                    self._add_file(f)
-
-            def _add_file(self, path: str):
-                # Avoid duplicates
-                for i in range(self.file_list.count()):
-                    if self.file_list.item(i).data(Qt.ItemDataRole.UserRole) == path:
-                        return
-                item = QListWidgetItem(P(path).name)
-                item.setData(Qt.ItemDataRole.UserRole, path)
-                item.setToolTip(path)
-                self.file_list.addItem(item)
-                self.process_btn.setEnabled(True)
-
-            def _remove_selected(self):
-                for item in self.file_list.selectedItems():
-                    self.file_list.takeItem(self.file_list.row(item))
-                self.process_btn.setEnabled(self.file_list.count() > 0)
-
-            def _process(self):
-                paths = []
-                for i in range(self.file_list.count()):
-                    item = self.file_list.item(i)
-                    paths.append(Path(item.data(Qt.ItemDataRole.UserRole)))
-                if paths:
-                    self.process_requested.emit(paths)
-
-        # Create and return the widget
-        self.process_files_widget = ProcessFilesWidget(self.config)
-        return self.process_files_widget
+    # (The Process Files queue is owned by the MainWindow shell — this class
+    # stopped building its duplicate when settings moved into the dialog.)
 
     # ------------------------------------------------------------------
     # Calibration tab — "Calibrate to Your Guild"
@@ -2965,11 +2953,11 @@ class SettingsWindow(QWidget):
     def _set_calib_status(self, text: str, ok: bool | None = None):
         """Set the calibration status line, colored green (ok) / red (fail) / neutral."""
         if ok is True:
-            self.calib_status_label.setStyleSheet("color: #4CAF50;")
+            theme.set_state(self.calib_status_label, "ok")
         elif ok is False:
-            self.calib_status_label.setStyleSheet("color: #e06c6c;")
+            theme.set_state(self.calib_status_label, "error")
         else:
-            self.calib_status_label.setStyleSheet("")
+            theme.set_state(self.calib_status_label, None)
         self.calib_status_label.setText(text)
 
     def _create_calibration_tab(self) -> QWidget:
@@ -2989,6 +2977,7 @@ class SettingsWindow(QWidget):
         corpus_group = QGroupBox("Collected Fights")
         corpus_layout = QVBoxLayout(corpus_group)
         self.calib_count_label = QLabel("0 fights collected")
+        self.calib_count_label.setWordWrap(True)
         corpus_layout.addWidget(self.calib_count_label)
         layout.addWidget(corpus_group)
 
@@ -3006,7 +2995,8 @@ class SettingsWindow(QWidget):
         self.calib_concurrency.setFixedWidth(70)
         import_form.addRow("Import speed (parallel files):", self.calib_concurrency)
 
-        self.calib_import_btn = QPushButton("Import Logs...")
+        self.calib_import_btn = QPushButton("Add Fight Logs...")
+        theme.set_widget_class(self.calib_import_btn, "primary")
         self.calib_import_btn.setToolTip(
             "Select .evtc/.zevtc files to run through Elite Insights and add to the "
             "collected fights."
@@ -3027,11 +3017,7 @@ class SettingsWindow(QWidget):
         btn_row = QHBoxLayout()
         self.calib_recalibrate_btn = QPushButton("Recalibrate")
         self.calib_recalibrate_btn.setMinimumHeight(36)
-        self.calib_recalibrate_btn.setStyleSheet("""
-            QPushButton { background-color: #4CAF50; color: white; font-weight: bold; border-radius: 5px; padding: 4px 12px; }
-            QPushButton:pressed { background-color: #45a049; }
-            QPushButton:disabled { background-color: #3a3a3a; color: #888; }
-        """)
+        theme.set_widget_class(self.calib_recalibrate_btn, "primary")
         self.calib_recalibrate_btn.setToolTip(
             "Compute new thresholds from the collected fights and preview the change "
             "before applying. Nothing is overwritten until you confirm."
@@ -3073,8 +3059,9 @@ class SettingsWindow(QWidget):
         n = corpus_count(self._calib_corpus_path())
         if n == 0:
             self.calib_count_label.setText(
-                "No fights collected yet — run the watcher on some fights, or click "
-                "Import Logs to get started."
+                "No fights collected yet. Add old .evtc or .zevtc logs below, "
+                "or leave the watcher running during fights. Once SparkyBot has "
+                "some examples, it can tune its ratings to your guild."
             )
         else:
             self.calib_count_label.setText(f"{n} fight{'s' if n != 1 else ''} collected.")
@@ -3212,7 +3199,7 @@ class SettingsWindow(QWidget):
         is actually something to propose. The manual Recalibrate button passes
         auto=False and keeps its existing feedback dialogs.
         """
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
         from core.calibration import compute_thresholds, load_corpus, write_thresholds
         from core.performance_buckets import active_thresholds, reload_thresholds
 
@@ -3278,14 +3265,14 @@ class SettingsWindow(QWidget):
         """
         from core.calibration import AXES, tier_delta, fight_count_warning
         from core.performance_buckets import _BUCKET_LABELS
-        from PyQt6.QtWidgets import (
+        from PySide6.QtWidgets import (
             QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
         )
 
-        up_color = QColor(80, 200, 120)     # green: tier rose
-        down_color = QColor(220, 100, 100)  # red: tier dropped
-        same_color = QColor(150, 150, 150)  # gray: unchanged
-        thin_color = QColor(220, 160, 60)   # amber: thin-obs metric flag
+        up_color = theme.color("ok")        # green: tier rose
+        down_color = theme.color("error")   # red: tier dropped
+        same_color = theme.color("neutral")  # gray: unchanged
+        thin_color = theme.color("warn")    # amber: thin-obs metric flag
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Recalibration Preview")
@@ -3309,21 +3296,18 @@ class SettingsWindow(QWidget):
         # Distinct-fight soft warning banner (never blocks).
         if fight_count_warning(fight_count):
             warn = QLabel(
-                f"⚠ Only {fight_count} fight"
+                f"Only {fight_count} fight"
                 f"{'s' if fight_count != 1 else ''} — the percentile curve may be "
                 "unreliable. Consider importing more logs before relying on this. "
                 "(You can still apply it.)"
             )
             warn.setWordWrap(True)
-            warn.setStyleSheet(
-                "background-color: #5a4500; color: #ffd966; border: 1px solid "
-                "#8a6d00; border-radius: 4px; padding: 6px;"
-            )
+            theme.set_widget_class(warn, "warn-banner")
             dlg_layout.addWidget(warn)
 
-        # One-line legend; the ⚠/thin-data detail lives in cell + header tooltips.
+        # One-line legend; thin-data detail lives in cell + header tooltips.
         legend = QLabel("Green = up, red = down, gray = unchanged.")
-        legend.setStyleSheet("color: #aaa;")
+        theme.mark_hint(legend)
         dlg_layout.addWidget(legend)
 
         # Tier columns speak TIER NAMES (percentile in parens + header tooltip).
@@ -3365,7 +3349,7 @@ class SettingsWindow(QWidget):
             is_thin = n < self.CALIB_CONFIDENCE_FLOOR
 
             label = self._calib_axis_label(axis)
-            metric_item = QTableWidgetItem(label + (" ⚠" if (has_new and is_thin) else ""))
+            metric_item = QTableWidgetItem(label)
             metric_item.setData(Qt.ItemDataRole.UserRole, axis)  # keep the raw key
             if has_new and is_thin:
                 metric_item.setForeground(thin_color)
@@ -3452,6 +3436,145 @@ class SettingsWindow(QWidget):
         self._set_calib_status("Reverted to built-in defaults.", ok=True)
         self._refresh_calib_count()  # Reset button disables now that the override is gone
 
+    def _create_raid_report_settings_tab(self) -> QWidget:
+        """Create Raid Report settings tab."""
+        scroll = QScrollArea()
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Stats viewer HTML
+        viewer_group = QGroupBox("Stats Viewer")
+        viewer_form = QFormLayout(viewer_group)
+
+        viewer_layout = QHBoxLayout()
+        self.raidreport_viewer_html = QLineEdit()
+        self.raidreport_viewer_html.setPlaceholderText(
+            "Path to Top_Stats_Index.html (leave blank to auto-detect)"
+        )
+        self.raidreport_viewer_browse_btn = QPushButton("Browse...")
+        self.raidreport_viewer_browse_btn.clicked.connect(self._browse_raidreport_viewer)
+        viewer_layout.addWidget(self.raidreport_viewer_html)
+        viewer_layout.addWidget(self.raidreport_viewer_browse_btn)
+        viewer_form.addRow("Stats Viewer HTML:", viewer_layout)
+
+        layout.addWidget(viewer_group)
+
+        # How reports get made — usage-mode preference (RaidReport/runMode).
+        # Persisted now; the Home-page run panel honors it in a later slice.
+        self.runmode_group_box = QGroupBox("How reports get made")
+        runmode_layout = QVBoxLayout(self.runmode_group_box)
+
+        self.runmode_run_button = QRadioButton("One-button runs (recommended)")
+        theme.mark_option(self.runmode_run_button)
+        runmode_layout.addWidget(self.runmode_run_button)
+        run_hint = QLabel(
+            "Press Start Run when the raid starts; End Run builds the "
+            "report and posts it."
+        )
+        run_hint.setWordWrap(True)
+        theme.mark_hint(run_hint)
+        runmode_layout.addWidget(run_hint)
+
+        self.runmode_manual = QRadioButton("I'll pick fights myself")
+        theme.mark_option(self.runmode_manual)
+        runmode_layout.addWidget(self.runmode_manual)
+        manual_hint = QLabel(
+            "Build reports on the Raid Report page whenever you want."
+        )
+        manual_hint.setWordWrap(True)
+        theme.mark_hint(manual_hint)
+        runmode_layout.addWidget(manual_hint)
+
+        # Explicit group: exclusivity must survive re-parenting into the
+        # Settings dialog's Raid Reports page.
+        self.runmode_buttons = QButtonGroup(self)
+        self.runmode_buttons.addButton(self.runmode_run_button)
+        self.runmode_buttons.addButton(self.runmode_manual)
+        self.runmode_run_button.setChecked(True)
+
+        # Remembered End Run auto-post choice (RaidReport/runAutoPost —
+        # the End Run confirm dialog writes the same key). Inert in manual
+        # mode, so it grays with the mode choice.
+        self.run_autopost = QCheckBox(
+            "When I end a run, post the report to Discord automatically")
+        self.run_autopost.setChecked(True)
+        runmode_layout.addSpacing(4)
+        runmode_layout.addWidget(self.run_autopost)
+        self.runmode_manual.toggled.connect(self.run_autopost.setDisabled)
+
+        layout.addWidget(self.runmode_group_box)
+
+        # Output
+        output_group = QGroupBox("Output")
+        output_form = QFormLayout(output_group)
+
+        output_layout = QHBoxLayout()
+        self.raidreport_output_dir = QLineEdit()
+        self.raidreport_output_dir.setPlaceholderText(
+            "Leave blank: same folder as viewer, then app directory"
+        )
+        self.raidreport_output_browse_btn = QPushButton("Browse...")
+        self.raidreport_output_browse_btn.clicked.connect(self._browse_raidreport_output)
+        output_layout.addWidget(self.raidreport_output_dir)
+        output_layout.addWidget(self.raidreport_output_browse_btn)
+        output_form.addRow("Report Output Folder:", output_layout)
+
+        layout.addWidget(output_group)
+
+        # Options
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout(options_group)
+
+        self.raidreport_cache_enabled = QCheckBox(
+            "Fast reports (reuse live fight data) \u2014 recommended"
+        )
+        self.raidreport_cache_enabled.setChecked(True)
+        self.raidreport_cache_enabled.setToolTip(
+            "SparkyBot already analyzes every fight seconds after it ends. With this "
+            "on, it keeps each fight's analysis file (about 20 MB per fight) in a "
+            "RaidReportCache folder instead of discarding it. Reports then build from "
+            "work already done \u2014 seconds instead of minutes \u2014 and only re-analyze "
+            "fights SparkyBot missed. Files clean themselves up after 48 hours. Turn "
+            "this off to save disk space; reports will re-analyze every log from "
+            "scratch."
+        )
+        options_layout.addWidget(self.raidreport_cache_enabled)
+
+        self.raidreport_poison_tab = QCheckBox(
+            "Include poison coverage page in the report"
+        )
+        options_layout.addWidget(self.raidreport_poison_tab)
+
+        self.raidreport_always_zip = QCheckBox(
+            "Always zip Discord uploads"
+        )
+        options_layout.addWidget(self.raidreport_always_zip)
+
+        layout.addWidget(options_group)
+        layout.addStretch()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+        return scroll
+
+    def _browse_raidreport_viewer(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Stats Viewer HTML",
+            self.raidreport_viewer_html.text() or str(Path.home()),
+            "HTML files (*.html);;All files (*)"
+        )
+        if file_path:
+            self.raidreport_viewer_html.setText(file_path)
+
+    def _browse_raidreport_output(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Report Output Folder",
+            self.raidreport_output_dir.text() or str(Path.home()),
+        )
+        if folder:
+            self.raidreport_output_dir.setText(folder)
+
     def _create_about_tab(self) -> QWidget:
         """Create about tab"""
         widget = QWidget()
@@ -3467,15 +3590,15 @@ class SettingsWindow(QWidget):
 
         title = QLabel("<b>SparkyBot</b>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        theme.set_variant(title, "title")
         layout.addWidget(title)
 
         version_row = QHBoxLayout()
         version_label = QLabel(f"Version {VERSION}")
-        version_label.setStyleSheet("font-size: 11px; color: #aaa;")
-        github_link = QLabel('<a href="https://github.com/SimpleHonors/SparkyBot" style="color: #5bc0de;">View on GitHub</a>')
+        theme.mark_hint(version_label)
+        github_link = QLabel('<a href="https://github.com/SimpleHonors/SparkyBot">View on GitHub</a>')
         github_link.setOpenExternalLinks(True)
-        github_link.setStyleSheet("font-size: 11px;")
+        theme.mark_hint(github_link)
         version_row.addStretch()
         version_row.addWidget(version_label)
         version_row.addWidget(QLabel("  •  "))
@@ -3488,7 +3611,7 @@ class SettingsWindow(QWidget):
         # "Built on the shoulders of giants" section
         credits_header = QLabel("<b>Built on the shoulders of giants:</b>")
         credits_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        credits_header.setStyleSheet("font-size: 13px; font-weight: bold;")
+        theme.set_variant(credits_header, "heading")
         layout.addWidget(credits_header)
 
         layout.addSpacing(10)
@@ -3499,12 +3622,11 @@ class SettingsWindow(QWidget):
             name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             name_label.setTextFormat(Qt.TextFormat.RichText)
             name_label.setOpenExternalLinks(True)
-            name_label.setStyleSheet("font-size: 12px;")
             layout.addWidget(name_label)
             if desc:
                 desc_label = QLabel(desc)
                 desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                desc_label.setStyleSheet("font-size: 11px; color: #aaa;")
+                theme.mark_hint(desc_label)
                 layout.addWidget(desc_label)
             layout.addSpacing(5)
 
@@ -3551,7 +3673,7 @@ class SettingsWindow(QWidget):
         )
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setWordWrap(True)
-        tagline.setStyleSheet("font-size: 11px; color: #888;")
+        theme.mark_hint(tagline)
         layout.addWidget(tagline)
 
         # Add the inner widget to the outer layout with stretches on both sides

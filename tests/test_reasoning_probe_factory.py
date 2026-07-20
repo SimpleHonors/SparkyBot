@@ -13,7 +13,8 @@ class _FakeAnalyst:
         self.kw = kw
         self.last_completion_tokens = 123
 
-    def analyze(self, summary, timeout=30):
+    def analyze(self, summary, timeout=30, **kwargs):
+        self.analyze_kwargs = kwargs
         return "" if self.kw.get("thinking") else "HOT TAKE: nice fight"
 
 

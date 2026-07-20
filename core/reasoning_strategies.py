@@ -49,6 +49,11 @@ def _apply_template_kwargs(p: dict, disable: bool) -> None:
         p.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
 
 
+def _apply_deepseek_thinking(p: dict, disable: bool) -> None:
+    if disable:
+        p["thinking"] = {"type": "disabled"}
+
+
 def _apply_think_enable(p: dict, disable: bool) -> None:
     if disable:
         p["think_enable"] = False
@@ -87,6 +92,12 @@ def _hint_template(host: str, model: str) -> int:
     return 3 if ("deepseek" in model or "qwen" in model) else 1
 
 
+def _hint_deepseek(host: str, model: str) -> int:
+    if host == "api.deepseek.com" or host.endswith(".deepseek.com"):
+        return 20
+    return 5 if "deepseek" in model else 1
+
+
 def _hint_gemini(host: str, model: str) -> int:
     if host.endswith(".googleapis.com"):
         return 10
@@ -106,6 +117,8 @@ def _hint_openai(host: str, model: str) -> int:
 
 
 ALL_STRATEGIES: List[Strategy] = [
+    Strategy("deepseek_thinking", "DeepSeek thinking switch", True,
+             _apply_deepseek_thinking, _hint_deepseek),
     Strategy("openai_effort", "OpenAI reasoning_effort", True, _apply_openai_effort, _hint_openai),
     Strategy("openrouter_reasoning", "OpenRouter reasoning flag", True, _apply_openrouter, _hint_openrouter),
     Strategy("template_kwargs", "Template enable_thinking flag", True, _apply_template_kwargs, _hint_template),

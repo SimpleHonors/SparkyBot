@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 
 from dataclasses import dataclass
 
-from version import VERSION
+from core.version import VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -1200,7 +1200,7 @@ class FightReport:
         # meaningless without time context. 5 kills in 30 seconds is legendary;
         # 5 kills in 8 minutes is mediocre. Old absolute floors silently
         # rewarded long fights for accumulating big totals on average play.
-        from performance_buckets import active_thresholds  # noqa: E402
+        from core.performance_buckets import active_thresholds  # noqa: E402
         _active_thresholds = active_thresholds()
 
         # Optional cooldown tracker — when present, a (player, axis) pair on

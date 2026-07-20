@@ -1,6 +1,6 @@
 # SparkyBot
 
-### The unhinged AI shot-caller that watches your Guild Wars 2 WvW logs, does the math, and roasts your squad in real time — on Discord *and* Twitch, with a voice if you want one.
+### The unhinged AI shot-caller that watches your Guild Wars 2 WvW logs, does the math, and roasts your squad in real time — on Discord *and* Twitch, with a voice if you want one. When the raid's over, it builds a complete statistical autopsy of your entire run.
 
 You fought. You died (a little). ArcDPS wrote a log. **Before you've finished typing "gg," SparkyBot has parsed the whole fight, found the one stat that actually mattered, and posted something meaner and funnier than your guildies were about to.**
 
@@ -10,9 +10,47 @@ Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good 
 
 ---
 
-![Discord & Twitch Integration](https://github.com/user-attachments/assets/bdc56ce6-0fff-401c-b3f7-d00d3c34aea9)
+![SparkyBot v2 Home](docs/screenshots/v2-home.png)
 <br><br>
-![AI Powered Fight Analysis](https://github.com/user-attachments/assets/2d243ab1-7f1e-434d-9006-05b2710d330c)
+![SparkyBot v2 Raid Report](docs/screenshots/v2-raid-report.png)
+
+---
+
+## What's New in 2.0 — *"It Has a Front Door Now"*
+
+SparkyBot used to be a powerful pile of tabs wearing a trench coat. Version
+2.0 gives it a real Home screen, a proper sidebar, and Settings grouped by
+what humans are trying to do—not where a config file happened to put it.
+
+- **Start Run. End Run. Report done.** SparkyBot counts the fights, remembers
+  an open run after a restart, builds the report, and can post it to Discord.
+  You raid; it handles the paperwork.
+- **Raid Reports without the ritual.** Pick the last 12 hours, today, or only
+  the fights you want. Reports reuse work SparkyBot already did, generate
+  faster, and shrink themselves so Discord is less likely to throw a fit.
+- **A Home screen that tells you what happened.** Posted fights, skipped
+  fights, detected/processing status, commentary, voice, and reports land in
+  one activity feed. Drop log files straight onto the window when you want to
+  process them manually.
+- **AI is actually optional.** Decline it in setup and the AI, Voice,
+  Vocabulary, and Calibration screens disappear. No guilt trip. No mystery
+  checkbox maze. You can turn it on later.
+- **Native Windows installer.** Download, double-click, done. No Python
+  scavenger hunt and no command prompt audition.
+
+Under the fresh paint: safer report names, clearer errors, honest progress,
+smaller temporary files, fewer console-window jump scares, and enough tests
+to make the bugs feel personally unwelcome.
+
+![Run and report settings](docs/screenshots/v2-settings-raid-reports.png)
+
+The first-run choices now look like choices—not faint little bubbles playing
+hide-and-seek—and empty pages point you at the button that actually gets work
+into them.
+
+![Clear first-run choices](docs/screenshots/v2-setup-ai-choice.png)
+<br><br>
+![Raid Report empty-state guide](docs/screenshots/v2-raid-report-empty.png)
 
 ---
 
@@ -53,17 +91,18 @@ Discord gets color-coded code blocks with configurable guild icons; Twitch gets 
 
 ### Prerequisites
 
-1. **Python 3.9+** from [python.org](https://www.python.org/downloads/) — check **"Add Python to PATH"** during install (critical; Sparky won't launch without it, and it'll be sad, and so will you)
-2. **.NET 8.0 Runtime** from [Microsoft](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
-3. **ArcDPS** from [deltaconnected.com/arcdps](https://www.deltaconnected.com/arcdps/)
+1. **.NET 8.0 Desktop Runtime** from [Microsoft](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
+2. **ArcDPS** from [deltaconnected.com/arcdps](https://www.deltaconnected.com/arcdps/)
 
 ### Install
 
-1. Download from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases)
-2. Extract the zip anywhere (e.g. `C:\SparkyBot`)
-3. Double-click **SparkyBot.bat**
+1. Download `SparkyBot-v2.0.0-setup.exe` from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases).
+2. Double-click it.
+3. Launch SparkyBot. That is the whole list. We checked twice.
 
-On first launch it installs its own dependencies, runs a setup wizard, and starts watching. You don't need to be a programmer. You need to be able to double-click a file.
+On first launch the setup wizard handles the essentials. You do not need
+Python or a command line. Source installs remain available for people who
+enjoy owning more screwdrivers than furniture.
 
 ### Discord
 
@@ -142,6 +181,36 @@ Then it fingerprints your stat shape against your class to figure out *what you 
 
 ---
 
+## Raid Report
+
+> 📸 *[Screenshot placeholder — Raid Report tab + baked HTML report]*
+
+Other tools make you wait. SparkyBot was already working the whole time you played — parsing every fight live, caching the results. By the time you call it a night, the heavy lifting is done. One click finishes the job.
+
+### How it works
+
+1. **Open the Raid Report tab** — it auto-discovers your logs and selects the last 12 hours. A line tells you how many fights are ready: *"N recent fights found — ready."*
+2. **Click the big button** — **"Make my raid report."** SparkyBot reuses everything it already parsed live, downloads the stats builder on first use (one-time), and bakes a single self-contained HTML file. Progress shows inline: reading fights, crunching numbers, building the page. **Raid ends, click, done.**
+3. **Post to Discord** — one more click sends it to your guild's channel. You can also open the report in your browser first. Big reports auto-zip to fit Discord's attachment limit.
+
+Need to cherry-pick fights or name your report ("Wolf Wednesday")? The **Advanced** link in the bottom-right expands the full fight list, selection buttons, and an optional name field. Your last 12 hours are pre-selected every time, so you never have to touch Advanced unless you want to.
+
+If anything goes wrong, you see a plain-text error right on the tab — no stack traces, no jargon. A **Show details** button reveals the full copyable message. Everything is also written to `sparkybot.log` next to the app.
+
+### What's in it
+
+A TopStats-style dashboard that uses **all the data from every fight in the session** — not just one-off per-fight snippets. Per-player rankings across DPS, boon uptime, healing, strips, cleanses, CCs, and damage modifiers. Per-fight breakdowns so you can see who popped off in the opener vs. who carried the long slog. Combined stats dashboards that surface patterns across the whole night.
+
+### Cache & storage
+
+The **parse cache** (on by default) means the Raid Report doesn't re-run GW2EI on logs SparkyBot already processed live. A full night's report generates in seconds. Cache entries live in a dated folder structure (`NightReportCache/YYYYMMDD/`), auto-clean after 48 hours, and a settings-change fingerprint silently invalidates them so you never serve stale data. The **records database** persists permanently — your best nights accumulate, not disappear.
+
+### Credits
+
+The stats engine is **GW2 Elite Insights** (baaron4/GW2-Elite-Insights-Parser) paired with the **GW2 EI Log Combiner** (Drevarr/GW2_EI_log_combiner). SparkyBot downloads the combiner at runtime with your consent — it is never vendored, imported, or redistributed. Both projects are linked in [Built on the Shoulders of Giants](#built-on-the-shoulders-of-giants).
+
+---
+
 ## Troubleshooting
 
 - **Logs not detected** — check the watcher is running and the folder path is right (usually a numbered subfolder in `arcdps.cbtlogs`). Network shares have up to 5s latency.
@@ -157,6 +226,7 @@ Then it fingerprints your stat shape against your class to figure out *what you 
 
 - **[MzFightReporter](https://github.com/Swedemon/MzFightReporter)** by Swedemon (MIT) — the original Java WvW reporter that inspired this
 - **[GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser)** by baaron4 — the parser powering all log analysis
+- **[GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner)** by Drevarr — the stats dashboard engine used by Raid Report, installed at runtime with consent
 - **[ArcDPS](https://www.deltaconnected.com/arcdps/)** by deltaconnected — the combat logging addon that makes it all possible
 - **[PlenBot Log Uploader](https://github.com/Plenyx/PlenBotLogUploader)** by Plenyx and **[EVTC Parser](https://github.com/Drevarr/EVTC_parser)** by Drevarr
 

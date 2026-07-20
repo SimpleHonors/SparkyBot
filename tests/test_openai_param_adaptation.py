@@ -336,6 +336,32 @@ def test_analyze_recovers_from_deepseek_silent_reasoning_failure(monkeypatch):
     assert fa._reasoning_headroom is True
 
 
+def test_direct_deepseek_uses_official_thinking_switch_over_stale_probe_strategy(
+        monkeypatch):
+    """A persisted generic template strategy must not override DeepSeek's API."""
+    import core.fight_analyst as fa_mod
+
+    fa = _stub_deepseek_analyst_for_analyze()
+    fa.thinking = False
+    fa.reasoning_strategy = "template_kwargs"
+    fa._silent_guard.strategy_id = "template_kwargs"
+    sent_payloads = []
+
+    def fake_post(endpoint, headers=None, json=None, timeout=None):
+        sent_payloads.append(copy.deepcopy(json))
+        return _FakeResponse(200, json_body=_ok_body())
+
+    monkeypatch.setattr(fa_mod, "requests", type("R", (), {
+        "post": staticmethod(fake_post),
+        "Timeout": fa_mod.requests.Timeout,
+        "ConnectionError": fa_mod.requests.ConnectionError,
+    }))
+
+    assert fa.analyze({"outcome": "win"}, timeout=5) == "gg ez"
+    assert sent_payloads[0]["thinking"] == {"type": "disabled"}
+    assert "chat_template_kwargs" not in sent_payloads[0]
+
+
 def test_gemini_pro_host_detected():
     fa = _bare_analyst()
     fa.base_url = "https://generativelanguage.googleapis.com/v1beta/openai"

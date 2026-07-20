@@ -6,7 +6,32 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from core.apppaths import app_dir, gw2ei_dir, no_window_kwargs
+
 logger = logging.getLogger(__name__)
+
+PARSE_CONFIG_CONTENT = (
+    "SaveOutJSON=True\n"
+    "SaveOutHTML=False\n"
+    "SaveOutCSV=False\n"
+    "SaveOutTrace=False\n"
+    "CompressRaw=False\n"
+    "DetailledWvW=True\n"
+    "ParseCombatReplay=True\n"
+    "IndentJSON=False\n"
+    "RawTimelineArrays=True\n"
+    "ParsePhases=True\n"
+    "ComputeDamageModifiers=True\n"
+    "SaveAtOut=True\n"
+    "SingleThreaded=False\n"
+    "ParseMultipleLogs=False\n"
+    "SkipFailedTries=False\n"
+    "Anonymous=False\n"
+    "HtmlExternalScripts=False\n"
+    "HtmlCompressJson=False\n"
+    "LightTheme=False\n"
+    "CustomTooShort=2200\n"
+)
 
 
 class GW2EIInvoker:
@@ -14,12 +39,12 @@ class GW2EIInvoker:
 
     def __init__(self, config):
         self.config = config
-        self.home_dir = Path(__file__).parent.parent
+        self.home_dir = app_dir()
 
     def get_gw2ei_path(self) -> Optional[Path]:
         """Find GW2EI CLI executable"""
         # Check in GW2EI subfolder
-        gw2ei_subfolder = self.home_dir / "GW2EI"
+        gw2ei_subfolder = gw2ei_dir()
         if gw2ei_subfolder.exists():
             gw2ei_path = gw2ei_subfolder / "GuildWars2EliteInsights-CLI.exe"
             if gw2ei_path.exists():
@@ -34,7 +59,7 @@ class GW2EIInvoker:
 
     def get_gw2ei_folder(self) -> Path:
         """Get the GW2EI folder path"""
-        return self.home_dir / "GW2EI"
+        return gw2ei_dir()
 
     def _ensure_parse_config(self, config_name: str = "wvwupload.conf") -> Path:
         """Return path to the EI parse config, always writing current settings.
@@ -45,38 +70,23 @@ class GW2EIInvoker:
         write) on every call, so two simultaneous parses could otherwise have one
         EI process read the file mid-rewrite. A per-job name removes that race.
         """
-        conf_folder = self.home_dir / "GW2EI" / "Settings"
+        conf_folder = gw2ei_dir() / "Settings"
         conf_folder.mkdir(parents=True, exist_ok=True)
         conf_path = conf_folder / config_name
 
-        content = (
-            "SaveOutJSON=True\n"
-            "SaveOutHTML=False\n"
-            "SaveOutCSV=False\n"
-            "SaveOutTrace=False\n"
-            "CompressRaw=False\n"
-            "DetailledWvW=True\n"
-            "ParseCombatReplay=True\n"
-            "IndentJSON=False\n"
-            "RawTimelineArrays=True\n"
-            "ParsePhases=True\n"
-            "ComputeDamageModifiers=True\n"
-            "SaveAtOut=True\n"
-            "SingleThreaded=False\n"
-            "ParseMultipleLogs=False\n"
-            "SkipFailedTries=False\n"
-            "Anonymous=False\n"
-            "HtmlExternalScripts=False\n"
-            "HtmlCompressJson=False\n"
-            "LightTheme=False\n"
-            "CustomTooShort=2200\n"
-        )
-
-        conf_path.write_text(content, encoding="utf-8")
+        conf_path.write_text(PARSE_CONFIG_CONTENT, encoding="utf-8")
         logger.info(f"Wrote GW2EI config to: {conf_path}")
-        logger.debug(f"Config content:\n{content}")
+        logger.debug(f"Config content:\n{PARSE_CONFIG_CONTENT}")
 
         return conf_path
+
+    def cache_key(self) -> tuple[str, str]:
+        """(ei_version, settings_fingerprint) identifying current parse output."""
+        from core.ei_updater import EIUpdater
+        from core.raid_session import settings_fingerprint
+        ei_version = EIUpdater(self.get_gw2ei_folder()).get_current_version() or "unknown"
+        fingerprint = settings_fingerprint(PARSE_CONFIG_CONTENT)
+        return ei_version, fingerprint
 
     def parse_file(self, log_file: Path, timeout: int = 120,
                    config_name: Optional[str] = None) -> Optional[Path]:
@@ -121,7 +131,8 @@ class GW2EIInvoker:
                 cwd=str(self.home_dir),
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                **no_window_kwargs(),
             )
 
             elapsed = time.time() - start_time
@@ -237,7 +248,8 @@ class GW2EIInvoker:
                 ["dotnet", "--list-runtimes"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                **no_window_kwargs(),
             )
             return "Microsoft.WindowsDesktop.App" in result.stdout or ".NET" in result.stdout
         except FileNotFoundError:

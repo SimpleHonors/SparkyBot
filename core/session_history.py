@@ -9,7 +9,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from ai_helpers import _atomic_write_json
+from core.ai_helpers import _atomic_write_json
+from core.apppaths import app_dir
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class SessionHistoryTracker:
     LOSS_OUTCOMES = {"Loss", "Decisive Loss"}
 
     def __init__(self, store_path: Path = None):
-        self.store_path = store_path or Path(__file__).parent.parent / "sparkybot_session_history.json"
+        self.store_path = store_path or app_dir() / "sparkybot_session_history.json"
         self._entries: list = []  # list of {"outcome": str, "fight_shape": str, "ts": float}
         self._load()
 
@@ -161,13 +162,13 @@ class SessionHistoryTracker:
                     (
                         " Session note: another win on the pile. Express genuine "
                         "pity for the enemy at this point, they have been getting "
-                        "farmed all night. Frame this fight as forgettable, just "
+                        "farmed all session. Frame this fight as forgettable, just "
                         "another entry in the ledger. Do not hype."
                     ),
                     (
                         " Session note: this win streak is so long it is barely "
                         "worth commenting on. Find the one thing the squad did "
-                        "badly despite the easy night and roast that instead of "
+                        "badly despite the easy session and roast that instead of "
                         "praising the win. Constructive contempt."
                     ),
                 ])
@@ -181,7 +182,7 @@ class SessionHistoryTracker:
                 mood = (
                     " Session note: the squad is on a win streak. Ease off "
                     "the euphoria slightly, this is not the first win of "
-                    "the night."
+                    "the session."
                 )
             else:
                 return {"session_context": "", "mood_suffix": ""}
@@ -192,7 +193,7 @@ class SessionHistoryTracker:
             if length == self.LOSS_STREAK_TILT:
                 mood = (
                     " Session note: this is a sustained loss streak. Full "
-                    "tilt. Something is structurally wrong tonight, the "
+                    "tilt. Something is structurally wrong this session, the "
                     "squad should hear it."
                 )
             elif length == self.LOSS_STREAK_PATTERN:

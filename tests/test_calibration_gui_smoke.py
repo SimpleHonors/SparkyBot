@@ -4,7 +4,7 @@ The PyQt panel is intentionally NOT unit-tested beyond this — it's thin glue
 over the pure calibration/performance_buckets logic, which is covered in
 test_calibration.py and test_performance_buckets_loader.py.
 
-This test is skipped automatically where PyQt6 is unavailable (e.g. headless
+This test is skipped automatically where PySide6 is unavailable (e.g. headless
 CI), so it never produces a false failure.
 """
 import sys
@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "core"))
 
-pytest.importorskip("PyQt6", reason="PyQt6 not installed in this environment")
+pytest.importorskip("PySide6", reason="PySide6 not installed in this environment")
 
 
 def test_settings_window_exposes_calibration_methods():

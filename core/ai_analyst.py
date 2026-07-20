@@ -14,7 +14,7 @@ removed.
 """
 
 # --- Module-level helpers, constants, and regex patterns -------------------
-from ai_helpers import (  # noqa: F401
+from core.ai_helpers import (  # noqa: F401
     HYPE_HEAVY,
     HYPE_OUTSIZED,
     HYPE_RESERVED,
@@ -38,10 +38,10 @@ from ai_helpers import (  # noqa: F401
 )
 
 # --- Classes ---------------------------------------------------------------
-from vocabulary_config import VocabularyConfig  # noqa: F401
-from vocabulary_tracker import VocabularyTracker  # noqa: F401
-from session_history import SessionHistoryTracker  # noqa: F401
-from fight_analyst import (  # noqa: F401
+from core.vocabulary_config import VocabularyConfig  # noqa: F401
+from core.vocabulary_tracker import VocabularyTracker  # noqa: F401
+from core.session_history import SessionHistoryTracker  # noqa: F401
+from core.fight_analyst import (  # noqa: F401
     DEFAULT_PROMPT_CHANGELOG,
     DEFAULT_PROMPT_VERSION,
     FightAnalyst,
@@ -52,7 +52,7 @@ from fight_analyst import (  # noqa: F401
 # PRESETS moved to providers.py in the split; re-exported here so first-run
 # callers (setup_wizard, gui_settings) that do `from ai_analyst import PRESETS`
 # keep working.
-from providers import PRESETS  # noqa: F401
+from core.providers import PRESETS  # noqa: F401
 
 __all__ = [
     # Constants

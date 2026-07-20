@@ -1,3 +1,3 @@
 """Single source of truth for SparkyBot version."""
 
-VERSION = "1.8.5"
+VERSION = "2.0.0"

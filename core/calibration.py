@@ -56,10 +56,11 @@ DEFAULT_MIN_DURATION = 30  # seconds; short fights skew rates and are skipped
 _PCTS = (0.25, 0.50, 0.75, 0.90, 0.95)
 
 # Default runtime corpus / override paths (app dir, gitignored).
-# WITHOUT .resolve() to match config.home_dir (Path(__file__).parent.parent),
+# WITHOUT .resolve() to match config.home_dir (app_dir()),
 # so the auto-accumulate hook and the GUI agree on the same file even under a
 # symlinked install.
-_APP_DIR = Path(__file__).parent.parent
+from core.apppaths import app_dir as _app_dir_fn
+_APP_DIR = _app_dir_fn()
 CORPUS_PATH = _APP_DIR / "calibration_corpus.jsonl"
 THRESHOLDS_PATH = _APP_DIR / "calibration_thresholds.json"
 

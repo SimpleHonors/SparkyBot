@@ -13,7 +13,7 @@ legacy bucket() function is kept for the v2 prompt path.
 """
 from __future__ import annotations
 
-from performance_buckets import bucket_player, infer_build
+from core.performance_buckets import bucket_player, infer_build
 
 
 # ---------------------------------------------------------------------------

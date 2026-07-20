@@ -6,9 +6,19 @@ import configparser
 from pathlib import Path
 from typing import List, Optional, Union
 
+from core.apppaths import app_dir
+
 
 class Config:
     """Manages application configuration from config.properties"""
+
+    # Config format version stamped into the user's file on every save
+    # (Behavior/configVersion). Bump when a one-shot migration is added;
+    # migrations gate on the version loaded from the file (config_version).
+    # Deliberately NOT in _DEFAULTS: read_dict-seeding would make an old file
+    # that lacks the key indistinguishable from one written at the current
+    # version, which is exactly the signal migrations need.
+    CONFIG_VERSION = 2
 
     # Default configuration - used both for read_dict and for creating new config files
     _DEFAULTS = {
@@ -98,6 +108,31 @@ class Config:
             'ttsElevenLabsSpeed': '1.0',
             'ttsLocalUrl': 'http://127.0.0.1:5820',
             'ttsLocalVoice': '',
+        },
+        'RaidReport': {
+            # How raid reports get made (usage-mode preference):
+            # 'run-button' = one-button Start Run / End Run flow (default),
+            # 'manual' = the user picks fights on the Raid Report page.
+            # The behavior lands with the Home/run-session slices; the
+            # Settings switch persists the choice now.
+            'runMode': 'run-button',
+            # Remembered End Run auto-post choice (the End Run confirm
+            # dialog's checkbox and Settings > Raid Reports both write it).
+            'runAutoPost': 'true',
+            'raidreportCacheEnabled': 'true',
+            'raidreportCacheDir': '',
+            'raidreportCacheRetentionHours': '48',
+            'raidreportViewerHtml': '',
+            'raidreportOutputDir': '',
+            'raidreportAlwaysZip': 'false',
+            'raidreportPoisonTab': 'true',
+            # Wrap-up embed, AI zingers, and voice recap are parked until
+            # the recap is respec'd with data worth reporting — the
+            # operator judged the current recap output not useful
+            # (2026-07-19). Settings toggles still work for opting in.
+            'raidreportWrapup': 'false',
+            'raidreportWrapupAi': 'false',
+            'raidreportWrapupVoice': 'false',
         }
     }
 
@@ -107,7 +142,7 @@ class Config:
         self._config.read_dict(self._DEFAULTS)
 
         # Use app root as home_dir - stable regardless of working directory or config location
-        self.home_dir = Path(__file__).parent.parent
+        self.home_dir = app_dir()
 
         if config_path is None:
             config_path = self.home_dir / "config.properties"
@@ -122,6 +157,17 @@ class Config:
             # Do NOT write to disk here. Just use in-memory defaults.
             # The file will only be created when save() is explicitly called.
             pass
+
+        # Format version found in the user's file BEFORE this run stamps it —
+        # the gate for one-shot migrations. An existing file without the key
+        # is a pre-marker config (1); a brand-new config needs no migration.
+        # Absent or malformed values are tolerated, never a load failure.
+        if self._config.has_option('Behavior', 'configVersion'):
+            self.config_version = self._get_int('Behavior', 'configVersion', 1)
+        else:
+            self.config_version = self.CONFIG_VERSION if self.is_new_config else 1
+        # Stamp the current format version so any save() writes the marker.
+        self._config.set('Behavior', 'configVersion', str(self.CONFIG_VERSION))
 
         self._load_values()
 
@@ -248,6 +294,50 @@ class Config:
             'TTS', 'ttsLocalUrl', fallback='http://127.0.0.1:5820'
         )
         self.tts_local_voice = self._config.get('TTS', 'ttsLocalVoice', fallback='')
+
+        # RaidReport settings
+        raw_run_mode = self._config.get('RaidReport', 'runMode', fallback='run-button')
+        self.raidreport_run_mode = raw_run_mode if raw_run_mode in ('run-button', 'manual') else 'run-button'
+        self.run_auto_post = self._config.getboolean('RaidReport', 'runAutoPost', fallback=True)
+        self.raidreport_cache_enabled = self._config.getboolean('RaidReport', 'raidreportCacheEnabled')
+        self.raidreport_cache_dir = self._config.get('RaidReport', 'raidreportCacheDir', fallback='')
+        self.raidreport_cache_retention_hours = self._config.getint('RaidReport', 'raidreportCacheRetentionHours')
+        self.raidreport_viewer_html = self._config.get('RaidReport', 'raidreportViewerHtml', fallback='')
+        self.raidreport_output_dir = self._config.get('RaidReport', 'raidreportOutputDir', fallback='')
+        self.raidreport_always_zip = self._config.getboolean('RaidReport', 'raidreportAlwaysZip')
+        self.raidreport_poison_tab = self._config.getboolean('RaidReport', 'raidreportPoisonTab')
+        self.raidreport_wrapup = self._config.getboolean('RaidReport', 'raidreportWrapup')
+        self.raidreport_wrapup_ai = self._config.getboolean('RaidReport', 'raidreportWrapupAi')
+        self.raidreport_wrapup_voice = self._config.getboolean('RaidReport', 'raidreportWrapupVoice')
+
+    def get_raidreport_cache_dir(self) -> Path:
+        """Resolve the raid-report cache directory."""
+        if self.raidreport_cache_dir:
+            return Path(self.raidreport_cache_dir)
+        return self.home_dir / "RaidReportCache"
+
+    def get_raidreport_output_dir(self) -> Path:
+        """Resolve the raid-report output directory."""
+        if self.raidreport_output_dir:
+            return Path(self.raidreport_output_dir)
+        if self.raidreport_viewer_html:
+            viewer = Path(self.raidreport_viewer_html)
+            if viewer.parent.exists():
+                return viewer.parent
+        return self.default_raidreport_output_dir()
+
+    @staticmethod
+    def default_raidreport_output_dir() -> Path:
+        """Scratch location for baked reports when no folder is configured.
+
+        Lives under the OS temp dir so reports posted to Discord don't
+        accumulate on disk forever; prune_raidreport_output() sweeps it
+        on startup with the same retention as the parse cache. A user-
+        configured output folder bypasses this entirely and is never
+        pruned.
+        """
+        import tempfile
+        return Path(tempfile.gettempdir()) / "SparkyBot" / "RaidReports"
 
     def get_thumbnail_path(self):
         if not self.guild_icon:

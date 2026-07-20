@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from ai_helpers import (
+from core.ai_helpers import (
     TAG_DISTANCE_ACCEPTABLE,
     TAG_DISTANCE_EXCELLENT,
     TAG_DISTANCE_LOOSE,
@@ -30,35 +30,35 @@ from ai_helpers import (
     _is_siege_skill,
     _strip_think_tags,
 )
-from session_history import SessionHistoryTracker
-from vocabulary_config import VocabularyConfig
-from vocabulary_tracker import VocabularyTracker
-from pre_digester import (
+from core.session_history import SessionHistoryTracker
+from core.vocabulary_config import VocabularyConfig
+from core.vocabulary_tracker import VocabularyTracker
+from core.pre_digester import (
     bucket as pre_digester_bucket,
     numbers_context,
     squad_stomp_discipline,
     squad_strip_volume,
 )
-from freshness_engine import FreshnessEngine
+from core.freshness_engine import FreshnessEngine
 
-from response_post_processor import post_process
-from silent_failure_guard import SilentFailureGuard
+from core.response_post_processor import post_process
+from core.silent_failure_guard import SilentFailureGuard
+
+logger = logging.getLogger(__name__)
 
 # v3 (2026-05-09) — narrative_facts pipeline for the v3 prompt path.
 # Imported lazily-friendly: if these modules fail to load, v2 path still works.
 try:
-    from narrative_facts import (
+    from core.narrative_facts import (
         build_narrative_facts, render_narrative_block,
         extract_roster_names, filter_palette_for_name_poisoning,
         redact_players_from_summary,
     )
-    from callout_cooldown import CalloutCooldown
+    from core.callout_cooldown import CalloutCooldown
     _V3_AVAILABLE = True
 except ImportError as _exc:
     logger.warning("v3 pipeline unavailable: %s", _exc)
     _V3_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 
 # Minimum required keys in fight_summary for a meaningful analysis.
@@ -252,6 +252,19 @@ class FightAnalyst:
         Returns True when a configured strategy handled reasoning (so the
         legacy host-detection block should be skipped).
         """
+        # DeepSeek's hosted API has an explicit, documented `thinking`
+        # switch. It outranks a stale generic strategy learned by an older
+        # probe (notably chat_template_kwargs, which belongs to local model
+        # servers and was never the hosted DeepSeek control).
+        if self._is_deepseek_host():
+            payload.pop("chat_template_kwargs", None)
+            if not self.thinking:
+                payload["thinking"] = {"type": "disabled"}
+            else:
+                payload["thinking"] = {"type": "enabled"}
+                self._apply_reasoning_model_params(payload)
+            return True
+
         sid = getattr(self, "reasoning_strategy", "")
         if not sid:
             return False
@@ -405,7 +418,9 @@ class FightAnalyst:
         return changed
 
     def analyze(self, fight_summary: Dict[str, Any], timeout: int = 30,
-                previous_response: Optional[str] = None) -> Optional[str]:
+                previous_response: Optional[str] = None,
+                max_retries: int = 2,
+                retry_delay: float = 3) -> Optional[str]:
         """Send fight data to LLM, return analysis text. Returns None on failure."""
         self._previous_response = previous_response
         if not self.base_url or not self.model:
@@ -513,7 +528,6 @@ class FightAnalyst:
         # Debug: dump full AI prompt + response if SPARKY_DEBUG_AI_PROMPT is set
         debug_file = self._write_debug_request(endpoint, headers, payload)
 
-        max_retries = 2
         max_param_fixes = 3  # max_tokens, temperature, reasoning_effort
         attempt = 0
         param_fixes = 0
@@ -578,7 +592,7 @@ class FightAnalyst:
                                 payload[key] = max(int(payload.get(key) or 0),
                                                    self._silent_guard.headroom_floor)
                             attempt += 1
-                            time.sleep(3)
+                            time.sleep(retry_delay)
                             continue
                         if recovered:
                             logger.info("silent_failure recovered via reasoning_content: %s", recovered[:60])
@@ -602,9 +616,11 @@ class FightAnalyst:
                             logger.warning("v3 cooldown commit failed: %s", exc)
                     return result
                 elif response.status_code >= 500 and attempt < max_retries:
-                    logger.warning("AI API returned %d, retrying in 3s...", response.status_code)
+                    logger.warning(
+                        "AI API returned %d, retrying in %gs...",
+                        response.status_code, retry_delay)
                     attempt += 1
-                    time.sleep(3)
+                    time.sleep(retry_delay)
                     continue
                 else:
                     body = response.text
@@ -641,20 +657,23 @@ class FightAnalyst:
             except requests.Timeout:
                 if attempt < max_retries:
                     logger.warning(
-                        "AI API timed out after %ds, retrying in 3s... (attempt %d/%d)",
-                        timeout, attempt + 1, max_retries + 1
+                        "AI API timed out after %ds, retrying in %gs... "
+                        "(attempt %d/%d)",
+                        timeout, retry_delay, attempt + 1, max_retries + 1
                     )
                     attempt += 1
-                    time.sleep(3)
+                    time.sleep(retry_delay)
                     continue
                 else:
                     logger.error("AI API timed out after %ds: all retries exhausted", timeout)
                     return None
             except requests.ConnectionError:
                 if attempt < max_retries:
-                    logger.warning("AI API connection failed, retrying in 3s...")
+                    logger.warning(
+                        "AI API connection failed, retrying in %gs...",
+                        retry_delay)
                     attempt += 1
-                    time.sleep(3)
+                    time.sleep(retry_delay)
                     continue
                 else:
                     logger.error("AI API connection failed: is %s reachable?", self.base_url)

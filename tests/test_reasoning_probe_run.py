@@ -1,4 +1,6 @@
-from core.reasoning_probe import run_probe, format_report, ProbeOutcome
+from core.reasoning_probe import (
+    run_probe, format_report, make_real_factory, ProbeOutcome,
+)
 
 
 class FakeCall:
@@ -9,6 +11,7 @@ class FakeCall:
         self.budget = budget
 
     def run(self, test_summary, timeout):
+        self.script.setdefault("_timeouts", []).append(timeout)
         ok = self.script.get(self.strategy_id, False)
         return ProbeOutcome(self.strategy_id, self.disable, self.budget,
                             ok=ok, empty=not ok, preview="hi" if ok else "")
@@ -48,3 +51,39 @@ def test_format_report_is_plain_text():
     r = run_probe(f, {}, user_budget=450, base_url="https://x/v1", model="m")
     text = format_report(r)
     assert "no reasoning fix" in text.lower()
+
+
+def test_failed_probe_is_bounded_to_four_short_single_calls():
+    script = {}
+    f = _factory(script)
+    run_probe(
+        f, {}, user_budget=450, base_url="https://unknown.example/v1",
+        model="mystery", timeout=30,
+    )
+    assert len(f.calls) <= 4
+    assert script["_timeouts"]
+    assert max(script["_timeouts"]) <= 10
+
+
+def test_real_probe_call_disables_nested_runtime_retries(monkeypatch):
+    seen = {}
+
+    class StubAnalyst:
+        last_completion_tokens = 12
+
+        def __init__(self, **kwargs):
+            seen["init"] = kwargs
+
+        def analyze(self, summary, **kwargs):
+            seen["analyze"] = kwargs
+            return "working"
+
+    monkeypatch.setattr("core.ai_analyst.FightAnalyst", StubAnalyst)
+    call = make_real_factory(
+        "https://api.example.test", "key", "model"
+    )(strategy_id="none", disable=False, budget=450)
+    outcome = call.run({}, timeout=10)
+
+    assert outcome.ok
+    assert seen["analyze"]["max_retries"] == 0
+    assert seen["analyze"]["retry_delay"] == 0

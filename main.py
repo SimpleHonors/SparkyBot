@@ -14,6 +14,7 @@ import argparse
 import os
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 import threading
 import json
 import ctypes
@@ -25,17 +26,19 @@ from core.version import VERSION
 # Add core module to path
 sys.path.insert(0, str(Path(__file__).parent / "core"))
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import pyqtSignal, QObject, QThread, QTimer, Qt
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Signal, QObject, QThread, QTimer, Qt
 
 from core.config import Config
+from core.theme import apply_theme
 from core.file_watcher import FileWatcher
 from core.discord_bot import DiscordWebhookManager
 from core.gw2ei_invoker import GW2EIInvoker
 from core.tray_manager import TrayManager
-from core.gui_settings import SettingsWindow
+from core.main_window import MainWindow
 from core.fight_report import FightReport
 from core.tts import TTSClient
+from core.update_flow import UpdateFlow
 
 # Persistent AI singletons — created once, reused across all fights
 _vocab_config: Optional['VocabularyConfig'] = None
@@ -81,7 +84,8 @@ for _ in range(120):
 # applies the staged update (it has its own per-file retry as a safety net).
 time.sleep(1.0)
 try:
-    subprocess.Popen([python, bootstrap, *args], cwd=app_dir)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    subprocess.Popen([python, bootstrap, *args], cwd=app_dir, creationflags=flags)
 except Exception as e:
     sys.stderr.write("relaunch failed: %s\n" % e)
 '''
@@ -92,6 +96,7 @@ def _get_ai_components():
     global _vocab_config, _vocab_tracker, _session_history, _callout_cooldown
     if _vocab_config is None:
         from core.ai_analyst import VocabularyConfig, VocabularyTracker, SessionHistoryTracker
+        from core.apppaths import app_dir
         from core.callout_cooldown import CalloutCooldown
         from pathlib import Path
         _vocab_config = VocabularyConfig()
@@ -99,16 +104,16 @@ def _get_ai_components():
         _session_history = SessionHistoryTracker()
         # State file lives next to other singleton JSONs in the SparkyBot dir
         _callout_cooldown = CalloutCooldown(
-            state_path=Path(__file__).parent / 'sparkybot_callout_cooldown.json'
+            state_path=app_dir() / 'sparkybot_callout_cooldown.json'
         )
     return _vocab_config, _vocab_tracker, _session_history
 
 
 class FileProcessorWorker(QThread):
     """Background worker for processing log files."""
-    file_started = pyqtSignal(int, int, str)    # index, total, filename
-    file_finished = pyqtSignal(object, bool)     # file_path, success
-    all_done = pyqtSignal(int)                   # total processed
+    file_started = Signal(int, int, str)    # index, total, filename
+    file_finished = Signal(object, bool)     # file_path, success
+    all_done = Signal(int)                   # total processed
 
     def __init__(self, file_paths: list, config, tts_client=None, parent=None):
         super().__init__(parent)
@@ -146,6 +151,15 @@ def setup_logging(verbose: bool = False):
         datefmt="%H:%M:%S"
     )
 
+    from core.apppaths import app_dir
+    log_path = app_dir() / "sparkybot.log"
+    handler = RotatingFileHandler(
+        str(log_path), maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+    )
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(format_str, datefmt="%H:%M:%S"))
+    logging.getLogger().addHandler(handler)
+
 
 class ProcessResult(Enum):
     """Result of processing a log file"""
@@ -157,6 +171,12 @@ class ProcessResult(Enum):
     ERROR_OTHER = "error_other"
 
 
+def _format_mmss(seconds: int) -> str:
+    """m:ss for feed skip reasons — '0:08' reads better than '8s'."""
+    minutes, secs = divmod(max(0, int(seconds)), 60)
+    return f"{minutes}:{secs:02d}"
+
+
 def _try_delete_json(json_file: Path, logger: logging.Logger):
     """Attempt to delete JSON file, logging warning on failure"""
     try:
@@ -165,15 +185,43 @@ def _try_delete_json(json_file: Path, logger: logging.Logger):
         logger.warning(f"Could not delete JSON file: {json_file.name}")
 
 
+def _cache_or_delete_json(json_file: Path, log_file: Path, config,
+                          invoker, logger: logging.Logger):
+    """Move JSON into RaidReportCache or delete it if caching is off/fails."""
+    if config.raidreport_cache_enabled:
+        try:
+            from core.raid_session import RaidReportCache
+            cache = RaidReportCache(config.get_raidreport_cache_dir())
+            cache.store(log_file, json_file, *invoker.cache_key())
+            logger.info(f"Cached parsed JSON for {log_file.name}")
+            return
+        except Exception as exc:
+            logger.debug("Cache store failed, falling back to delete: %s", exc)
+    _try_delete_json(json_file, logger)
+
+
 def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                      discord: Optional[DiscordWebhookManager],
-                     tts_client=None) -> ProcessResult:
+                     tts_client=None, events=None) -> ProcessResult:
     """Process a single log file through GW2EI and send to Discord
+
+    Args:
+        events: optional callable(kind: str, text: str) receiving
+            feed-worthy pipeline moments: the exact failed filter for a
+            skip (named here, at the decision site) and AI commentary /
+            voice outcomes. A failing callback never breaks the pipeline.
 
     Returns:
         ProcessResult indicating what happened
     """
     logger = logging.getLogger(__name__)
+
+    def _emit_event(kind: str, text: str):
+        if events is not None:
+            try:
+                events(kind, text)
+            except Exception:
+                logger.debug("events callback failed", exc_info=True)
 
     logger.info(f"Processing: {file_path.name}")
 
@@ -201,17 +249,26 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
 
         if duration < config.min_fight_duration:
             logger.info(f"SKIPPING: Fight duration {duration}s below minimum {config.min_fight_duration}s")
-            _try_delete_json(json_file, logger)
+            _emit_event('skipped',
+                        f"Too short ({_format_mmss(duration)} < "
+                        f"{_format_mmss(config.min_fight_duration)} minimum)")
+            _cache_or_delete_json(json_file, file_path, config, gw2ei, logger)
             return ProcessResult.SKIPPED_THRESHOLD
 
         if report.total_downs < config.min_fight_downs:
             logger.info(f"SKIPPING: {report.total_downs} downs below minimum {config.min_fight_downs}")
-            _try_delete_json(json_file, logger)
+            _emit_event('skipped',
+                        f"Too few downs ({report.total_downs} < "
+                        f"{config.min_fight_downs} minimum)")
+            _cache_or_delete_json(json_file, file_path, config, gw2ei, logger)
             return ProcessResult.SKIPPED_THRESHOLD
 
         if report.total_damage < config.min_fight_total_dmg:
             logger.info(f"SKIPPING: {report.total_damage:,} damage below minimum {config.min_fight_total_dmg:,}")
-            _try_delete_json(json_file, logger)
+            _emit_event('skipped',
+                        f"Too little damage ({report.total_damage:,} < "
+                        f"{config.min_fight_total_dmg:,} minimum)")
+            _cache_or_delete_json(json_file, file_path, config, gw2ei, logger)
             return ProcessResult.SKIPPED_THRESHOLD
 
         # Compute the AI/corpus summary once and reuse it for both the corpus
@@ -370,6 +427,9 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                             embeds=[ai_embed],
                             audio_bytes=audio_bytes if config.tts_discord_attach else None,
                         )
+                        # Feed row (these events only occur while AI is on —
+                        # this whole block is gated on enableAiAnalysis)
+                        _emit_event('commentary', "Commentary posted")
 
                     ai_text = analysis  # Save for Twitch
 
@@ -379,6 +439,12 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                             tts_client.speak_from_bytes(audio_bytes)
                         else:
                             tts_client.speak(analysis)
+
+                    if audio_bytes:
+                        if config.tts_discord_attach and discord_active:
+                            _emit_event('voice', "Voice clip attached")
+                        elif config.tts_enabled and tts_client is not None:
+                            _emit_event('voice', "Voice clip played")
 
             except Exception as e:
                 logger.warning(f"AI analysis failed: {e}")
@@ -403,7 +469,7 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
         # Discord posting was not attempted (disabled) — processing still
         # succeeded, so clean up and report success.
         if not discord_active:
-            _try_delete_json(json_file, logger)
+            _cache_or_delete_json(json_file, file_path, config, gw2ei, logger)
             return ProcessResult.SUCCESS
 
         # success_count can be: 0 (all failed), 1+ (webhooks succeeded), or True (single, deprecated)
@@ -414,7 +480,7 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
 
         if discord_success:
             logger.info(f"Report sent to {success_count} Discord webhook(s)")
-            _try_delete_json(json_file, logger)
+            _cache_or_delete_json(json_file, file_path, config, gw2ei, logger)
             return ProcessResult.SUCCESS
         else:
             logger.warning("Failed to send to all Discord webhooks")
@@ -434,9 +500,14 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
 class WatcherWorker(QObject):
     """Worker class to run file watcher in background thread"""
 
-    status_changed = pyqtSignal(str)
-    running_state_changed = pyqtSignal(bool)  # (is_running)
-    file_processed = pyqtSignal(str, str)  # (filename, result_name)
+    status_changed = Signal(str)
+    running_state_changed = Signal(bool)  # (is_running)
+    # (filename, result_name, detail) — detail is the exact skip reason
+    # named at the decision site inside process_log_file, else "".
+    file_processed = Signal(str, str, str)
+    # (filename, kind, text) — AI commentary/voice feed moments (these only
+    # fire while AI analysis is enabled) plus concise processing lifecycle.
+    pipeline_event = Signal(str, str, str)
 
     def __init__(self, config, tts_client=None):
         super().__init__()
@@ -448,6 +519,23 @@ class WatcherWorker(QObject):
 
     def start(self):
         """Start the watcher (called on the watcher thread)"""
+        if self.config.raidreport_cache_enabled:
+            try:
+                from core.raid_session import (
+                    RaidReportCache, prune_raidreport_output,
+                )
+                cache = RaidReportCache(self.config.get_raidreport_cache_dir())
+                removed = cache.prune(self.config.raidreport_cache_retention_hours)
+                removed += prune_raidreport_output(
+                    self.config.raidreport_cache_retention_hours)
+                if removed:
+                    _prune_logger = logging.getLogger(__name__)
+                    _prune_logger.info(
+                        "Pruned %d stale raid-report cache file(s)", removed
+                    )
+            except Exception:
+                pass
+
         # Construct outside lock - constructors may do I/O
         gw2ei = GW2EIInvoker(self.config)
         discord = DiscordWebhookManager(self.config) if self.config.enable_discord_bot else None
@@ -458,11 +546,26 @@ class WatcherWorker(QObject):
             self._running = True
 
             def on_new_file(file_path: Path):
+                self.pipeline_event.emit(
+                    str(file_path), "processing",
+                    f"New fight detected — processing {file_path.name}",
+                )
+                # Capture the skip reason so it rides along with the
+                # outcome; commentary/voice moments stream out live.
+                skip_reasons = []
+
+                def _events(kind: str, text: str):
+                    if kind == 'skipped':
+                        skip_reasons.append(text)
+                    else:
+                        self.pipeline_event.emit(str(file_path), kind, text)
+
                 result = process_log_file(
                     file_path, self.config, gw2ei, discord,
-                    tts_client=self.tts_client,
+                    tts_client=self.tts_client, events=_events,
                 )
-                self.file_processed.emit(str(file_path), result.value)
+                detail = skip_reasons[-1] if skip_reasons else ""
+                self.file_processed.emit(str(file_path), result.value, detail)
 
             watcher = FileWatcher(self.config, on_new_file, poll_interval=getattr(self.config, 'poll_interval', 5))
 
@@ -515,14 +618,21 @@ class WatcherWorker(QObject):
 class SparkyBotApp(QApplication):
     """Main application class with GUI and system tray"""
 
-    sig_show_update = pyqtSignal(str, object)  # latest_version, release_data
-    sig_show_ei_update = pyqtSignal(str, str, str)  # current_version, latest_version, download_url
-
     def __init__(self, args, config):
         super().__init__(args)
 
+        # Workbench Dark theme, applied app-wide BEFORE any window (including
+        # the first-run wizard) is constructed — everything inherits it.
+        apply_theme(self)
+
+        # Quitting is always explicit (tray Quit, File > Exit, or the main
+        # window's closeEvent when closeToTray is off). Qt's default
+        # quit-on-last-window-close would kill the bot — watcher and all —
+        # the moment a transient dialog closed with the window hidden.
+        self.setQuitOnLastWindowClosed(False)
+
         # Set application-wide icon (taskbar, alt-tab, title bars)
-        from PyQt6.QtGui import QIcon
+        from PySide6.QtGui import QIcon
         icon_path = Path(__file__).parent / "assets" / "sbtray.ico"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -530,16 +640,23 @@ class SparkyBotApp(QApplication):
         self.config = config
         self.logger = logging.getLogger("SparkyBot")
 
-        # Connect cross-thread signal for update dialog
-        self.sig_show_update.connect(self._show_update_dialog)
-        self.sig_show_ei_update.connect(self._show_ei_update_dialog)
+        # Window-free update engine: launch checks, downloads, and staging into
+        # .update_pending/ all live in UpdateFlow, so start-minimized sessions
+        # (no window ever constructed) can still prompt and self-update. Its
+        # signals fire from worker threads and queue back to this (GUI) thread.
+        self.update_flow = UpdateFlow(config, parent=self)
+        self.update_flow.sig_launch_available.connect(self._show_update_dialog)
+        self.update_flow.sig_ei_launch_available.connect(self._show_ei_update_dialog)
+        self.update_flow.sig_staged.connect(self._on_update_complete)
 
         # Setup components
         self.watcher_thread: Optional[QThread] = None
         self.watcher_worker: Optional[WatcherWorker] = None
 
         self.tray_manager = TrayManager("SparkyBot")
-        self.settings_window: Optional[SettingsWindow] = None
+        # The MainWindow shell. Keeps the legacy attribute name so every
+        # `is not None` check and signal hookup below stays valid.
+        self.settings_window: Optional[MainWindow] = None
 
         if self._is_first_run():
             self._run_setup_wizard()
@@ -573,6 +690,7 @@ class SparkyBotApp(QApplication):
         self.watcher_worker.status_changed.connect(self.tray_manager.set_status)
         self.watcher_worker.running_state_changed.connect(self.tray_manager.set_watcher_running)
         self.watcher_worker.file_processed.connect(self._on_file_processed)
+        self.watcher_worker.pipeline_event.connect(self._on_pipeline_event)
 
     def _setup_signals(self):
         """Setup signal connections"""
@@ -589,17 +707,28 @@ class SparkyBotApp(QApplication):
         elif action == "toggle_watcher":
             self.toggle_watcher()
 
-    def _on_file_processed(self, filename: str, result_name: str):
-        """Handle file processed event"""
+    def _on_file_processed(self, filename: str, result_name: str,
+                           detail: str = ""):
+        """Per-fight outcome: feed the Home activity model, then balloon
+        only while the main window can't show it (hidden to tray). The
+        feed always gets the row so a reopened window has the scrollback."""
+        window = self.settings_window
+        if window is not None:
+            window.feed_file_event(filename, result_name, detail)
+        if window is not None and window.isVisible():
+            return  # the feed showed it; balloons only while hidden
+
         if result_name == ProcessResult.SUCCESS.value:
             self.tray_manager.show_message(
                 "Fight Report Sent",
                 f"Successfully processed {Path(filename).name}"
             )
         elif result_name == ProcessResult.SKIPPED_THRESHOLD.value:
+            message = (f"{Path(filename).name}: {detail}" if detail
+                       else f"File {Path(filename).name} did not pass the posting filters")
             self.tray_manager.show_message(
                 "Fight Skipped",
-                f"File {Path(filename).name} did not meet thresholds",
+                message,
                 icon=self.tray_manager.MessageIcon.Warning
             )
         elif result_name == ProcessResult.ERROR_DISCORD.value:
@@ -614,6 +743,11 @@ class SparkyBotApp(QApplication):
                 f"File {Path(filename).name} failed to process",
                 icon=self.tray_manager.MessageIcon.Critical
             )
+
+    def _on_pipeline_event(self, filename: str, kind: str, text: str):
+        """Live processing/commentary/voice rows for the Home activity feed."""
+        if self.settings_window is not None:
+            self.settings_window.feed_event(kind, text)
 
     def start_watcher(self):
         """Start the file watcher on a new thread."""
@@ -650,14 +784,16 @@ class SparkyBotApp(QApplication):
             self.start_watcher()
 
     def show_settings(self):
-        """Show settings window"""
+        """Show the main window (lazy singleton, hidden — not destroyed —
+        when closed to tray)."""
         if self.settings_window is None:
-            self.settings_window = SettingsWindow(self.config)
+            # Shares the app's UpdateFlow so the Updates tab and the launch
+            # check drive (and reflect) the same pipeline.
+            self.settings_window = MainWindow(self.config, update_flow=self.update_flow)
             self.settings_window.watcher_toggled.connect(self.toggle_watcher)
             self.settings_window.settings_changed.connect(self._on_settings_changed)
             self.settings_window.destroyed.connect(self._on_settings_window_destroyed)
             self.settings_window.process_files_widget.process_requested.connect(self._process_manual_files)
-            self.settings_window.sig_update_complete.connect(self._on_update_complete)
             # Connect to watcher if running
             if self.watcher_worker is not None:
                 self.watcher_worker.running_state_changed.connect(
@@ -669,6 +805,13 @@ class SparkyBotApp(QApplication):
             self.settings_window._tts_client = self.tts_client
 
         self.settings_window.show()
+        # show()+activateWindow() alone leaves a previously-minimized window
+        # in the taskbar without focus; clear the minimized state and raise.
+        self.settings_window.setWindowState(
+            (self.settings_window.windowState()
+             & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowActive)
+        self.settings_window.raise_()
         self.settings_window.activateWindow()
 
     def _on_settings_window_destroyed(self):
@@ -696,9 +839,13 @@ class SparkyBotApp(QApplication):
             self.settings_window._tts_client = self.tts_client
 
     def _process_manual_files(self, file_paths: list):
-        """Process manually selected files on a background thread."""
-        # Disable the Process button while running
-        self.settings_window.process_files_widget.process_btn.setEnabled(False)
+        """Process manually selected files on a background thread.
+
+        The Process Files tab is driven purely through its method API
+        (set_processing / show_progress / mark_file_result /
+        finish_processing) — never through its child widgets.
+        """
+        self.settings_window.process_files_widget.set_processing(True)
 
         self._file_worker = FileProcessorWorker(
             file_paths, self.config, tts_client=self.tts_client
@@ -710,43 +857,13 @@ class SparkyBotApp(QApplication):
 
     def _on_file_started(self, index: int, total: int, filename: str):
         self.logger.info(f"Manual processing ({index}/{total}): {filename}")
-        self.settings_window.process_files_widget.status_label.setText(
-            f"Processing {index} of {total}: {filename}"
-        )
+        self.settings_window.process_files_widget.show_progress(index, total, filename)
 
     def _on_file_finished(self, file_path, success: bool):
-        self._mark_file_status(file_path, success=success)
+        self.settings_window.process_files_widget.mark_file_result(file_path, success)
 
     def _on_all_files_done(self, total: int):
-        tab = self.settings_window.process_files_widget
-        tab.status_label.setText(f"Done — processed {total} file(s)")
-
-        # Remove successfully processed files, keep failures
-        rows_to_remove = []
-        for i in range(tab.file_list.count()):
-            item = tab.file_list.item(i)
-            if item and item.text().startswith("✓"):
-                rows_to_remove.append(i)
-
-        # Remove in reverse order so indices don't shift
-        for row in reversed(rows_to_remove):
-            tab.file_list.takeItem(row)
-
-        # Disable process button if list is now empty
-        tab.process_btn.setEnabled(tab.file_list.count() > 0)
-
-    def _mark_file_status(self, file_path, success: bool):
-        """Update the file's display in the Process Files tab queue."""
-        tab = self.settings_window.process_files_widget
-        # Normalize to resolve slash differences between Path objects and stored strings
-        target = str(Path(str(file_path)).resolve())
-        for i in range(tab.file_list.count()):
-            item = tab.file_list.item(i)
-            stored = str(Path(item.data(Qt.ItemDataRole.UserRole)).resolve())
-            if stored == target:
-                prefix = "✓ " if success else "✗ "
-                item.setText(prefix + Path(str(file_path)).name)
-                break
+        self.settings_window.process_files_widget.finish_processing(total)
 
     def _shutdown(self):
         """Clean shutdown - stop watcher and wait for thread"""
@@ -756,127 +873,17 @@ class SparkyBotApp(QApplication):
             self.tts_client = None
 
     def _check_updates_on_launch(self):
-        """Check for updates on startup if enabled."""
-        if not self.config.check_updates_on_launch:
-            return
+        """Check for updates on startup if enabled.
 
-        # If an update is already staged but not yet applied, do NOT re-check.
-        # Re-checking here re-downloads + re-stages the same release every launch,
-        # which is exactly what produced the infinite upgrade loop. Bootstrap applies
-        # the staged update at startup; if it's still here, the apply hasn't completed
-        # (e.g. files were still locked by the closing process) — a clean relaunch
-        # finishes it. Either way: don't prompt or download again.
-        from pathlib import Path
-        if (Path(__file__).parent / ".update_pending").is_dir():
-            self.logger.info(
-                "Update already staged in .update_pending/; skipping update check. "
-                "Fully close and relaunch SparkyBot to finish installing."
-            )
-            return
-
-        import threading
-
-        def _check():
-            try:
-                import requests
-                import re
-                from core.version import VERSION
-
-                def _parse(v):
-                    try:
-                        return tuple(int(x) for x in v.split('.')[:3])
-                    except (ValueError, AttributeError):
-                        return (0, 0, 0)
-
-                # Resolve the latest version WITHOUT the GitHub API. The API caps
-                # unauthenticated clients at 60 req/hr/IP and returns 403 when
-                # exhausted (which silently looked like "no update"). The plain
-                # github.com /releases/latest endpoint just 302-redirects to the
-                # newest /tag/vX.Y.Z and is NOT rate-limited, so the check keeps
-                # working under throttling.
-                latest = ""
-                release_data = None
-                try:
-                    r = requests.get(
-                        "https://github.com/SimpleHonors/SparkyBot/releases/latest",
-                        allow_redirects=False, timeout=10
-                    )
-                    m = re.search(r"/tag/v?([0-9][0-9.]*)", r.headers.get("Location", ""))
-                    if m:
-                        latest = m.group(1)
-                except Exception as e:
-                    self.logger.debug(f"redirect version check failed: {e}")
-
-                # Fall back to the API only if the redirect gave us nothing.
-                if not latest:
-                    try:
-                        resp = requests.get(
-                            "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
-                            timeout=10
-                        )
-                        if resp.status_code == 200:
-                            release_data = resp.json()
-                            latest = release_data.get("tag_name", "").lstrip("v").strip()
-                        elif resp.status_code == 403:
-                            self.logger.info(
-                                "Update check skipped: GitHub API rate limit (403). "
-                                "Resets within the hour."
-                            )
-                    except Exception as e:
-                        self.logger.debug(f"API version check failed: {e}")
-
-                sparkybot_needs_update = False
-                if latest and _parse(latest) > _parse(VERSION):
-                    # We need the asset URL to download. Try the API for full
-                    # release data; if it's throttled, synthesize it from our
-                    # release naming convention — the download URL lives on
-                    # github.com (not the rate-limited API), so it still works.
-                    if release_data is None:
-                        try:
-                            resp = requests.get(
-                                "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest",
-                                timeout=10
-                            )
-                            if resp.status_code == 200:
-                                release_data = resp.json()
-                        except Exception:
-                            release_data = None
-                    if release_data is None:
-                        release_data = {
-                            "tag_name": f"v{latest}",
-                            "assets": [{
-                                "name": f"SparkyBot-{latest}.zip",
-                                "browser_download_url": (
-                                    "https://github.com/SimpleHonors/SparkyBot/"
-                                    f"releases/download/v{latest}/SparkyBot-{latest}.zip"
-                                ),
-                            }],
-                        }
-                    self._update_info = release_data
-                    self.sig_show_update.emit(latest, release_data)
-                    sparkybot_needs_update = True
-
-                # Only check EI if SparkyBot is already up to date
-                if not sparkybot_needs_update:
-                    from core.ei_updater import EIUpdater
-                    from core.gw2ei_invoker import GW2EIInvoker
-                    invoker = GW2EIInvoker(self.config)
-                    ei = EIUpdater(invoker.get_gw2ei_folder())
-                    available, version, url = ei.check_for_update()
-                    if available and url:
-                        current = ei.get_current_version() or "unknown"
-                        self.sig_show_ei_update.emit(current, version, url)
-
-            except Exception as e:
-                self.logger.debug(f"Launch update check failed: {e}")
-
-        thread = threading.Thread(target=_check, daemon=True)
-        thread.start()
+        All logic (config gate, staged-update anti-loop guard, version
+        resolution, EI check) lives in UpdateFlow — window-free.
+        """
+        self.update_flow.check_on_launch()
 
     def _show_update_dialog(self, latest_version: str, release_data: dict):
         """Show update prompt to user."""
-        from PyQt6.QtWidgets import QMessageBox
-        from PyQt6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import Qt
         from core.version import VERSION
 
         msg = QMessageBox()
@@ -904,7 +911,7 @@ class SparkyBotApp(QApplication):
 
     def _show_ei_update_dialog(self, current: str, latest: str, url: str):
         """Show EI update prompt to user."""
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         msg = QMessageBox()
         msg.setWindowTitle("Elite Insights Update Available")
@@ -934,8 +941,8 @@ class SparkyBotApp(QApplication):
 
     def _on_update_complete(self, version: str):
         """Show restart dialog after successful update."""
-        from PyQt6.QtWidgets import QMessageBox
-        from PyQt6.QtCore import Qt
+        from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtCore import Qt
 
         msg = QMessageBox()
         msg.setWindowTitle("Update Installed")
@@ -1006,26 +1013,9 @@ class SparkyBotApp(QApplication):
         os._exit(0)
 
     def _trigger_sparkybot_update(self, release_data: dict):
-        """Trigger the SparkyBot update flow from release data."""
-        assets = release_data.get("assets", [])
-        download_url = None
-        for asset in assets:
-            if asset.get("name", "").endswith(".zip"):
-                download_url = asset.get("browser_download_url")
-                break
-        if not download_url:
-            download_url = release_data.get("zipball_url")
-
-        if download_url and download_url != "None":
-            # Store on the settings window and trigger its existing update handler
-            if hasattr(self, 'settings_window') and self.settings_window:
-                self.settings_window._sparkybot_update_url = download_url
-                self.settings_window._sparkybot_latest_version = release_data.get("tag_name", "").lstrip("v")
-                self.settings_window._on_update_sparkybot_clicked()
-            else:
-                self.logger.error("Settings window not available for update")
-        else:
-            self.logger.warning("No download URL found for SparkyBot update")
+        """Download + stage the update via UpdateFlow — no window required."""
+        version = release_data.get("tag_name", "").lstrip("v")
+        self.update_flow.start_update(release_data, version)
 
     def run(self):
         """Run the application"""
@@ -1061,6 +1051,11 @@ def main():
         help="Run without GUI (CLI only)"
     )
     parser.add_argument(
+        "--raid-report",
+        action="store_true",
+        help="Generate a Raid Report for today's logs and exit (CLI only)"
+    )
+    parser.add_argument(
         "--config",
         metavar="PATH",
         help="Path to config.properties file"
@@ -1080,6 +1075,15 @@ def main():
 
     # Load configuration
     config = Config(args.config) if args.config else Config()
+
+    if args.raid_report:
+        from core.raid_report_wiring import run_headless_raid_report
+        try:
+            html_path = run_headless_raid_report(config)
+            print(str(html_path))
+            return 0
+        except SystemExit as e:
+            return e.code or 1
 
     if args.headless:
         # CLI-only mode
@@ -1106,6 +1110,22 @@ def run_headless(config: Config) -> int:
     logger = logging.getLogger("SparkyBot")
 
     logger.info("Running in headless mode...")
+
+    if config.raidreport_cache_enabled:
+        try:
+            from core.raid_session import (
+                RaidReportCache, prune_raidreport_output,
+            )
+            cache = RaidReportCache(config.get_raidreport_cache_dir())
+            removed = cache.prune(config.raidreport_cache_retention_hours)
+            removed += prune_raidreport_output(
+                config.raidreport_cache_retention_hours)
+            if removed:
+                logger.info(
+                    "Pruned %d stale raid-report cache file(s)", removed
+                )
+        except Exception:
+            pass
 
     gw2ei = GW2EIInvoker(config)
     discord = DiscordWebhookManager(config) if config.enable_discord_bot else None

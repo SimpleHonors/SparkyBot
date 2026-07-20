@@ -1,4 +1,4 @@
 watchdog>=3.0.0
 requests>=2.31.0
-PyQt6>=6.10.0
+PySide6>=6.6
 edge-tts>=7.0.0

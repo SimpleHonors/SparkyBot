@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Target repo: `/root/SparkyBot`, branch `main`. Do NOT push or create releases — local commits only unless the operator says "ship it".
+- Target repo: the local SparkyBot checkout, branch `main`. Do NOT push or create releases — local commits only unless the operator says "ship it".
 - Sanitize every diff before any push (no private IPs/hosts/paths). N/A for local commits but keep test fixtures clean.
 - Full suite lives in `tests/`; run with the session venv's `pytest`. Keep all existing tests green.
 - Config section is `[AI]` in `core/config.py`; keys are camelCase (`aiMaxTokens`, `aiDisableThinking`). New key: `aiReasoningStrategy` (string, default `""`).

@@ -1,0 +1,410 @@
+/* SparkyBot "Workbench Dark" theme — the ONLY stylesheet in the app.
+ *
+ * The 12 palette tokens are substituted by core/theme.py at load time
+ * (window, sunken, raised, border_strong, border, text, dim, accent,
+ * accent_press, warn, error, selection). Everything else here is a
+ * derived shade documented inline.
+ *
+ * Rules of the house: flat surfaces, 1px borders, 2px max radius, 4px
+ * spacing grid, pt font sizes only (px is a DPI hazard), no gradients,
+ * no glow, no emoji. Semantic states are dynamic properties set via
+ * core.theme.set_state() and friends — widgets never call setStyleSheet.
+ */
+
+/* ---- base ------------------------------------------------------------- */
+
+QWidget {
+    background-color: @window;
+    color: @text;
+}
+
+QLabel {
+    background: transparent;
+}
+
+QScrollArea {
+    border: none;
+}
+
+QFrame[frameShape="4"], QFrame[frameShape="5"] { /* H/V divider lines */
+    background-color: @border;
+    border: none;
+    max-height: 1px;
+}
+
+/* ---- buttons ----------------------------------------------------------- */
+
+QPushButton {
+    background-color: @raised;
+    color: @text;
+    border: 1px solid @border_strong;
+    border-radius: 2px;
+    padding: 4px 12px;
+}
+QPushButton:hover { background-color: #444444; }        /* raised, one step lighter */
+QPushButton:pressed { background-color: #2E2E2E; }      /* raised, one step darker */
+QPushButton:disabled { background-color: #2F2F2F; color: #666666; }
+
+/* Primary CTA — the one green button on a page (Start Watcher, Make my
+   raid report, Recalibrate, wizard install/download actions). */
+QPushButton[class="primary"] {
+    background-color: @accent;
+    color: #FFFFFF;
+    font-size: 10pt;
+    font-weight: 600;
+    border: 1px solid @accent_press;
+    padding: 6px 20px;
+}
+QPushButton[class="primary"]:hover { background-color: #57A85E; }  /* accent, lighter */
+QPushButton[class="primary"]:pressed { background-color: @accent_press; }
+QPushButton[class="primary"]:disabled {
+    background-color: @raised;
+    color: #666666;
+    border-color: @border_strong;
+}
+/* The watcher toggle morphs to a stop action while running. */
+QPushButton[class="primary"][state="running"] {
+    background-color: @error;
+    border-color: #B4423E;                               /* error, pressed shade */
+}
+QPushButton[class="primary"][state="running"]:hover { background-color: #DE6663; }
+QPushButton[class="primary"][state="running"]:pressed { background-color: #B4423E; }
+
+/* Quiet secondary action used beside status text. */
+QPushButton[class="secondary"] {
+    background-color: transparent;
+    color: @dim;
+    border: 1px solid @border;
+    padding: 4px 9px;
+}
+QPushButton[class="secondary"]:hover {
+    color: @text;
+    border-color: @border_strong;
+    background-color: @raised;
+}
+QPushButton[class="secondary"][state="running"] {
+    color: @error;
+    border-color: @error;
+}
+
+/* Quick-pick chips (Last 12 hours / Today / All / None). */
+QPushButton[class="chip"] {
+    background-color: @raised;
+    color: @text;
+    font-size: 8pt;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 2px 10px;
+}
+QPushButton[class="chip"]:hover { color: @accent; border-color: @accent; }
+QPushButton[class="chip"]:disabled { color: #666666; border-color: @border_strong; }
+
+/* Quiet error-details reveal button. */
+QPushButton[class="error-outline"] {
+    background: transparent;
+    color: @error;
+    font-size: 8pt;
+    border: 1px solid @error;
+    border-radius: 2px;
+    padding: 2px 8px;
+}
+QPushButton[class="error-outline"]:hover { background-color: #3A2422; } /* error tint on window */
+
+/* Data-driven color swatch (embed color picker) — background is set by
+   theme.set_swatch_color(); the chrome lives here. */
+QPushButton[class="swatch"] {
+    border: 1px solid @border;
+    border-radius: 2px;
+}
+
+/* Classic dotted focus outline — last so it wins over the variants. */
+QPushButton:focus { border: 1px dotted @dim; }
+
+/* ---- inputs ------------------------------------------------------------ */
+
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+    background-color: @sunken;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 3px 6px;
+    selection-background-color: @selection;
+    selection-color: @text;
+}
+QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled,
+QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+    color: #666666;
+    background-color: #262626;
+}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border: 1px solid @accent;
+}
+
+/* Read-only prompt/preview boxes — replaces three duplicated inline styles. */
+QTextEdit[readOnly="true"], QPlainTextEdit[readOnly="true"] {
+    background-color: @window;
+    color: @dim;
+}
+
+QComboBox QAbstractItemView {
+    background-color: @sunken;
+    color: @text;
+    border: 1px solid @border_strong;
+    selection-background-color: @selection;
+    selection-color: @text;
+}
+
+/* ---- checkboxes / radios ----------------------------------------------- */
+/* Explicit SVG indicators stay crisp and obvious across Windows scaling
+   modes. Important either/or decisions additionally use the option-card
+   class so the whole answer reads as clickable, not just the small icon. */
+
+QCheckBox, QRadioButton {
+    background: transparent;
+    color: @text;
+    spacing: 8px;
+}
+QCheckBox:disabled, QRadioButton:disabled { color: #666666; }
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+}
+QCheckBox::indicator:unchecked { image: url("assets/checkbox-unchecked.svg"); }
+QCheckBox::indicator:checked { image: url("assets/checkbox-checked.svg"); }
+QCheckBox::indicator:disabled { opacity: 0.45; }
+QRadioButton::indicator:unchecked { image: url("assets/radio-unchecked.svg"); }
+QRadioButton::indicator:checked { image: url("assets/radio-checked.svg"); }
+QRadioButton::indicator:disabled { opacity: 0.45; }
+
+QRadioButton[class="option"] {
+    background-color: @sunken;
+    border: 1px solid @border;
+    border-radius: 2px;
+    padding: 10px 12px;
+}
+QRadioButton[class="option"]:hover {
+    background-color: @raised;
+    border-color: @accent;
+}
+QRadioButton[class="option"]:checked {
+    background-color: @selection;
+    border-color: @accent;
+    color: #FFFFFF;
+    font-weight: 600;
+}
+QRadioButton[class="option"]:focus { border: 1px dotted @accent; }
+
+/* ---- group boxes ------------------------------------------------------- */
+
+QGroupBox {
+    border: 1px solid @border;
+    border-radius: 2px;
+    margin-top: 8px;
+    padding-top: 8px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 4px;
+    color: @text;
+}
+
+/* ---- tabs -------------------------------------------------------------- */
+
+QTabWidget::pane {
+    border: 1px solid @border;
+    top: -1px;
+}
+QTabBar::tab {
+    background: transparent;
+    color: @dim;
+    padding: 4px 12px;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+QTabBar::tab:hover { color: @text; }
+QTabBar::tab:selected {
+    color: @text;
+    border-bottom: 2px solid @accent;
+}
+
+/* ---- lists / tables ---------------------------------------------------- */
+
+QListWidget, QListView, QTableWidget, QTableView, QTreeWidget, QTreeView {
+    background-color: @sunken;
+    alternate-background-color: #262626;   /* sunken, half a step up */
+    color: @text;
+    border: 1px solid @border;
+    selection-background-color: @selection;
+    selection-color: @text;
+}
+QHeaderView::section {
+    background-color: @raised;
+    color: @text;
+    font-weight: 600;
+    border: none;
+    border-bottom: 1px solid @border;
+    border-right: 1px solid @border_strong;
+    padding: 2px 6px;
+}
+QTableCornerButton::section {
+    background-color: @raised;
+    border: none;
+}
+
+/* Quiet checkbox-only table (Raid Report fight picker): hover/selection
+   painting suppressed so the ticks are the only visual state. */
+QTableWidget[quiet="true"] { border: 1px solid @border; }
+QTableWidget[quiet="true"]::item { padding: 0px 6px; }
+QTableWidget[quiet="true"]::item:hover { background: transparent; }
+QTableWidget[quiet="true"]::item:selected { background: transparent; color: @text; }
+
+/* ---- scrollbars -------------------------------------------------------- */
+
+QScrollBar:vertical {
+    background: @sunken;
+    width: 12px;
+    margin: 0;
+}
+QScrollBar:horizontal {
+    background: @sunken;
+    height: 12px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: @border;
+    border-radius: 2px;
+    min-height: 24px;
+}
+QScrollBar::handle:horizontal {
+    background: @border;
+    border-radius: 2px;
+    min-width: 24px;
+}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+    background: #5A5A5A;                    /* border, one step lighter */
+}
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+/* ---- tooltips ---------------------------------------------------------- */
+
+QToolTip {
+    background-color: @raised;
+    color: @text;
+    border: 1px solid @border_strong;
+    padding: 4px;
+}
+
+/* ---- menus / status bar ------------------------------------------------ */
+
+QMenuBar { background-color: @window; }
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 8px;
+}
+QMenuBar::item:selected { background: @raised; }
+
+QMenu {
+    background-color: @window;
+    border: 1px solid @border_strong;
+}
+QMenu::item { padding: 4px 24px 4px 12px; }
+QMenu::item:selected { background-color: @selection; }
+QMenu::separator {
+    height: 1px;
+    background: @border;
+    margin: 4px 8px;
+}
+
+QStatusBar {
+    background: @window;
+    border-top: 1px solid @border_strong;
+}
+QStatusBar::item { border: none; }
+
+/* ---- progress bars ----------------------------------------------------- */
+
+QProgressBar {
+    background-color: @sunken;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: 2px;
+    text-align: center;
+}
+QProgressBar::chunk { background-color: @accent; }
+
+/* ---- label variants ---------------------------------------------------- */
+
+/* Hints / fine print / secondary labels — replaces the hardcoded
+   #888/#999/#aaa trio scattered across the old UI. */
+QLabel[hint="true"] {
+    color: @dim;
+    font-size: 8pt;
+}
+
+/* Status lines sized up a step (raid report status row). */
+QLabel[variant="status"] { font-size: 10pt; }
+
+/* About page / dialog headings. */
+QLabel[variant="title"] { font-size: 12pt; font-weight: 600; }
+QLabel[variant="heading"] { font-size: 10pt; font-weight: 600; }
+
+/* Soft warning banner (recalibration thin-data notice). */
+QLabel[class="warn-banner"] {
+    background-color: #3B331F;              /* warn tinted onto window */
+    color: @warn;
+    border: 1px solid @warn;
+    border-radius: 2px;
+    padding: 6px;
+}
+
+/* Drag-and-drop target (Process Files). */
+QLabel[dropzone="true"] {
+    background-color: @sunken;
+    color: @dim;
+    font-size: 10pt;
+    border: 1px dashed @border;
+    border-radius: 2px;
+    padding: 20px;
+}
+QLabel[dropzone="true"][state="drag"] {
+    color: @accent;
+    border-color: @accent;
+}
+
+/* ---- main-window shell -------------------------------------------------- */
+
+/* Sidebar navigation list (MainWindow). */
+QListWidget[class="nav"] {
+    background-color: #242424;              /* window, one step darker */
+    color: @dim;
+    font-size: 10pt;
+    border: none;
+    border-right: 1px solid @border_strong;
+    outline: none;                          /* no dotted focus rect over items */
+}
+QListWidget[class="nav"]::item {
+    padding: 8px 12px;
+    border-left: 2px solid transparent;
+}
+QListWidget[class="nav"]::item:hover { color: @text; }
+QListWidget[class="nav"]::item:selected {
+    background-color: @selection;
+    border-left: 2px solid @accent;
+    color: @text;
+}
+
+/* Status-bar watcher indicator dot (U+25CF text glyph, not an emoji). */
+QLabel[class="status-dot"] { color: @dim; }
+QLabel[class="status-dot"][state="running"] { color: @accent; }
+
+/* ---- semantic states (LAST so they win) -------------------------------- */
+/* Set via core.theme.set_state(widget, "ok"/"warn"/"error"/"busy"/None). */
+
+QLabel[state="ok"] { color: @accent; }
+QLabel[state="warn"] { color: @warn; }
+QLabel[state="error"] { color: @error; }
+QLabel[state="busy"] { color: @text; }

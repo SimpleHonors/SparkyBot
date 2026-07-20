@@ -34,10 +34,12 @@ def check_remote_drive(path: Path) -> bool:
             return is_network_path(path)
 
         # Use PowerShell to get network drives and check if our drive is one of them
+        from core.apppaths import no_window_kwargs
         result = subprocess.run(
             ['powershell', '-c',
              '[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq [System.IO.DriveType]::Network } | ForEach-Object { $_.Name }'],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=10,
+            **no_window_kwargs(),
         )
         network_drives = result.stdout.strip().split('\n')
         # network_drives will be like ['Y:\\', 'Z:\\', '']

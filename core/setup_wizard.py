@@ -3,15 +3,24 @@
 import subprocess
 import sys
 import importlib.metadata
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox,
     QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout,
-    QSpinBox
+    QRadioButton, QSpinBox, QInputDialog
 )
-from PyQt6.QtCore import Qt, pyqtSlot, Q_ARG, QMetaObject, QUrl
-from PyQt6.QtGui import QColor, QPalette, QIcon
+from PySide6.QtCore import Qt, Signal, Slot, QUrl
+from PySide6.QtGui import QIcon
 from pathlib import Path
+
+from core import theme
+
+# Explicit page IDs. The default flow is ID order; declining AI on the
+# opt-in page removes the AI setup and voice pages from the flow entirely
+# (LAW #2a: absent, never grayed — the wizard looks complete without them).
+(PAGE_WELCOME, PAGE_AI_OPTIN, PAGE_USAGE_MODE, PAGE_DEPENDENCIES,
+ PAGE_GW2EI, PAGE_LOG_FOLDER, PAGE_DISCORD, PAGE_TWITCH, PAGE_AI_SETUP,
+ PAGE_TTS_VOICE, PAGE_BEHAVIOR, PAGE_COMPLETE) = range(12)
 
 
 class SetupWizard(QWizard):
@@ -19,7 +28,9 @@ class SetupWizard(QWizard):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("SparkyBot Setup")
-        self.setMinimumSize(700, 620)
+        # 760 wide so the usage-mode page's verbatim radio copy (FINAL-
+        # DESIGN wording) never clips; was 700 before that page existed.
+        self.setMinimumSize(760, 620)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
         # Set window icon to sbtray.ico
@@ -27,54 +38,41 @@ class SetupWizard(QWizard):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
-        # Force dark palette on the wizard itself
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor('#2b2b2b'))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor('#ffffff'))
-        palette.setColor(QPalette.ColorRole.Base, QColor('#3c3f41'))
-        palette.setColor(QPalette.ColorRole.Text, QColor('#ffffff'))
-        palette.setColor(QPalette.ColorRole.Button, QColor('#555555'))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor('#ffffff'))
-        self.setPalette(palette)
-
-        self.setStyleSheet("""
-            QWizard, QWizardPage {
-                background-color: #2b2b2b;
-                color: #ffffff;
-            }
-            QLabel {
-                color: #ffffff;
-            }
-            QLineEdit {
-                background-color: #3c3f41;
-                color: #ffffff;
-                border: 1px solid #555;
-                padding: 4px;
-            }
-            QPushButton#browseBtn {
-                background-color: #555;
-                color: white;
-                border-radius: 3px;
-                padding: 4px 8px;
-            }
-            QCheckBox {
-                color: #ffffff;
-            }
-        """)
-        self.addPage(WelcomePage())
-        self.addPage(DependenciesPage())
-        self.addPage(GW2EIPage(config))
-        self.addPage(LogFolderPage(config))
-        self.addPage(DiscordPage(config))
+        # No private palette or stylesheet here — the wizard inherits the
+        # app-wide Workbench Dark theme applied in main.py (before this
+        # wizard ever constructs).
+        self.setPage(PAGE_WELCOME, WelcomePage())
+        # LAW #2a: the AI question comes right after Welcome, before any
+        # plumbing — a "No thanks" user never sees an AI setup page.
+        self.ai_optin_page = AIOptInPage()
+        self.setPage(PAGE_AI_OPTIN, self.ai_optin_page)
+        # Usage-mode preference (operator law #3): asked right after the
+        # AI question, same plain-language pattern.
+        self.usage_mode_page = UsageModePage()
+        self.setPage(PAGE_USAGE_MODE, self.usage_mode_page)
+        # The dependencies page only makes sense running from source —
+        # the installed exe bundles everything and has no pip.
+        from core.apppaths import is_frozen
+        if not is_frozen():
+            self.setPage(PAGE_DEPENDENCIES, DependenciesPage())
+        self.setPage(PAGE_GW2EI, GW2EIPage(config))
+        self.setPage(PAGE_LOG_FOLDER, LogFolderPage(config))
+        self.setPage(PAGE_DISCORD, DiscordPage(config))
         self.twitch_page = TwitchPage(config)
         self.ai_page = AIAnalysisPage(config)
         self.tts_page = TTSVoicePage(config)
         self.behavior_page = BehaviorPage(config)
-        self.addPage(self.twitch_page)
-        self.addPage(self.ai_page)
-        self.addPage(self.tts_page)
-        self.addPage(self.behavior_page)
-        self.addPage(CompletePage())
+        self.setPage(PAGE_TWITCH, self.twitch_page)
+        self.setPage(PAGE_AI_SETUP, self.ai_page)
+        self.setPage(PAGE_TTS_VOICE, self.tts_page)
+        self.setPage(PAGE_BEHAVIOR, self.behavior_page)
+        self.setPage(PAGE_COMPLETE, CompletePage())
+        self.setStartId(PAGE_WELCOME)
+
+    def ai_opted_in(self) -> bool:
+        """The page-2 answer — single source for the AI/TTS page skip and
+        for what accept() writes to AI/enableAiAnalysis."""
+        return self.ai_optin_page.opted_in()
 
     def accept(self):
         """Save all wizard values to config on finish"""
@@ -89,6 +87,16 @@ class SetupWizard(QWizard):
         if webhook:
             cfg('Discord', 'discordWebhook', webhook)
 
+        # AI opt-in (page 2) is the SINGLE writer of the master switch —
+        # the same AI/enableAiAnalysis key the Settings Application page
+        # edits (LAW #2: zero new keys, zero renames).
+        opted_in = self.ai_opted_in()
+        cfg('AI', 'enableAiAnalysis', 'true' if opted_in else 'false')
+
+        # Usage mode (page 3) — RaidReport/runMode, the same key the
+        # Settings > Raid Reports "How reports get made" switch edits.
+        cfg('RaidReport', 'runMode', self.usage_mode_page.selected_mode())
+
         # Twitch
         if hasattr(self.twitch_page, 'enable_twitch'):
             cfg('Twitch', 'enableTwitchBot', str(self.twitch_page.enable_twitch.isChecked()).lower())
@@ -96,9 +104,9 @@ class SetupWizard(QWizard):
             cfg('Twitch', 'twitchBotToken', self.twitch_page.twitch_token.text().strip())
             cfg('Twitch', 'twitchUseTLS', str(self.twitch_page.twitch_use_tls.isChecked()).lower())
 
-        # AI
-        if hasattr(self.ai_page, 'enable_ai'):
-            cfg('AI', 'enableAiAnalysis', str(self.ai_page.enable_ai.isChecked()))
+        # AI setup — the page is in the flow only when opted in; declined,
+        # its widgets hold untouched defaults and must never be written.
+        if opted_in and hasattr(self.ai_page, 'ai_provider'):
             cfg('AI', 'aiProvider', self.ai_page.ai_provider.currentText())
             cfg('AI', 'aiBaseUrl', self.ai_page.ai_base_url.text().strip())
             cfg('AI', 'aiApiKey', self.ai_page.ai_api_key.text().strip())
@@ -112,8 +120,9 @@ class SetupWizard(QWizard):
                 cfg('AI', 'aiDisableThinking', str(self.ai_page.ai_disable_thinking.isChecked()).lower())
                 cfg('AI', 'aiReasoningStrategy', getattr(self.ai_page, '_reasoning_strategy', ''))
 
-        # TTS
-        if hasattr(self.tts_page, 'enable_tts'):
+        # TTS — voice speaks AI commentary, so the page follows the same
+        # opt-in (skipped and unwritten when declined).
+        if opted_in and hasattr(self.tts_page, 'enable_tts'):
             cfg('TTS', 'enableTts', str(self.tts_page.enable_tts.isChecked()).lower())
             cfg('TTS', 'ttsDiscordAttach', str(self.tts_page.tts_discord_attach.isChecked()).lower())
             cfg('TTS', 'ttsProvider', self.tts_page.tts_provider.currentText())
@@ -123,6 +132,15 @@ class SetupWizard(QWizard):
             el_voice = self.tts_page.tts_el_voice_id.text().strip()
             if el_voice:
                 cfg('TTS', 'ttsElevenLabsVoiceId', el_voice)
+            edge_voice = self.tts_page.tts_edge_voice.currentText().strip()
+            if edge_voice:
+                cfg('TTS', 'ttsEdgeVoice', edge_voice)
+            local_url = self.tts_page.tts_local_url.text().strip()
+            if local_url:
+                cfg('TTS', 'ttsLocalUrl', local_url)
+            local_voice = self.tts_page.tts_local_voice.currentText().strip()
+            if local_voice:
+                cfg('TTS', 'ttsLocalVoice', local_voice)
 
         # Behavior
         if hasattr(self.behavior_page, 'start_watcher_on_startup'):
@@ -153,18 +171,7 @@ class DependenciesPage(QWizardPage):
 
         self.install_btn = QPushButton("Check & Install Dependencies")
         self.install_btn.setMinimumHeight(36)
-        self.install_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                font-size: 13px;
-                border-radius: 5px;
-                padding: 6px 16px;
-            }
-            QPushButton:pressed { background-color: #45a049; }
-            QPushButton:disabled { background-color: #555; color: #aaa; }
-        """)
+        theme.set_widget_class(self.install_btn, "primary")
         self.install_btn.clicked.connect(self._check_and_install)
         layout.addWidget(self.install_btn)
 
@@ -174,7 +181,7 @@ class DependenciesPage(QWizardPage):
 
         self.details_label = QLabel("")
         self.details_label.setWordWrap(True)
-        self.details_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        theme.mark_hint(self.details_label)
         layout.addWidget(self.details_label)
 
         layout.addStretch()
@@ -206,7 +213,7 @@ class DependenciesPage(QWizardPage):
         installed = []
         missing = []
         for req in requirements:
-            # Parse package name from requirement string (e.g., "PyQt6>=6.10.0" -> "PyQt6")
+            # Parse package name from requirement string (e.g., "PySide6>=6.10.0" -> "PySide6")
             pkg_name = req.split('>=')[0].split('==')[0].split('<')[0].split('>')[0].strip()
             try:
                 version = importlib.metadata.version(pkg_name)
@@ -219,37 +226,37 @@ class DependenciesPage(QWizardPage):
         """Check dependencies and install missing ones."""
         requirements = self._get_requirements()
         if not requirements:
-            self.status_label.setStyleSheet("color: #ffaa00;")
-            self.status_label.setText("⚠ requirements.txt not found")
+            theme.set_state(self.status_label, "warn")
+            self.status_label.setText("requirements.txt was not found")
             return
 
         installed, missing = self._check_installed(requirements)
 
         if not missing:
-            self.status_label.setStyleSheet("color: #4CAF50;")
-            self.status_label.setText("✓ All dependencies are installed")
-            self.details_label.setText("\n".join(f"  ✓ {p}" for p in installed))
-            self.install_btn.setText("✓ All Dependencies Installed")
+            theme.set_state(self.status_label, "ok")
+            self.status_label.setText("All dependencies are installed")
+            self.details_label.setText("\n".join(f"  Installed: {p}" for p in installed))
+            self.install_btn.setText("All Dependencies Installed")
             self.install_btn.setEnabled(False)
             return
 
         if auto:
             # On auto-check, just show what's missing — don't install yet
-            self.status_label.setStyleSheet("color: #ffaa00;")
+            theme.set_state(self.status_label, "warn")
             self.status_label.setText(
-                f"⚠ {len(missing)} missing package(s) found. "
+                f"{len(missing)} missing package(s) found. "
                 f"Click the button to install them."
             )
             details = []
             for p in installed:
-                details.append(f"  ✓ {p}")
+                details.append(f"  Installed: {p}")
             for p in missing:
-                details.append(f"  ✗ {p} (missing)")
+                details.append(f"  Missing: {p}")
             self.details_label.setText("\n".join(details))
             return
 
         # Actually install missing packages
-        self.status_label.setStyleSheet("color: #ffffff;")
+        theme.set_state(self.status_label, "busy")
         self.status_label.setText(f"Installing {len(missing)} package(s)...")
         self.install_btn.setEnabled(False)
         self.repaint()
@@ -263,28 +270,28 @@ class DependenciesPage(QWizardPage):
             )
 
             if result.returncode == 0:
-                self.status_label.setStyleSheet("color: #4CAF50;")
-                self.status_label.setText("✓ All dependencies installed successfully")
+                theme.set_state(self.status_label, "ok")
+                self.status_label.setText("All dependencies installed successfully")
                 # Re-check to update the details
                 installed, still_missing = self._check_installed(requirements)
-                details = [f"  ✓ {p}" for p in installed]
+                details = [f"  Installed: {p}" for p in installed]
                 if still_missing:
-                    details += [f"  ✗ {p} (failed)" for p in still_missing]
+                    details += [f"  Failed: {p}" for p in still_missing]
                 self.details_label.setText("\n".join(details))
-                self.install_btn.setText("✓ All Dependencies Installed")
+                self.install_btn.setText("All Dependencies Installed")
             else:
-                self.status_label.setStyleSheet("color: #ff4444;")
-                self.status_label.setText("✗ Installation failed")
+                theme.set_state(self.status_label, "error")
+                self.status_label.setText("Installation failed")
                 self.details_label.setText(result.stderr[:500] if result.stderr else result.stdout[:500])
                 self.install_btn.setEnabled(True)
 
         except subprocess.TimeoutExpired:
-            self.status_label.setStyleSheet("color: #ff4444;")
-            self.status_label.setText("✗ Installation timed out after 120 seconds")
+            theme.set_state(self.status_label, "error")
+            self.status_label.setText("Installation timed out after 120 seconds")
             self.install_btn.setEnabled(True)
         except Exception as e:
-            self.status_label.setStyleSheet("color: #ff4444;")
-            self.status_label.setText(f"✗ Error: {str(e)}")
+            theme.set_state(self.status_label, "error")
+            self.status_label.setText(f"Error: {str(e)}")
             self.install_btn.setEnabled(True)
 
 
@@ -314,11 +321,113 @@ class WelcomePage(QWizardPage):
         layout.addStretch()
 
 
+class AIOptInPage(QWizardPage):
+    """Page 2 — the one AI question (LAW #2a), asked before any plumbing.
+
+    Wording is design-A §1.2a verbatim. Declining removes every later AI
+    and voice page from the flow; accept() writes the answer to the
+    existing AI/enableAiAnalysis key either way.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setTitle("Want AI commentary?")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        desc = QLabel(
+            "SparkyBot can add an AI hype-commentator blurb to each fight "
+            "report, and can read it aloud in a voice you pick. It needs "
+            "an AI provider (free local options work). Everything else — "
+            "fight reports, raid reports, Discord posting — is complete "
+            "without it."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addSpacing(8)
+
+        self.decline_radio = QRadioButton("No thanks — keep it simple")
+        theme.mark_option(self.decline_radio)
+        self.decline_radio.setChecked(True)   # opt-IN: off is the default
+        layout.addWidget(self.decline_radio)
+
+        self.accept_radio = QRadioButton("Yes — set up AI commentary")
+        theme.mark_option(self.accept_radio)
+        layout.addWidget(self.accept_radio)
+
+        layout.addSpacing(8)
+
+        note = QLabel(
+            "You can change your mind any time in Settings → Application.")
+        note.setWordWrap(True)
+        theme.mark_hint(note)
+        layout.addWidget(note)
+
+        layout.addStretch()
+
+    def opted_in(self) -> bool:
+        return self.accept_radio.isChecked()
+
+
+class UsageModePage(QWizardPage):
+    """Page 3 — how end-of-night raid reports get made (usage-mode
+    preference, FINAL-DESIGN verbatim; describes workflows, never labels
+    the user). Writes the existing RaidReport/runMode key on Finish."""
+
+    def __init__(self):
+        super().__init__()
+        self.setTitle("How do you want to make end-of-night raid reports?")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(12, 8, 12, 8)
+
+        self.run_button_radio = QRadioButton(
+            "One-button runs — press Start Run when the raid starts; "
+            "End Run builds the report and posts it. (recommended)"
+        )
+        theme.mark_option(self.run_button_radio)
+        self.run_button_radio.setChecked(True)   # the recommended default
+        layout.addWidget(self.run_button_radio)
+
+        self.manual_radio = QRadioButton(
+            "I'll pick fights myself — build reports on the Raid Report "
+            "page whenever you want."
+        )
+        theme.mark_option(self.manual_radio)
+        layout.addWidget(self.manual_radio)
+
+        layout.addSpacing(8)
+
+        note = QLabel(
+            "You can switch this any time in Settings → Raid Reports.")
+        note.setWordWrap(True)
+        theme.mark_hint(note)
+        layout.addWidget(note)
+
+        layout.addStretch()
+
+    def selected_mode(self) -> str:
+        return "manual" if self.manual_radio.isChecked() else "run-button"
+
+
 class GW2EIPage(QWizardPage):
+    # Worker threads never touch widgets — they emit these signals, which Qt
+    # queues onto the GUI thread.
+    sig_version_status = Signal(str, str)
+    sig_status = Signal(str)
+    sig_progress = Signal(int)
+    sig_download_complete = Signal(bool, str)
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self._install_success = False
+        self.sig_version_status.connect(self._set_version_status)
+        self.sig_status.connect(self._set_status)
+        self.sig_progress.connect(lambda pct: self.progress_bar.setValue(pct))
+        self.sig_download_complete.connect(self._on_download_complete)
         self.setTitle("GW2 Elite Insights Parser")
 
         layout = QVBoxLayout(self)
@@ -344,20 +453,9 @@ class GW2EIPage(QWizardPage):
         rec_desc.setWordWrap(True)
         layout.addWidget(rec_desc)
 
-        self.download_btn = QPushButton("⬇  Download GW2 Elite Insights (Recommended)")
+        self.download_btn = QPushButton("Download GW2 Elite Insights (Recommended)")
         self.download_btn.setMinimumHeight(36)
-        self.download_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                font-size: 13px;
-                border-radius: 5px;
-                padding: 6px 16px;
-            }
-            QPushButton:pressed { background-color: #45a049; }
-            QPushButton:disabled { background-color: #555; color: #aaa; }
-        """)
+        theme.set_widget_class(self.download_btn, "primary")
         self.download_btn.clicked.connect(self._do_download)
         layout.addWidget(self.download_btn)
 
@@ -373,7 +471,6 @@ class GW2EIPage(QWizardPage):
         # Divider
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: #555;")
         layout.addWidget(divider)
 
         # SECONDARY: Manual path
@@ -386,7 +483,7 @@ class GW2EIPage(QWizardPage):
             "GW2EI installation. Leave blank if you used the automatic install above."
         )
         adv_desc.setWordWrap(True)
-        adv_desc.setStyleSheet("color: #aaa; font-size: 11px;")
+        theme.mark_hint(adv_desc)
         layout.addWidget(adv_desc)
 
         row = QHBoxLayout()
@@ -396,7 +493,6 @@ class GW2EIPage(QWizardPage):
         )
         # No prefill - do not expose user's personal folder structure
         browse_btn = QPushButton("Browse...")
-        browse_btn.setObjectName("browseBtn")
         browse_btn.clicked.connect(self._browse)
         row.addWidget(self.path_edit)
         row.addWidget(browse_btn)
@@ -410,23 +506,22 @@ class GW2EIPage(QWizardPage):
 
     def _check_initial_state(self):
         """Check if GW2EI is installed and whether it needs updating."""
-        default_exe = Path(__file__).parent.parent / "GW2EI" / "GuildWars2EliteInsights-CLI.exe"
+        default_exe = __import__("core.apppaths", fromlist=["gw2ei_dir"]).gw2ei_dir() / "GuildWars2EliteInsights-CLI.exe"
 
         if not default_exe.exists():
-            self.download_btn.setText("⬇  Download GW2 Elite Insights (Recommended)")
+            self.download_btn.setText("Download GW2 Elite Insights (Recommended)")
             return
 
         # Installed - check version in background
         self._install_success = True
-        self.download_status.setStyleSheet("color: #ffffff;")
-        self.download_status.setText("✓ GW2EI is installed — checking for updates...")
-        self.download_btn.setText("⬇  Update GW2 Elite Insights")
+        theme.set_state(self.download_status, "busy")
+        self.download_status.setText("GW2EI is installed — checking for updates...")
+        self.download_btn.setText("Update GW2 Elite Insights")
 
         import threading
         threading.Thread(target=self._check_version_worker, daemon=True).start()
 
     def _check_version_worker(self):
-        from PyQt6.QtCore import QMetaObject, Q_ARG
         try:
             from core.ei_updater import EIUpdater
             from core.gw2ei_invoker import GW2EIInvoker
@@ -437,28 +532,21 @@ class GW2EIPage(QWizardPage):
 
             if has_update:
                 msg = f"⬆ Update available: v{current} → v{latest_version}"
-                btn = "⬇  Update GW2 Elite Insights"
+                btn = "Update GW2 Elite Insights"
             else:
-                msg = f"✓ GW2EI v{current} is up to date"
-                btn = "⬇  Re-download GW2 Elite Insights"
+                msg = f"GW2EI v{current} is up to date"
+                btn = "Re-download GW2 Elite Insights"
 
-            QMetaObject.invokeMethod(
-                self, "_set_version_status",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, msg),
-                Q_ARG(str, btn)
-            )
+            self.sig_version_status.emit(msg, btn)
         except Exception as e:
-            QMetaObject.invokeMethod(
-                self, "_set_version_status",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, f"✓ GW2EI installed (could not check version: {e})"),
-                Q_ARG(str, "⬇  Re-download GW2 Elite Insights")
+            self.sig_version_status.emit(
+                f"GW2EI installed (could not check version: {e})",
+                "Re-download GW2 Elite Insights"
             )
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def _set_version_status(self, status: str, btn_text: str):
-        self.download_status.setStyleSheet("color: #ffffff;")
+        theme.set_state(self.download_status, None)
         self.download_status.setText(status)
         self.download_btn.setText(btn_text)
 
@@ -467,14 +555,13 @@ class GW2EIPage(QWizardPage):
         self.download_btn.setText("Downloading...")
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.download_status.setStyleSheet("color: #ffffff;")
+        theme.set_state(self.download_status, "busy")
         self.download_status.setText("Connecting to GitHub...")
 
         import threading
         threading.Thread(target=self._download_worker, daemon=True).start()
 
     def _download_worker(self):
-        from PyQt6.QtCore import QMetaObject, Q_ARG
         try:
             from core.ei_updater import EIUpdater
             from core.gw2ei_invoker import GW2EIInvoker
@@ -502,52 +589,36 @@ class GW2EIPage(QWizardPage):
             if not download_url:
                 raise ValueError("Could not find download URL from GitHub releases")
 
-            QMetaObject.invokeMethod(
-                self, "_set_status",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, f"Downloading GW2EI v{latest_version}...")
-            )
+            self.sig_status.emit(f"Downloading GW2EI v{latest_version}...")
 
             def progress_cb(pct):
-                QMetaObject.invokeMethod(
-                    self.progress_bar, "setValue",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(int, int(pct))
-                )
+                self.sig_progress.emit(int(pct))
 
             success, message = updater.download_and_update(download_url, version=latest_version, progress_callback=progress_cb)
 
-            QMetaObject.invokeMethod(
-                self, "_on_download_complete",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(bool, success),
-                Q_ARG(str, f"v{latest_version}" if success else message)
+            self.sig_download_complete.emit(
+                success, f"v{latest_version}" if success else message
             )
         except Exception as e:
-            QMetaObject.invokeMethod(
-                self, "_on_download_complete",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(bool, False),
-                Q_ARG(str, str(e))
-            )
+            self.sig_download_complete.emit(False, str(e))
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _set_status(self, text: str):
         self.download_status.setText(text)
 
-    @pyqtSlot(bool, str)
+    @Slot(bool, str)
     def _on_download_complete(self, success: bool, message: str):
         self.progress_bar.setVisible(False)
         self.download_btn.setEnabled(True)
         if success:
             self._install_success = True
-            self.download_status.setStyleSheet("color: #ffffff;")
-            self.download_status.setText(f"✓ GW2EI {message} installed successfully")
-            self.download_btn.setText("⬇  Re-download GW2 Elite Insights")
+            theme.set_state(self.download_status, "ok")
+            self.download_status.setText(f"GW2EI {message} installed successfully")
+            self.download_btn.setText("Re-download GW2 Elite Insights")
         else:
-            self.download_status.setStyleSheet("color: #f44336;")
-            self.download_status.setText(f"✗ Download failed: {message}")
-            self.download_btn.setText("⬇  Download GW2 Elite Insights (Recommended)")
+            theme.set_state(self.download_status, "error")
+            self.download_status.setText(f"Download failed: {message}")
+            self.download_btn.setText("Download GW2 Elite Insights (Recommended)")
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -562,9 +633,9 @@ class GW2EIPage(QWizardPage):
             return True
         if self._install_success:
             return True
-        self.download_status.setStyleSheet("color: #ffaa00;")
+        theme.set_state(self.download_status, "warn")
         self.download_status.setText(
-            "⚠ GW2EI not found. Download it above or provide a valid path. "
+            "GW2EI was not found. Download it above or provide a valid path. "
             "You can continue but parsing will not work."
         )
         return True
@@ -590,33 +661,22 @@ class LogFolderPage(QWizardPage):
             detected_label = QLabel(
                 f"Default ArcDPS log location detected:<br>"
                 f"<code>{self._default_path}</code><br>"
-                f"<small style='color:#aaa;'>WvW logs are saved in a numbered subfolder here. "
+                f"<small>WvW logs are saved in a numbered subfolder here. "
                 f"Clicking the button below will select it automatically.</small>"
             )
             detected_label.setWordWrap(True)
             detected_label.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(detected_label)
 
-            use_default_btn = QPushButton("✓  Use Default Location (Recommended)")
+            use_default_btn = QPushButton("Use Default Location (Recommended)")
             use_default_btn.setMinimumHeight(36)
-            use_default_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    font-weight: bold;
-                    font-size: 12px;
-                    border-radius: 5px;
-                    padding: 6px 16px;
-                }
-                QPushButton:pressed { background-color: #45a049; }
-            """)
+            theme.set_widget_class(use_default_btn, "primary")
             use_default_btn.clicked.connect(self._use_default)
             layout.addWidget(use_default_btn)
 
         # Divider
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: #555;")
         layout.addWidget(divider)
 
         # Manual entry
@@ -631,7 +691,6 @@ class LogFolderPage(QWizardPage):
         )
         # No prefill - do not expose user's personal folder structure
         browse_btn = QPushButton("Browse...")
-        browse_btn.setObjectName("browseBtn")
         browse_btn.clicked.connect(self._browse)
         row.addWidget(self.folder_edit)
         row.addWidget(browse_btn)
@@ -695,20 +754,20 @@ class LogFolderPage(QWizardPage):
         self.folder_edit.setText(target)
 
         if wvw_folder:
-            self.status_label.setStyleSheet("color: #4CAF50;")
+            theme.set_state(self.status_label, "ok")
             self.status_label.setText(
-                f"✓ WvW log folder found: {target}"
+                f"WvW log folder found: {target}"
             )
         elif base.exists():
-            self.status_label.setStyleSheet("color: #ffaa00;")
+            theme.set_state(self.status_label, "warn")
             self.status_label.setText(
-                "⚠ Base folder found but no WvW subfolder yet. "
+                "Base folder found but no WvW subfolder yet. "
                 "Play a WvW match first, then re-run setup — or browse manually."
             )
         else:
-            self.status_label.setStyleSheet("color: #ffaa00;")
+            theme.set_state(self.status_label, "warn")
             self.status_label.setText(
-                "⚠ Default folder does not exist yet. Install ArcDPS and "
+                "Default folder does not exist yet. Install ArcDPS and "
                 "enable WvW logging, then play a match before starting the watcher."
             )
 
@@ -724,9 +783,9 @@ class LogFolderPage(QWizardPage):
     def validatePage(self):
         folder = self.folder_edit.text().strip()
         if not folder:
-            self.status_label.setStyleSheet("color: #ffaa00;")
+            theme.set_state(self.status_label, "warn")
             self.status_label.setText(
-                "⚠ No folder selected. You can continue but the watcher "
+                "No folder selected. You can continue but the watcher "
                 "will not work until a log folder is configured."
             )
         return True
@@ -835,7 +894,7 @@ class TwitchPage(QWizardPage):
             "and gives SparkyBot permission to send messages to your channel."
         )
         help_note.setWordWrap(True)
-        help_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(help_note)
         layout.addWidget(help_note)
 
         layout.addStretch()
@@ -857,12 +916,37 @@ class TwitchPage(QWizardPage):
     def validatePage(self):
         return True
 
+    def nextId(self):
+        """AI declined on the opt-in page -> the AI setup and voice pages
+        are not in the flow at all (LAW #2a); continue at Behavior.
+        NOTE: if this (cut-proposal) page is ever removed, this hop must
+        move to the page that precedes PAGE_AI_SETUP in the flow."""
+        wizard = self.wizard()
+        if wizard is not None and hasattr(wizard, "ai_opted_in") \
+                and not wizard.ai_opted_in():
+            return PAGE_BEHAVIOR
+        return super().nextId()
+
 
 class AIAnalysisPage(QWizardPage):
+    # Worker threads never touch widgets — they emit these signals, which Qt
+    # queues onto the GUI thread. Payloads carry semantic states ("busy",
+    # "ok", "warn", "error"), never colors — the theme maps state to look.
+    sig_models = Signal(int, list)  # → _apply_models
+    sig_ai_test_result = Signal(str, str)  # (text, state) → _set_ai_test_result
+    sig_apply_pending_reasoning = Signal()  # → _apply_pending_reasoning
+    sig_ai_test_done = Signal(str, bool)  # → _on_ai_test_done
+
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.setTitle("AI Fight Commentary (Optional)")
+        self.sig_models.connect(self._apply_models)
+        self.sig_ai_test_result.connect(self._set_ai_test_result)
+        self.sig_apply_pending_reasoning.connect(self._apply_pending_reasoning)
+        self.sig_ai_test_done.connect(self._on_ai_test_done)
+        # Not "(Optional)" anymore — this page only appears after the
+        # operator opted in on page 2.
+        self.setTitle("AI Fight Commentary")
 
         # Scroll area wrapper for content
         scroll = QScrollArea()
@@ -893,15 +977,14 @@ class AIAnalysisPage(QWizardPage):
             "paste the key, and you're done."
         )
         quick_desc.setWordWrap(True)
-        quick_desc.setStyleSheet("color: #aaa;")
+        theme.mark_hint(quick_desc)
         layout.addWidget(quick_desc)
 
         layout.addSpacing(8)
 
-        self.enable_ai = QCheckBox("Enable AI Fight Analysis")
-        layout.addWidget(self.enable_ai)
-
-        layout.addSpacing(6)
+        # No enable checkbox here: the opt-in page (page 2) is the single
+        # writer of AI/enableAiAnalysis, and this page only exists in the
+        # flow after opting in.
 
         # Provider selection using manual label+field rows
         LABEL_WIDTH = 100
@@ -939,7 +1022,7 @@ class AIAnalysisPage(QWizardPage):
         self.ai_model = QComboBox()
         self.ai_model.setEditable(True)
         self.ai_model.setPlaceholderText("model name")
-        self.ai_refresh_btn = QPushButton("↻ Refresh")
+        self.ai_refresh_btn = QPushButton("Refresh")
         self.ai_refresh_btn.setToolTip(
             "Fetch the live model list from this provider (needs Base URL, and an API Key for hosted providers)"
         )
@@ -971,7 +1054,7 @@ class AIAnalysisPage(QWizardPage):
 
         # Model fetch status (compact hint)
         self.model_status = QLabel("")
-        self.model_status.setStyleSheet("font-size: 10px; color: #888;")
+        theme.mark_hint(self.model_status)
         layout.addWidget(self.model_status)
 
         layout.addSpacing(8)
@@ -981,7 +1064,7 @@ class AIAnalysisPage(QWizardPage):
         links_label.setTextFormat(Qt.TextFormat.RichText)
         links_label.setOpenExternalLinks(True)
         links_label.setWordWrap(True)
-        links_label.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(links_label)
         links_label.setText(
             "Google Gemini (free tier): <a href='https://aistudio.google.com/apikey'>Get API Key</a><br>"
             "OpenAI: <a href='https://platform.openai.com/api-keys'>Get API Key</a><br>"
@@ -993,13 +1076,8 @@ class AIAnalysisPage(QWizardPage):
 
         layout.addSpacing(10)
 
-        # Test Connection button
+        # Test Connection button — plain button, themed by the central QSS
         self.ai_test_btn = QPushButton("Test Connection")
-        self.ai_test_btn.setStyleSheet("""
-            QPushButton { background-color: #555; color: white; border-radius: 3px; padding: 6px 16px; }
-            QPushButton:pressed { background-color: #666; }
-            QPushButton:disabled { background-color: #444; color: #888; }
-        """)
         self.ai_test_btn.clicked.connect(self._test_ai_connection)
         self.ai_test_status = QLabel("")
         self.ai_test_status.setWordWrap(True)
@@ -1094,17 +1172,11 @@ class AIAnalysisPage(QWizardPage):
                 preset = PRESETS.get(provider, {})
                 models = preset.get("models", [])
 
-            from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-            QMetaObject.invokeMethod(
-                self, "_apply_models",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(int, generation),
-                Q_ARG(list, models)
-            )
+            self.sig_models.emit(generation, models)
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    @pyqtSlot(int, list)
+    @Slot(int, list)
     def _apply_models(self, generation: int, models: list):
         """Apply fetched model list to the combo box."""
         # Discard stale results from a previous provider selection
@@ -1129,17 +1201,17 @@ class AIAnalysisPage(QWizardPage):
         """Probe the AI connection both ways and auto-apply the reasoning fix.
 
         Parity with the settings dialog (core/gui_settings.py). The worker
-        thread NEVER touches a widget — it marshals every UI update back to the
-        main thread via QMetaObject.invokeMethod (the wizard's threading idiom),
-        and auto-apply results are stashed on self._pending_apply then applied
-        by the no-arg _apply_pending_reasoning slot.
+        thread NEVER touches a widget — it emits Qt Signals, which are
+        queued onto the main thread, and auto-apply results are stashed on
+        self._pending_apply then applied by the no-arg
+        _apply_pending_reasoning slot.
         """
         base_url = self.ai_base_url.text().strip()
         api_key = self.ai_api_key.text().strip()
         model = self.ai_model.currentText().strip() if isinstance(self.ai_model, QComboBox) else self.ai_model.text().strip()
 
         if not base_url or not model:
-            self.ai_test_status.setStyleSheet("color: #ffaa00;")
+            theme.set_state(self.ai_test_status, "warn")
             self.ai_test_status.setText("Enter a Base URL and Model first.")
             return
 
@@ -1188,7 +1260,7 @@ class AIAnalysisPage(QWizardPage):
         timeout = self.config.ai_timeout
 
         self.ai_test_btn.setEnabled(False)
-        self.ai_test_status.setStyleSheet("color: #ffffff;")
+        theme.set_state(self.ai_test_status, "busy")
         self.ai_test_status.setText("Testing…")
         self._last_report = None
         self._pending_apply = None
@@ -1196,7 +1268,6 @@ class AIAnalysisPage(QWizardPage):
         import threading
 
         def _run():
-            from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
             from core.reasoning_probe import run_probe, make_real_factory, format_report
             from core.reasoning_settings_apply import apply_report_to_config
             try:
@@ -1204,46 +1275,31 @@ class AIAnalysisPage(QWizardPage):
                 report = run_probe(
                     factory, test_summary, user_budget=user_budget,
                     base_url=base_url, model=model, timeout=timeout,
-                    progress=lambda m: QMetaObject.invokeMethod(
-                        self, "_set_ai_test_result",
-                        Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, m), Q_ARG(str, "#ffffff"),
-                    ),
+                    progress=lambda m: self.sig_ai_test_result.emit(m, "busy"),
                 )
                 self._last_report = report
                 if report.auto_applicable and not report.failure:
                     self._pending_apply = apply_report_to_config(report)
-                    QMetaObject.invokeMethod(
-                        self, "_apply_pending_reasoning",
-                        Qt.ConnectionType.QueuedConnection,
-                    )
-                QMetaObject.invokeMethod(
-                    self, "_on_ai_test_done",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, format_report(report)),
-                    Q_ARG(bool, not report.failure),
-                )
+                    self.sig_apply_pending_reasoning.emit()
+                self.sig_ai_test_done.emit(format_report(report), not report.failure)
             except Exception as exc:  # noqa: BLE001
-                QMetaObject.invokeMethod(
-                    self, "_on_ai_test_done",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, f"Test failed: {exc}"), Q_ARG(bool, False),
-                )
+                self.sig_ai_test_done.emit(f"Test failed: {exc}", False)
 
         threading.Thread(target=_run, daemon=True).start()
 
-    @pyqtSlot(str, str)
-    def _set_ai_test_result(self, text, color):
+    @Slot(str, str)
+    def _set_ai_test_result(self, text, state):
         """Slot (main thread): progress updates from the probe worker."""
-        self.ai_test_status.setStyleSheet(f"color: {color};")
+        theme.set_state(self.ai_test_status, state)
         self.ai_test_status.setText(text)
 
-    @pyqtSlot()
+    @Slot()
     def _apply_pending_reasoning(self):
         """Slot (main thread): push probe-derived reasoning settings into widgets.
 
         Reads the dict stashed on self._pending_apply by the worker (passing a
-        dict through Q_ARG is awkward in PyQt, so we stash + invoke no-arg).
+        dict through a Signal argument is awkward, so we stash + emit the no-arg
+        signal).
         """
         applied = getattr(self, "_pending_apply", None)
         if not applied:
@@ -1252,10 +1308,10 @@ class AIAnalysisPage(QWizardPage):
         self.ai_max_tokens.setValue(applied["ai_max_tokens"])
         self._reasoning_strategy = applied["ai_reasoning_strategy"]  # saved on finish
 
-    @pyqtSlot(str, bool)
+    @Slot(str, bool)
     def _on_ai_test_done(self, message, success):
         """Slot (main thread): final probe report + re-enable + choice prompt."""
-        self.ai_test_status.setStyleSheet("color: #4CAF50;" if success else "color: #ff4444;")
+        theme.set_state(self.ai_test_status, "ok" if success else "error")
         self.ai_test_status.setText(message)
         self.ai_test_btn.setEnabled(True)
 
@@ -1269,7 +1325,7 @@ class AIAnalysisPage(QWizardPage):
         Runs on the main thread (invoked from _on_ai_test_done), so applying the
         chosen alternative directly through _apply_pending_reasoning is safe.
         """
-        from PyQt6.QtWidgets import (
+        from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QRadioButton, QButtonGroup, QPushButton, QLabel
         )
         from core.reasoning_settings_apply import apply_report_to_config
@@ -1314,10 +1370,24 @@ class AIAnalysisPage(QWizardPage):
 
 
 class TTSVoicePage(QWizardPage):
+    # Worker threads never touch widgets — they emit these signals, which Qt
+    # queues onto the GUI thread. sig_tts_result carries a semantic state
+    # ("ok"/"error"), never a color — the theme maps state to look.
+    sig_play_audio = Signal(str)  # → _play_audio
+    sig_tts_result = Signal(str, str)  # (text, state) → _set_tts_result
+    sig_voices = Signal(str, list)  # → _set_voices (kind, names)
+    sig_local_upload = Signal(str, str, str)  # voice, message, state
+
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.setTitle("Voice / Text-to-Speech (Optional)")
+        self.sig_play_audio.connect(self._play_audio)
+        self.sig_tts_result.connect(self._set_tts_result)
+        self.sig_voices.connect(self._set_voices)
+        self.sig_local_upload.connect(self._finish_local_upload)
+        # Not "(Optional)" anymore — this page only appears after the
+        # operator opted in on page 2.
+        self.setTitle("Voice / Text-to-Speech")
 
         # Scroll area wrapper for content
         scroll = QScrollArea()
@@ -1361,19 +1431,81 @@ class TTSVoicePage(QWizardPage):
             return row
 
         self.tts_provider = QComboBox()
-        self.tts_provider.addItems(["edge", "elevenlabs"])
+        self.tts_provider.addItems(["edge", "elevenlabs", "local"])
         self.tts_provider.currentTextChanged.connect(self._on_provider_changed)
         layout.addLayout(_make_row("Provider:", self.tts_provider))
 
         provider_note = QLabel(
             "Edge: Free Microsoft neural voices, no API key needed (recommended). "
-            "ElevenLabs: Premium quality voices, requires a paid API key."
+            "ElevenLabs: Premium quality voices, requires a paid API key. "
+            "Local: your own speech server (OpenAI-compatible)."
         )
         provider_note.setWordWrap(True)
-        provider_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(provider_note)
         layout.addWidget(provider_note)
 
         layout.addSpacing(8)
+
+        # Edge fields (visible only when edge selected)
+        self.edge_fields_widget = QFrame()
+        edge_layout = QHBoxLayout(self.edge_fields_widget)
+        edge_layout.setContentsMargins(0, 0, 0, 0)
+        edge_label = QLabel("Voice:")
+        edge_label.setFixedWidth(LABEL_WIDTH)
+        edge_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        edge_layout.addWidget(edge_label)
+        self.tts_edge_voice = QComboBox()
+        self.tts_edge_voice.setEditable(True)
+        self.tts_edge_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.tts_edge_voice.addItem("en-GB-RyanNeural")
+        edge_layout.addWidget(self.tts_edge_voice, 1)
+        self.tts_edge_refresh_btn = QPushButton("Refresh Voices")
+        self.tts_edge_refresh_btn.clicked.connect(self._refresh_edge_voices)
+        edge_layout.addWidget(self.tts_edge_refresh_btn)
+        layout.addWidget(self.edge_fields_widget)
+
+        # Local server fields (visible only when local selected)
+        self.local_fields_widget = QFrame()
+        local_layout = QVBoxLayout(self.local_fields_widget)
+        local_layout.setContentsMargins(0, 0, 0, 0)
+        local_layout.setSpacing(8)
+        url_row = QHBoxLayout()
+        url_label = QLabel("Server URL:")
+        url_label.setFixedWidth(LABEL_WIDTH)
+        url_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        url_row.addWidget(url_label)
+        self.tts_local_url = QLineEdit()
+        self.tts_local_url.setPlaceholderText("http://127.0.0.1:5820")
+        url_row.addWidget(self.tts_local_url, 1)
+        local_layout.addLayout(url_row)
+        voice_row = QHBoxLayout()
+        voice_label = QLabel("Voice:")
+        voice_label.setFixedWidth(LABEL_WIDTH)
+        voice_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        voice_row.addWidget(voice_label)
+        self.tts_local_voice = QComboBox()
+        self.tts_local_voice.setEditable(True)
+        self.tts_local_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        voice_row.addWidget(self.tts_local_voice, 1)
+        self.tts_local_refresh_btn = QPushButton("Refresh")
+        self.tts_local_refresh_btn.clicked.connect(self._refresh_local_voices)
+        voice_row.addWidget(self.tts_local_refresh_btn)
+        self.tts_local_upload_btn = QPushButton("Add Voice...")
+        self.tts_local_upload_btn.setToolTip(
+            "Choose a short (at least 3 seconds), clean recording.\n"
+            "The local speech server adds it as a voice you can select.\n"
+            "Only use a voice you own or have permission to clone."
+        )
+        self.tts_local_upload_btn.clicked.connect(self._upload_local_sample)
+        voice_row.addWidget(self.tts_local_upload_btn)
+        local_layout.addLayout(voice_row)
+        local_note = QLabel(
+            "Add Voice uploads a clean WAV, MP3, M4A, or FLAC sample to "
+            "your local speech server and selects it here.")
+        local_note.setWordWrap(True)
+        theme.mark_hint(local_note)
+        local_layout.addWidget(local_note)
+        layout.addWidget(self.local_fields_widget)
 
         # ElevenLabs fields (visible only when elevenlabs selected)
         self.el_fields_widget = QFrame()
@@ -1403,13 +1535,8 @@ class TTSVoicePage(QWizardPage):
 
         layout.addSpacing(10)
 
-        # Test Voice button
+        # Test Voice button — plain button, themed by the central QSS
         self.tts_test_btn = QPushButton("Test Voice")
-        self.tts_test_btn.setStyleSheet("""
-            QPushButton { background-color: #555; color: white; border-radius: 3px; padding: 6px 16px; }
-            QPushButton:pressed { background-color: #666; }
-            QPushButton:disabled { background-color: #444; color: #888; }
-        """)
         self.tts_test_btn.clicked.connect(self._test_tts)
         self.tts_test_status = QLabel("")
         self.tts_test_status.setWordWrap(True)
@@ -1421,28 +1548,28 @@ class TTSVoicePage(QWizardPage):
         # Help links
         edge_help = QLabel("Edge TTS is free and requires no setup — just enable and go.")
         edge_help.setWordWrap(True)
-        edge_help.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(edge_help)
         layout.addWidget(edge_help)
 
         elevenlabs_voices = QLabel("ElevenLabs: <a href='https://elevenlabs.io/app/voice-library'>Browse Voices</a>")
         elevenlabs_voices.setTextFormat(Qt.TextFormat.RichText)
         elevenlabs_voices.setOpenExternalLinks(True)
         elevenlabs_voices.setWordWrap(True)
-        elevenlabs_voices.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(elevenlabs_voices)
         layout.addWidget(elevenlabs_voices)
 
         elevenlabs_api = QLabel("ElevenLabs: <a href='https://elevenlabs.io/app/settings/api-keys'>Get API Key</a>")
         elevenlabs_api.setTextFormat(Qt.TextFormat.RichText)
         elevenlabs_api.setOpenExternalLinks(True)
         elevenlabs_api.setWordWrap(True)
-        elevenlabs_api.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(elevenlabs_api)
         layout.addWidget(elevenlabs_api)
 
         note = QLabel(
             "Requires AI Fight Commentary to be enabled. TTS generates audio from the AI commentary text."
         )
         note.setWordWrap(True)
-        note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(note)
         layout.addWidget(note)
 
         layout.addStretch()
@@ -1464,7 +1591,7 @@ class TTSVoicePage(QWizardPage):
         self.registerField("tts_el_voice_id", self.tts_el_voice_id)
 
         # Audio playback for test
-        from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+        from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
         self._audio_output = QAudioOutput()
         self._audio_output.setVolume(0.8)
         self._player = QMediaPlayer()
@@ -1474,6 +1601,12 @@ class TTSVoicePage(QWizardPage):
         # Prefill from config
         if config.tts_provider:
             self.tts_provider.setCurrentText(config.tts_provider)
+        if config.tts_edge_voice:
+            self.tts_edge_voice.setEditText(config.tts_edge_voice)
+        if getattr(config, "tts_local_url", ""):
+            self.tts_local_url.setText(config.tts_local_url)
+        if getattr(config, "tts_local_voice", ""):
+            self.tts_local_voice.setEditText(config.tts_local_voice)
         if config.tts_elevenlabs_api_key:
             self.tts_el_api_key.setText(config.tts_elevenlabs_api_key)
         if config.tts_elevenlabs_voice_id:
@@ -1481,12 +1614,120 @@ class TTSVoicePage(QWizardPage):
         self._on_provider_changed(config.tts_provider or "edge")
 
     def _on_provider_changed(self, provider: str):
-        is_el = provider.lower() == "elevenlabs"
-        self.el_fields_widget.setVisible(is_el)
+        provider = provider.lower()
+        self.el_fields_widget.setVisible(provider == "elevenlabs")
+        self.edge_fields_widget.setVisible(provider == "edge")
+        self.local_fields_widget.setVisible(provider == "local")
+
+    def _refresh_edge_voices(self):
+        self.tts_edge_refresh_btn.setEnabled(False)
+        self.tts_test_status.setText("Fetching Edge voices...")
+        import threading
+
+        def _fetch():
+            try:
+                import asyncio
+                import edge_tts
+                voices = asyncio.run(edge_tts.list_voices())
+                names = sorted(v["ShortName"] for v in voices
+                               if v["ShortName"].startswith("en-"))
+                self.sig_voices.emit("edge", names)
+            except Exception as e:
+                self.sig_tts_result.emit(f"Failed to fetch voices: {e}", "error")
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _refresh_local_voices(self):
+        base_url = self.tts_local_url.text().strip().rstrip("/")
+        if not base_url:
+            self.tts_test_status.setText("Set the local server URL first.")
+            return
+        self.tts_local_refresh_btn.setEnabled(False)
+        self.tts_test_status.setText("Fetching voices...")
+        import threading
+
+        def _fetch():
+            try:
+                import requests
+                response = requests.get(f"{base_url}/v1/voices", timeout=10)
+                response.raise_for_status()
+                names = [v["voice"] for v in response.json().get("voices", [])]
+                self.sig_voices.emit("local", names)
+            except Exception as e:
+                self.sig_tts_result.emit(f"Failed to fetch voices: {e}", "error")
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _upload_local_sample(self):
+        """Choose and upload a reference recording to the local TTS server."""
+        base_url = self.tts_local_url.text().strip().rstrip("/")
+        if not base_url:
+            self._set_tts_result("Set the local server URL first.", "error")
+            return
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a voice sample (at least 3 seconds of clean speech)",
+            "", "Audio files (*.wav *.mp3 *.m4a *.flac);;All files (*)",
+        )
+        if not file_path:
+            return
+
+        import os
+        raw_default = os.path.splitext(os.path.basename(file_path))[0]
+        default_name = re.sub(
+            r"[^A-Za-z0-9._-]+", "-", raw_default
+        ).strip("-._") or "sample"
+        name, ok = QInputDialog.getText(
+            self, "Voice name",
+            "Name this voice (letters, digits, . _ - only):",
+            text=default_name,
+        )
+        if not ok or not name.strip():
+            return
+        name = re.sub(r"[^A-Za-z0-9._-]+", "-", name.strip()).strip("-._")
+        if not name:
+            self._set_tts_result(
+                "Voice name needs at least one letter or digit.", "error")
+            return
+
+        self.tts_local_upload_btn.setEnabled(False)
+        self._set_tts_result("Adding voice sample...", "busy")
+
+        def _upload():
+            try:
+                import requests
+                with open(file_path, "rb") as sample:
+                    response = requests.post(
+                        f"{base_url}/v1/voices/samples",
+                        files={"file": sample},
+                        data={"name": name},
+                        timeout=60,
+                    )
+                response.raise_for_status()
+                voice = response.json().get("voice", f"sample:{name}")
+                self.sig_local_upload.emit(
+                    voice, f"Voice added as {voice}. It is selected and ready.",
+                    "ok")
+            except Exception as exc:
+                detail = ""
+                response = getattr(exc, "response", None)
+                if response is not None:
+                    try:
+                        detail = response.json().get("detail", "")
+                    except Exception:
+                        detail = (response.text or "")[:200]
+                self.sig_local_upload.emit(
+                    "", f"Could not add voice: {detail or exc}", "error")
+
+        threading.Thread(target=_upload, daemon=True).start()
+
+    @Slot(str, str, str)
+    def _finish_local_upload(self, voice: str, message: str, state: str):
+        self.tts_local_upload_btn.setEnabled(True)
+        if voice:
+            self.tts_local_voice.setEditText(voice)
+        self._set_tts_result(message, state)
 
     def _test_tts(self):
         self.tts_test_btn.setEnabled(False)
-        self.tts_test_status.setStyleSheet("color: #ffffff;")
+        theme.set_state(self.tts_test_status, "busy")
         self.tts_test_status.setText("Generating test audio...")
 
         import threading
@@ -1498,7 +1739,11 @@ class TTSVoicePage(QWizardPage):
 
                 class _Cfg:
                     tts_provider = provider
-                    tts_edge_voice = "en-GB-RyanNeural"
+                    tts_edge_voice = (self.tts_edge_voice.currentText().strip()
+                                      or "en-GB-RyanNeural")
+                    tts_local_url = self.tts_local_url.text().strip()
+                    tts_local_voice = self.tts_local_voice.currentText().strip()
+                    tts_volume = 80
                     tts_elevenlabs_api_key = self.tts_el_api_key.text().strip()
                     tts_elevenlabs_voice_id = self.tts_el_voice_id.text().strip() or "JBFqnCBsd6RMkjVDRZzb"
                     tts_elevenlabs_model = "eleven_multilingual_v2"
@@ -1512,41 +1757,56 @@ class TTSVoicePage(QWizardPage):
                     "SparkyBot voice test. Let's get those bags.", _Cfg()
                 )
 
-                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
                 if audio_bytes and self.enable_tts.isChecked():
                     import tempfile, os
                     fd, path = tempfile.mkstemp(suffix=".mp3", prefix="sparkybot_test_")
                     with os.fdopen(fd, "wb") as f:
                         f.write(audio_bytes)
-                    QMetaObject.invokeMethod(self, "_play_audio", Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, path))
+                    self.sig_play_audio.emit(path)
                     size_kb = len(audio_bytes) / 1024
-                    QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, f"Audio generated — playing through speakers."),
-                        Q_ARG(str, "#4CAF50"))
+                    self.sig_tts_result.emit(
+                        f"Audio generated — playing through speakers.", "ok")
                 elif audio_bytes:
                     size_kb = len(audio_bytes) / 1024
-                    QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, f"Audio generated successfully ({size_kb:.1f} KB). Provider is working."),
-                        Q_ARG(str, "#4CAF50"))
+                    self.sig_tts_result.emit(
+                        f"Audio generated successfully ({size_kb:.1f} KB). Provider is working.", "ok")
                 else:
-                    QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
-                        Q_ARG(str, "Audio generation failed. Check provider settings and logs."),
-                        Q_ARG(str, "#ff4444"))
+                    self.sig_tts_result.emit(
+                        "Audio generation failed. Check provider settings and logs.", "error")
             except Exception as e:
-                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
-                QMetaObject.invokeMethod(self, "_set_tts_result", Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, f"Error: {e}"), Q_ARG(str, "#ff4444"))
+                self.sig_tts_result.emit(f"Error: {e}", "error")
 
         threading.Thread(target=_run, daemon=True).start()
 
-    @pyqtSlot(str, str)
-    def _set_tts_result(self, text, color):
-        self.tts_test_status.setStyleSheet(f"color: {color};")
+    @Slot(str, list)
+    def _set_voices(self, kind: str, names: list):
+        combo = self.tts_edge_voice if kind == "edge" else self.tts_local_voice
+        current = combo.currentText().strip()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(names)
+        if current and current in names:
+            combo.setCurrentText(current)
+        elif current:
+            combo.setEditText(current)
+        combo.blockSignals(False)
+        btn = (self.tts_edge_refresh_btn if kind == "edge"
+               else self.tts_local_refresh_btn)
+        btn.setEnabled(True)
+        theme.set_state(self.tts_test_status, "ok")
+        self.tts_test_status.setText(f"{len(names)} voices loaded.")
+
+    @Slot(str, str)
+    def _set_tts_result(self, text, state):
+        theme.set_state(self.tts_test_status, state)
         self.tts_test_status.setText(text)
         self.tts_test_btn.setEnabled(True)
+        for btn in (getattr(self, "tts_edge_refresh_btn", None),
+                    getattr(self, "tts_local_refresh_btn", None)):
+            if btn is not None:
+                btn.setEnabled(True)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _play_audio(self, path: str):
         import os
         # Clean up previous temp file
@@ -1588,13 +1848,12 @@ class BehaviorPage(QWizardPage):
 
         # Start watcher on startup
         self.start_watcher_on_startup = QCheckBox("Start watching for logs automatically on launch")
-        self.start_watcher_on_startup.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
         self.start_watcher_on_startup.setChecked(config.start_watcher_on_startup)
         start_watcher_note = QLabel(
             "When enabled, SparkyBot begins monitoring your log folder immediately "
             "without needing to click Start Watcher."
         )
-        start_watcher_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(start_watcher_note)
         layout.addWidget(self.start_watcher_on_startup)
         layout.addWidget(start_watcher_note)
 
@@ -1602,12 +1861,11 @@ class BehaviorPage(QWizardPage):
 
         # Start minimized
         self.start_minimized = QCheckBox("Start minimized to system tray")
-        self.start_minimized.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
         self.start_minimized.setChecked(config.start_minimized)
         start_minimized_note = QLabel(
             "SparkyBot launches silently in the background. Access it from the system tray icon."
         )
-        start_minimized_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(start_minimized_note)
         layout.addWidget(self.start_minimized)
         layout.addWidget(start_minimized_note)
 
@@ -1615,12 +1873,11 @@ class BehaviorPage(QWizardPage):
 
         # Close to tray
         self.close_to_tray = QCheckBox("Close to system tray instead of quitting")
-        self.close_to_tray.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
         self.close_to_tray.setChecked(config.close_to_tray)
         close_note = QLabel(
             "Clicking the X button hides SparkyBot to the tray instead of exiting the application."
         )
-        close_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(close_note)
         layout.addWidget(self.close_to_tray)
         layout.addWidget(close_note)
 
@@ -1628,12 +1885,11 @@ class BehaviorPage(QWizardPage):
 
         # Minimize to tray
         self.minimize_to_tray = QCheckBox("Minimize to system tray")
-        self.minimize_to_tray.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
         self.minimize_to_tray.setChecked(config.minimize_to_tray)
         minimize_to_tray_note = QLabel(
             "When you click the minimize button, SparkyBot goes to the system tray instead of the taskbar."
         )
-        minimize_to_tray_note.setStyleSheet("font-size: 10px; color: #888;")
+        theme.mark_hint(minimize_to_tray_note)
         minimize_to_tray_note.setWordWrap(True)
         layout.addWidget(self.minimize_to_tray)
         layout.addWidget(minimize_to_tray_note)
@@ -1642,12 +1898,11 @@ class BehaviorPage(QWizardPage):
 
         # Check updates on launch
         self.check_updates_on_launch = QCheckBox("Check for updates on launch")
-        self.check_updates_on_launch.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
         self.check_updates_on_launch.setChecked(config.check_updates_on_launch)
         check_updates_note = QLabel(
             "Automatically checks GitHub for new SparkyBot and Elite Insights versions at startup."
         )
-        check_updates_note.setStyleSheet("font-size: 11px; color: #aaa;")
+        theme.mark_hint(check_updates_note)
         layout.addWidget(self.check_updates_on_launch)
         layout.addWidget(check_updates_note)
 

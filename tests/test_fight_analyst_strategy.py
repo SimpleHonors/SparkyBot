@@ -6,6 +6,7 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "core"))
 
 from core.ai_analyst import FightAnalyst
+from core.reasoning_strategies import ordered_for
 
 
 def _analyst(strategy, base_url="https://api.minimaxi.chat/v1", thinking=True):
@@ -19,6 +20,11 @@ def test_configured_offswitch_applied_when_thinking_disabled():
     handled = a._apply_configured_strategy(p)
     assert handled is True
     assert p["reasoning"] == {"enabled": False}
+
+
+def test_official_deepseek_thinking_switch_is_probed_first():
+    ordered = ordered_for("https://api.deepseek.com", "deepseek-v4-pro")
+    assert ordered[0].id == "deepseek_thinking"
 
 
 def test_configured_strategy_with_thinking_on_gets_headroom():

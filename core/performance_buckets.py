@@ -87,10 +87,11 @@ _BUCKET_LABELS = ('solid', 'strong', 'dominant', 'exceptional', 'legendary')
 # no dependence on which module instance reload_thresholds() was called on.
 #
 # Path note: derived WITHOUT .resolve() to match config.home_dir
-# (Path(__file__).parent.parent), so a symlinked install can't make the
+# (app_dir()), so a symlinked install can't make the
 # import-time reader and the GUI writer diverge.
 # ---------------------------------------------------------------------------
-_OVERRIDE_PATH = Path(__file__).parent.parent / "calibration_thresholds.json"
+from core.apppaths import app_dir as _app_dir_fn
+_OVERRIDE_PATH = _app_dir_fn() / "calibration_thresholds.json"
 
 _THRESHOLDS_LOCK = threading.Lock()
 _ACTIVE_THRESHOLDS: dict | None = None

@@ -18,11 +18,11 @@ from __future__ import annotations
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from performance_buckets import bucket_player, is_clutch
-from pre_digester import bucket_v3
+from core.performance_buckets import bucket_player, is_clutch
+from core.pre_digester import bucket_v3
 
 if TYPE_CHECKING:
-    from callout_cooldown import CalloutCooldown
+    from core.callout_cooldown import CalloutCooldown
 
 logger = logging.getLogger(__name__)
 

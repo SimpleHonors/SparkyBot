@@ -11,19 +11,20 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict
 
-from ai_helpers import (
+from core.ai_helpers import (
     _STAT_RE,
     _atomic_write_json,
     _extract_squad_roster,
 )
-from pre_digester import (
+from core.apppaths import app_dir
+from core.pre_digester import (
     fight_duration_bucket,
     numbers_context,
     squad_strip_volume,
     squad_cleanse_volume,
 )
-from vocabulary_config import VocabularyConfig
-from stochastic_seeds import sample_seed, format_seed_block
+from core.vocabulary_config import VocabularyConfig
+from core.stochastic_seeds import sample_seed, format_seed_block
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class VocabularyTracker:
 
     def __init__(self, store_path: Path = None, window_hours: int = 2,
                  vocab_config: VocabularyConfig = None):
-        self.store_path = store_path or Path(__file__).parent.parent / "sparkybot_vocab_usage.json"
+        self.store_path = store_path or app_dir() / "sparkybot_vocab_usage.json"
         self.window_seconds = window_hours * 3600
         self.vocab_config = vocab_config
         self._events: list = []        # list of {"term": str, "ts": float}

@@ -9,13 +9,14 @@ import re
 from pathlib import Path
 from typing import Dict
 
-from ai_helpers import (
+from core.ai_helpers import (
     HYPE_HEAVY,
     HYPE_OUTSIZED,
     HYPE_RESERVED,
     _atomic_write_json,
     _is_siege_skill,
 )
+from core.apppaths import app_dir
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class VocabularyConfig:
     """Loads vocabulary from JSON, compiles regex, dice-rolls per-call term selection."""
 
     def __init__(self, config_path: Path = None):
-        self.config_path = config_path or Path(__file__).parent.parent / "sparkybot_vocabulary.json"
+        self.config_path = config_path or app_dir() / "sparkybot_vocabulary.json"
         self._raw: dict = {}           # raw JSON data
         self._compiled: list = []      # [(name, [compiled_regex, ...]), ...] for tracker
         self._mtime: float = 0         # last modified time for auto-reload

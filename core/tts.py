@@ -28,8 +28,8 @@ from typing import Optional, Union
 
 import requests
 
-from PyQt6.QtCore import QObject, QUrl, pyqtSignal
-from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtCore import QObject, QUrl, Signal
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ class TTSClient(QObject):
       - speak_from_bytes(bytes) — plays pre-generated audio directly
     """
 
-    _play_requested = pyqtSignal(str)  # path to temp MP3
+    _play_requested = Signal(str)  # path to temp MP3
 
     def __init__(self, config, parent=None):
         super().__init__(parent)

@@ -61,23 +61,41 @@ class DiscordBot:
             logger.error(f"Failed to send Discord message: {e}")
             return False
 
-    def send_file(self, file_path: Path, caption: str = "") -> bool:
-        """Send a file attachment to Discord"""
+    def send_file(self, file_path: Path, caption: str = "",
+                  embed=None, extra_files: list | None = None) -> bool:
+        """Send a file attachment to Discord, optionally with a rich embed.
+
+        When *extra_files* is provided, each Path is attached as an additional
+        file in the same multipart post (file0=file_path, file1=extra_files[0], …).
+        """
         if not self.webhook_url:
             logger.warning("No Discord webhook configured")
             return False
 
         try:
-            with open(file_path, 'rb') as f:
-                files = {'file': (file_path.name, f)}
-                data = {'content': caption}
+            files: dict = {}
 
-                response = requests.post(
-                    self.webhook_url,
-                    data=data,
-                    files=files,
-                    timeout=self.timeout + 10  # Extra time for upload
-                )
+            with open(file_path, 'rb') as f:
+                files['file'] = (file_path.name, f.read())
+
+            if extra_files:
+                for idx, ef in enumerate(extra_files, start=1):
+                    with open(ef, 'rb') as efh:
+                        files[f'file{idx}'] = (ef.name, efh.read())
+
+            data: dict = {}
+            if embed is not None:
+                payload = {"content": caption, "embeds": [embed]}
+                data['payload_json'] = json.dumps(payload)
+            else:
+                data['content'] = caption
+
+            response = requests.post(
+                self.webhook_url,
+                data=data,
+                files=files,
+                timeout=self.timeout + 15
+            )
 
             # File uploads return 200; webhook-only posts return 204
             if response.status_code in (200, 204):
