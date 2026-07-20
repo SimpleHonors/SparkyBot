@@ -64,7 +64,8 @@ _ROLE_CATEGORY = Qt.ItemDataRole.UserRole
 
 _TRACKED_LINE_EDITS = (
     "discord_webhook", "discord_webhook_label", "discord_webhook2",
-    "discord_webhook3", "guild_icon", "log_folder", "gw2ei_exe",
+    "discord_webhook3", "discord_webhook_name1", "discord_webhook_name2",
+    "discord_webhook_name3", "guild_icon", "log_folder", "gw2ei_exe",
     "twitch_channel", "twitch_token", "ai_base_url", "ai_api_key",
     "tts_elevenlabs_api_key", "tts_elevenlabs_voice_id", "tts_local_url",
     "raidreport_viewer_html", "raidreport_output_dir",
@@ -90,7 +91,8 @@ _TRACKED_SPINS = (
     "ai_vocab_gates",
 )
 _TRACKED_COMBOS = (
-    "active_webhook", "ai_provider", "ai_model", "ai_prompt_mode",
+    "active_webhook", "raid_report_webhook", "ai_provider", "ai_model",
+    "ai_prompt_mode",
     "tts_provider", "tts_edge_voice", "tts_elevenlabs_model",
     "tts_local_voice",
 )
@@ -317,10 +319,14 @@ class SettingsDialog(QDialog):
 
         webhooks = QGroupBox("Webhooks")
         form = QFormLayout(webhooks)
-        form.addRow("Primary", e.discord_webhook)
-        form.addRow("Secondary", e.discord_webhook2)
-        form.addRow("Tertiary", e.discord_webhook3)
-        form.addRow("Post to", e.active_webhook)
+        form.addRow("Destination 1 name", e.discord_webhook_name1)
+        form.addRow("Destination 1 webhook", e.discord_webhook)
+        form.addRow("Destination 2 name", e.discord_webhook_name2)
+        form.addRow("Destination 2 webhook", e.discord_webhook2)
+        form.addRow("Destination 3 name", e.discord_webhook_name3)
+        form.addRow("Destination 3 webhook", e.discord_webhook3)
+        form.addRow("Fight reports", e.active_webhook)
+        form.addRow("Raid reports", e.raid_report_webhook)
         form.addRow("Bot name", e.discord_webhook_label)
         layout.addWidget(webhooks)
 

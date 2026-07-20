@@ -344,7 +344,10 @@ class SettingsWindow(QWidget):
 
         self.discord_webhook = QLineEdit()
         self.discord_webhook.setPlaceholderText("https://discord.com/api/webhooks/...")
-        form.addRow("Primary Webhook:", self.discord_webhook)
+        self.discord_webhook_name1 = QLineEdit()
+        self.discord_webhook_name1.setPlaceholderText("e.g. Main WvW")
+        form.addRow("Destination 1 name:", self.discord_webhook_name1)
+        form.addRow("Destination 1 webhook:", self.discord_webhook)
 
         self.discord_webhook_label = QLineEdit()
         self.discord_webhook_label.setPlaceholderText("SparkyBot")
@@ -379,14 +382,33 @@ class SettingsWindow(QWidget):
         form.addRow("", color_layout)
 
         self.discord_webhook2 = QLineEdit()
-        form.addRow("Secondary:", self.discord_webhook2)
+        self.discord_webhook_name2 = QLineEdit()
+        self.discord_webhook_name2.setPlaceholderText("e.g. Raid Reports")
+        form.addRow("Destination 2 name:", self.discord_webhook_name2)
+        form.addRow("Destination 2 webhook:", self.discord_webhook2)
 
         self.discord_webhook3 = QLineEdit()
-        form.addRow("Tertiary:", self.discord_webhook3)
+        self.discord_webhook_name3 = QLineEdit()
+        self.discord_webhook_name3.setPlaceholderText("e.g. Officers")
+        form.addRow("Destination 3 name:", self.discord_webhook_name3)
+        form.addRow("Destination 3 webhook:", self.discord_webhook3)
 
         self.active_webhook = QComboBox()
-        self.active_webhook.addItems(["Primary", "Secondary", "Tertiary"])
-        form.addRow("Active Webhook:", self.active_webhook)
+        self.raid_report_webhook = QComboBox()
+        form.addRow("Fight reports:", self.active_webhook)
+        form.addRow("Raid reports:", self.raid_report_webhook)
+
+        routing_help = QLabel(
+            "Use one destination for everything, or send end-of-run Raid "
+            "Reports somewhere else.")
+        routing_help.setWordWrap(True)
+        form.addRow("", routing_help)
+
+        for field in (
+                self.discord_webhook, self.discord_webhook2,
+                self.discord_webhook3, self.discord_webhook_name1,
+                self.discord_webhook_name2, self.discord_webhook_name3):
+            field.textChanged.connect(self._refresh_discord_destinations)
 
         layout.addWidget(group)
 
@@ -456,6 +478,42 @@ class SettingsWindow(QWidget):
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
+
+    def _refresh_discord_destinations(self):
+        """Show configured webhook slots by their optional short names."""
+        fight_selected = self.active_webhook.currentData()
+        raid_selected = self.raid_report_webhook.currentData()
+        urls = (
+            self.discord_webhook.text().strip(),
+            self.discord_webhook2.text().strip(),
+            self.discord_webhook3.text().strip(),
+        )
+        names = (
+            self.discord_webhook_name1.text().strip(),
+            self.discord_webhook_name2.text().strip(),
+            self.discord_webhook_name3.text().strip(),
+        )
+
+        self.active_webhook.blockSignals(True)
+        self.raid_report_webhook.blockSignals(True)
+        self.active_webhook.clear()
+        self.raid_report_webhook.clear()
+        self.raid_report_webhook.addItem("Same as fight reports", 0)
+        for index, (url, name) in enumerate(zip(urls, names), start=1):
+            if not url:
+                continue
+            label = name or f"Destination {index}"
+            self.active_webhook.addItem(label, index)
+            self.raid_report_webhook.addItem(label, index)
+        if not self.active_webhook.count():
+            self.active_webhook.addItem("Destination 1", 1)
+
+        fight_index = self.active_webhook.findData(fight_selected)
+        self.active_webhook.setCurrentIndex(max(0, fight_index))
+        raid_index = self.raid_report_webhook.findData(raid_selected)
+        self.raid_report_webhook.setCurrentIndex(max(0, raid_index))
+        self.active_webhook.blockSignals(False)
+        self.raid_report_webhook.blockSignals(False)
 
     def _browse_guild_icon(self):
         """Browse for the thumbnail/guild icon image."""
@@ -2576,10 +2634,19 @@ class SettingsWindow(QWidget):
         """
         # Discord
         self.discord_webhook.setText(self.config.discord_webhook)
+        self.discord_webhook_name1.setText(self.config.discord_webhook_name1)
         self.discord_webhook_label.setText(self.config.discord_webhook_label)
         self.discord_webhook2.setText(self.config.discord_webhook2)
+        self.discord_webhook_name2.setText(self.config.discord_webhook_name2)
         self.discord_webhook3.setText(self.config.discord_webhook3)
-        self.active_webhook.setCurrentIndex(max(0, self.config.active_discord_webhook - 1))
+        self.discord_webhook_name3.setText(self.config.discord_webhook_name3)
+        self._refresh_discord_destinations()
+        fight_index = self.active_webhook.findData(
+            self.config.active_discord_webhook)
+        self.active_webhook.setCurrentIndex(max(0, fight_index))
+        raid_index = self.raid_report_webhook.findData(
+            self.config.raid_report_discord_webhook)
+        self.raid_report_webhook.setCurrentIndex(max(0, raid_index))
         self.enable_discord.setChecked(self.config.enable_discord_bot)
         self.guild_icon.setText(self.config.guild_icon)
         self._current_embed_color = QColor(
@@ -2745,10 +2812,16 @@ class SettingsWindow(QWidget):
         """
         cfg = self.config.update
         cfg('Discord', 'discordWebhook', self.discord_webhook.text())
+        cfg('Discord', 'discordWebhookName1', self.discord_webhook_name1.text())
         cfg('Discord', 'discordWebhookLabel', self.discord_webhook_label.text())
         cfg('Discord', 'discordWebhook2', self.discord_webhook2.text())
+        cfg('Discord', 'discordWebhookName2', self.discord_webhook_name2.text())
         cfg('Discord', 'discordWebhook3', self.discord_webhook3.text())
-        cfg('Discord', 'activeDiscordWebhook', str(self.active_webhook.currentIndex() + 1))
+        cfg('Discord', 'discordWebhookName3', self.discord_webhook_name3.text())
+        cfg('Discord', 'activeDiscordWebhook',
+            str(self.active_webhook.currentData() or 1))
+        cfg('Discord', 'raidReportDiscordWebhook',
+            str(self.raid_report_webhook.currentData() or 0))
         cfg('Discord', 'enableDiscordBot', str(self.enable_discord.isChecked()))
         cfg('Discord', 'guildIcon', self.guild_icon.text())
         c = self._current_embed_color

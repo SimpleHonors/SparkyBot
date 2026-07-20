@@ -17,6 +17,8 @@ All notable changes to SparkyBot will be documented in this file.
 - Final Raid Report pipeline: fast cached generation, manual fight picking,
   self-extracting compressed HTML, Discord publishing, persistent records,
   Poison Coverage, clearer progress, and copyable error details.
+- Optional short names for all three Discord webhook destinations, plus
+  independent selectors for fight reports and end-of-run Raid Reports.
 
 ### Changed
 
@@ -38,6 +40,9 @@ All notable changes to SparkyBot will be documented in this file.
 - AI connection testing is bounded instead of stacking several full
   three-retry commentary calls. Direct DeepSeek uses its official thinking
   switch, including when an older test saved the wrong generic strategy.
+- Raid Report Discord captions now show the report-generation date in the
+  user's machine-local time instead of scraping a misleading time range from
+  generated report metadata.
 
 ## [1.8.15] — 2026-07-19
 

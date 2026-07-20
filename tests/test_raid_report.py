@@ -2,7 +2,7 @@
 
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -560,25 +560,39 @@ class TestJsonCopied:
 
 
 class TestMakePublishCaption:
-    def test_with_span(self):
+    def test_uses_local_generation_date_not_fight_span(self):
         result = ReportResult(
-            name="Raid Report 2026-07-18",
+            name="Fellas",
             html_path=Path("/tmp/x.html"),
             json_path=Path("/tmp/x.json"),
             fight_count=20,
             span="19:28\u201321:00",
+            generated_date=date(2026, 7, 20),
         )
         caption = make_publish_caption(result)
-        assert caption == "Raid Report 2026-07-18 (20 fights) — 19:28–21:00"
+        assert caption == "Fellas — 20 fights · 07/20/2026"
+        assert "19:28" not in caption
 
-    def test_without_span(self):
+    def test_omits_duplicate_count_from_default_report_name(self):
         result = ReportResult(
-            name="Raid Report 2026-07-18",
+            name="Raid Report 2026-07-18 (5 fights)",
             html_path=Path("/tmp/x.html"),
             json_path=Path("/tmp/x.json"),
             fight_count=5,
             span="",
+            generated_date=date(2026, 7, 20),
         )
         caption = make_publish_caption(result)
-        assert caption == "Raid Report 2026-07-18 (5 fights)"
-        assert "\u2014" not in caption
+        assert caption == "Raid Report 2026-07-18 — 5 fights · 07/20/2026"
+
+    def test_singular_fight(self):
+        result = ReportResult(
+            name="Solo",
+            html_path=Path("/tmp/x.html"),
+            json_path=Path("/tmp/x.json"),
+            fight_count=1,
+            span="",
+            generated_date=date(2026, 7, 20),
+        )
+        assert make_publish_caption(result) == (
+            "Solo — 1 fight · 07/20/2026")

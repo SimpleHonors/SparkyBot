@@ -349,3 +349,47 @@ def test_publish_never_ships_recap_even_with_legacy_config_keys(tmp_path):
         assert banned not in src, (
             f"parked recap resurfaced in publish wiring: {banned}"
         )
+
+
+def test_publish_uses_dedicated_raid_report_destination(tmp_path, monkeypatch):
+    from datetime import date
+    from core.raid_report import ReportResult
+    from core.raid_report_wiring import publish_result
+    import core.discord_bot
+    import core.report_publisher
+
+    selected = []
+    sent = []
+
+    class FakeManager:
+        def __init__(self, config):
+            self.config = config
+
+        def get_webhook(self, index):
+            selected.append(index)
+            return MagicMock(send_file=MagicMock())
+
+    monkeypatch.setattr(
+        core.discord_bot, "DiscordWebhookManager", FakeManager)
+    monkeypatch.setattr(
+        core.report_publisher, "publish_report",
+        lambda *args, **kwargs: sent.append((args, kwargs)))
+
+    html = tmp_path / "report.html"
+    html.write_text("<html></html>")
+    result = ReportResult(
+        name="Fellas",
+        html_path=html,
+        json_path=tmp_path / "report.json",
+        fight_count=18,
+        span="20:26\u201320:26",
+        generated_date=date(2026, 7, 20),
+    )
+    config = MagicMock()
+    config.get_raid_report_discord_webhook_index.return_value = 2
+    config.raidreport_always_zip = False
+
+    publish_result(config, result)
+
+    assert selected == [2]
+    assert sent[0][1]["caption"] == "Fellas — 18 fights · 07/20/2026"

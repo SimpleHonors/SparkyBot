@@ -4,7 +4,8 @@ import logging
 import re
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from core.raid_session import (
@@ -30,6 +31,7 @@ class ReportResult:
     span: str
     failed_count: int = 0
     failed_names: tuple = ()
+    generated_date: date = field(default_factory=date.today)
 
 
 class RaidReportCancelled(Exception):
@@ -254,7 +256,12 @@ class RaidReportRunner:
 
 
 def make_publish_caption(result: ReportResult) -> str:
-    parts = [f"{result.name} ({result.fight_count} fights)"]
-    if result.span:
-        parts.append(f"\u2014 {result.span}")
-    return " ".join(parts)
+    # Default report filenames already include "(N fights)". Discord uses a
+    # cleaner caption shape and adds the authoritative count exactly once.
+    display_name = re.sub(
+        r"\s+\(\d+\s+fights?\)\s*$", "", result.name, flags=re.IGNORECASE)
+    return (
+        f"{display_name} \u2014 {result.fight_count} "
+        f"{'fight' if result.fight_count == 1 else 'fights'} \u00b7 "
+        f"{result.generated_date:%m/%d/%Y}"
+    )

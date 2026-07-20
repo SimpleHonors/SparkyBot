@@ -26,8 +26,14 @@ class Config:
             'discordWebhook': '',
             'discordWebhook2': '',
             'discordWebhook3': '',
+            'discordWebhookName1': '',
+            'discordWebhookName2': '',
+            'discordWebhookName3': '',
             'discordWebhookLabel': 'SparkyBot',
             'activeDiscordWebhook': '1',
+            # 0 follows activeDiscordWebhook; 1-3 select a dedicated
+            # destination for end-of-run and manual Raid Reports.
+            'raidReportDiscordWebhook': '0',
             'enableDiscordBot': 'true',
             'guildIcon': 'assets/wvw_icon.png',
             'embedColor': '0x00A86B',
@@ -200,8 +206,16 @@ class Config:
         self.discord_webhook = self._config.get('Discord', 'discordWebhook')
         self.discord_webhook2 = self._config.get('Discord', 'discordWebhook2')
         self.discord_webhook3 = self._config.get('Discord', 'discordWebhook3')
+        self.discord_webhook_name1 = self._config.get(
+            'Discord', 'discordWebhookName1', fallback='')
+        self.discord_webhook_name2 = self._config.get(
+            'Discord', 'discordWebhookName2', fallback='')
+        self.discord_webhook_name3 = self._config.get(
+            'Discord', 'discordWebhookName3', fallback='')
         self.discord_webhook_label = self._config.get('Discord', 'discordWebhookLabel', fallback='SparkyBot')
         self.active_discord_webhook = self._config.getint('Discord', 'activeDiscordWebhook')
+        self.raid_report_discord_webhook = self._get_int(
+            'Discord', 'raidReportDiscordWebhook', 0)
         self.enable_discord_bot = self._config.getboolean('Discord', 'enableDiscordBot')
         self.guild_icon = self._config.get('Discord', 'guildIcon')
         self.embed_color = self._get_int('Discord', 'embedColor', 0x00A86B)
@@ -375,6 +389,24 @@ class Config:
                 "expected 1, 2, or 3. Using primary webhook."
             )
             return self.discord_webhook
+
+    def get_raid_report_discord_webhook_index(self) -> int:
+        """Return the dedicated Raid Report destination, or the fight route."""
+        index = self.raid_report_discord_webhook
+        if index in (1, 2, 3):
+            return index
+        return self.active_discord_webhook
+
+    def get_discord_destination_name(self, index: int) -> str:
+        """User-facing name for a webhook slot, with a stable fallback."""
+        names = (
+            self.discord_webhook_name1,
+            self.discord_webhook_name2,
+            self.discord_webhook_name3,
+        )
+        if index not in (1, 2, 3):
+            index = 1
+        return names[index - 1].strip() or f"Destination {index}"
 
     def get_all_discord_webhooks(self) -> List[str]:
         """Get all configured Discord webhook URLs"""

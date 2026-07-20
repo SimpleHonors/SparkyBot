@@ -108,7 +108,8 @@ def publish_result(config, result):
     from core.raid_report import make_publish_caption
 
     dm = DiscordWebhookManager(config)
-    bot = dm.get_webhook(config.active_discord_webhook)
+    destination = config.get_raid_report_discord_webhook_index()
+    bot = dm.get_webhook(destination)
     if bot is None:
         raise RuntimeError("No active Discord webhook configured")
     caption = make_publish_caption(result)

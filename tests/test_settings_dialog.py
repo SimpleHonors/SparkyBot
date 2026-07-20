@@ -203,6 +203,34 @@ def test_ok_persists_and_closes(dialog, engine, config):
     assert config.discord_webhook == "https://discord.com/api/webhooks/3/z"
 
 
+def test_named_discord_destinations_and_separate_report_route_round_trip(
+        engine, config):
+    engine.discord_webhook.setText(
+        "https://discord.com/api/webhooks/1/fight")
+    engine.discord_webhook_name1.setText("Main WvW")
+    engine.discord_webhook2.setText(
+        "https://discord.com/api/webhooks/2/raid")
+    engine.discord_webhook_name2.setText("Raid Reports")
+
+    assert [
+        engine.active_webhook.itemText(i)
+        for i in range(engine.active_webhook.count())
+    ] == ["Main WvW", "Raid Reports"]
+    assert engine.raid_report_webhook.itemText(0) == "Same as fight reports"
+
+    engine.active_webhook.setCurrentIndex(
+        engine.active_webhook.findData(1))
+    engine.raid_report_webhook.setCurrentIndex(
+        engine.raid_report_webhook.findData(2))
+    saved, _ = engine._save_settings()
+    assert saved
+
+    assert config.discord_webhook_name1 == "Main WvW"
+    assert config.discord_webhook_name2 == "Raid Reports"
+    assert config.active_discord_webhook == 1
+    assert config.raid_report_discord_webhook == 2
+
+
 def test_close_with_unsaved_changes_prompts(dialog, engine, config, monkeypatch):
     dialog.open_dialog()
     engine.twitch_channel.setText("myguild")
@@ -244,8 +272,12 @@ _EXPECTED_HOMES = {
     # Discord (incl. uploads out of the old Thresholds tab)
     "enable_discord": CAT_DISCORD,
     "discord_webhook": CAT_DISCORD,
+    "discord_webhook_name1": CAT_DISCORD,
+    "discord_webhook_name2": CAT_DISCORD,
+    "discord_webhook_name3": CAT_DISCORD,
     "discord_webhook_label": CAT_DISCORD,
     "active_webhook": CAT_DISCORD,
+    "raid_report_webhook": CAT_DISCORD,
     "max_upload": CAT_DISCORD,
     "large_upload_after": CAT_DISCORD,
     # Fight Reports (branding + embed sections)
