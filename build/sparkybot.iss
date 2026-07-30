@@ -7,7 +7,7 @@
 ; AppVersion must track core/version.py — update the literal below on every release.
 
 #define MyAppName "SparkyBot"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.1"
 #define MyAppPublisher "SimpleHonors"
 #define MyAppURL "https://github.com/SimpleHonors/SparkyBot"
 #define MyAppExeName "SparkyBot.exe"
