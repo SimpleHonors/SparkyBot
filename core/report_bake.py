@@ -1,6 +1,5 @@
-"""Bake a TiddlyWiki raid report into a standalone HTML file."""
+"""Summarize and enrich standalone reports created by the upstream combiner."""
 
-import html
 import json
 import logging
 import os
@@ -8,86 +7,39 @@ import re
 import tempfile
 from pathlib import Path
 
-from core.report_pack import pack_html
+from core.report_pack import pack_html, unpack_html
 
 logger = logging.getLogger(__name__)
 
+_STORE_OPENER = (
+    '<script class="tiddlywiki-tiddler-store" type="application/json">'
+)
 
-def bake_report(viewer_html: Path, tiddler_json: Path, out_html: Path,
-                report_title: str | None = None,
-                compress: bool = True) -> Path:
-    """Embed the tiddlers from *tiddler_json* into *viewer_html* and write
-    the finished report to *out_html*.
 
-    Collision ordering: the generated store block is appended AFTER every
-    store block the viewer ships with.  TiddlyWiki loads store blocks in
-    document order, so when a generated tiddler shares a title with one
-    built into the viewer (``$:/SiteTitle`` is the common case) the
-    generated copy wins -- the same outcome as manually drag-and-dropping
-    the JSON onto the viewer.  A ``$:/SiteTitle`` tiddler in the data
-    therefore controls the title rendered inside the wiki, while
-    *report_title* only rewrites the page shell's raw ``<title>`` element.
-    """
-    if out_html.exists() and viewer_html.samefile(out_html):
-        # Writing the report over its own template silently destroys the
-        # viewer for every later bake.  Refuse up front; samefile() also
-        # catches symlink/alias spellings of the same path.
-        raise ValueError("output file must not be the viewer template itself")
-    content = viewer_html.read_text(encoding="utf-8")
-
-    store_opener = '<script class="tiddlywiki-tiddler-store" type="application/json">'
-    first_idx = content.find(store_opener)
-    if first_idx == -1:
+def _append_tiddler_block(content: str, tiddlers: list[dict]) -> str:
+    last_store_start = content.rfind(_STORE_OPENER)
+    if last_store_start == -1:
         raise ValueError("not a TiddlyWiki store-format HTML")
-
-    raw_tiddlers = tiddler_json.read_text(encoding="utf-8")
-    tiddlers = json.loads(raw_tiddlers)
-    if not isinstance(tiddlers, list):
-        raise ValueError("tiddler JSON must be a list")
-
-    serialized = json.dumps(tiddlers, ensure_ascii=False, separators=(",", ":"))
-    safe_json = serialized.replace("<", "\\u003C")
-    new_block = f'{store_opener}{safe_json}</script>'
-
-    last_store_start = content.rfind(store_opener)
     close_tag = "</script>"
     last_close = content.find(close_tag, last_store_start)
     if last_close == -1:
-        # A truncated viewer used to surface as a bare "substring not
-        # found" ValueError from str.index -- name the real problem.
         raise ValueError("tiddler store block in the viewer is never closed")
 
+    serialized = json.dumps(tiddlers, ensure_ascii=False, separators=(",", ":"))
+    safe_json = serialized.replace("<", "\\u003C")
+    new_block = f'{_STORE_OPENER}{safe_json}</script>'
     insert_pos = last_close + len(close_tag)
-    output = content[:insert_pos] + new_block + content[insert_pos:]
+    return content[:insert_pos] + new_block + content[insert_pos:]
 
-    if report_title is not None:
-        # The title is the user-typed report name.  Entity-encode it so it
-        # cannot smuggle markup into the page, and splice it in through a
-        # callable: a plain re.sub replacement string would interpret
-        # backslashes and group references ("\1", "\g<0>", "C:\Users")
-        # instead of keeping them literal.
-        safe_title = html.escape(report_title, quote=False)
-        output = re.sub(
-            r"<title>.*?</title>",
-            lambda _match: f"<title>{safe_title}</title>",
-            output,
-            count=1,
-        )
 
-    if compress:
-        output = pack_html(output)
-
-    # Write to a sibling temp file and rename into place, so an interrupted
-    # bake never leaves a half-written .html where the finished report should
-    # be.  If anything fails, remove the temp file -- but never let that
-    # cleanup raise over the error that actually broke the bake.
+def _atomic_write_text(path: Path, content: str) -> None:
     fd, part_path = tempfile.mkstemp(
-        dir=str(out_html.parent), prefix=out_html.name + ".", suffix=".part"
+        dir=str(path.parent), prefix=path.name + ".", suffix=".part"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(output)
-        os.replace(part_path, out_html)
+            fh.write(content)
+        os.replace(part_path, path)
         part_path = None
     finally:
         if part_path is not None:
@@ -95,7 +47,48 @@ def bake_report(viewer_html: Path, tiddler_json: Path, out_html: Path,
                 os.unlink(part_path)
             except OSError:
                 logger.warning("could not remove partial report %s", part_path)
-    return out_html
+
+
+def merge_augmented_tiddlers(
+    standalone_html: Path,
+    original_tiddlers: list[dict],
+    augmented_tiddlers: list[dict],
+) -> Path:
+    """Append SparkyBot-only tiddler changes to an upstream standalone report.
+
+    The combiner builds its standalone HTML before SparkyBot can add optional
+    poison coverage tiddlers. Append only new or changed titles so the
+    upstream report remains the canonical bake without duplicating its full
+    summary payload.
+    """
+    if not isinstance(original_tiddlers, list) or not isinstance(
+        augmented_tiddlers, list
+    ):
+        raise ValueError("tiddler JSON must be a list")
+
+    original_by_title = {
+        item.get("title"): item
+        for item in original_tiddlers
+        if isinstance(item, dict) and item.get("title") is not None
+    }
+    changed = [
+        item
+        for item in augmented_tiddlers
+        if isinstance(item, dict)
+        and (
+            item.get("title") is None
+            or original_by_title.get(item.get("title")) != item
+        )
+    ]
+    if not changed:
+        return Path(standalone_html)
+
+    report_path = Path(standalone_html)
+    packed = report_path.read_text(encoding="utf-8")
+    full_html = unpack_html(packed)
+    full_html = _append_tiddler_block(full_html, changed)
+    _atomic_write_text(report_path, pack_html(full_html))
+    return report_path
 
 
 def summarize_tiddlers(tiddler_json: Path) -> dict:

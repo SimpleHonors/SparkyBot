@@ -17,6 +17,7 @@ original wording written specifically for SparkyBot.
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ _GITHUB_API_URL = (
     "https://api.github.com/repos/Drevarr/GW2_EI_log_combiner/releases/latest"
 )
 _GITHUB_REPO_URL = "https://github.com/Drevarr/GW2_EI_log_combiner"
+_MIN_USABLE_VERSION = "1.8.1"
 
 _COMBINER_CONFIG_TEMPLATE = """\
 [TopStatsCfg]
@@ -49,6 +51,7 @@ db_path = {db_path}
 write_all_data_to_json = false
 db_update = true
 fight_data_charts = true
+compress_standalone_html = true
 write_excel = false
 excel_output_filename = Top_Stats.xlsx
 excel_path = {db_path}
@@ -261,27 +264,60 @@ class CombinerManager:
         self,
         progress_callback: Optional[Callable[[float], None]] = None,
     ) -> Path:
-        """Return the path to the installed entry point, downloading if needed.
+        """Return a current usable entry point, updating when possible.
 
-        Raises :exc:`CombinerNotInstalled` when no version is installed and
-        the latest release cannot be fetched (offline, network error, etc.).
+        A valid v1.8.1+ install remains available when the update check or
+        download fails.  Older releases cannot safely parse current Elite
+        Insights damage-modifier data and are therefore not used offline.
         """
         version = self.installed_version()
+        existing_entry = None
         if version is not None:
             install_dir = self._combiner_root / version
             entry = self._find_entry(install_dir)
             if entry is not None:
-                return Path(entry)
+                existing_entry = Path(entry)
 
         latest = self.check_latest()
         if latest is None:
+            if (
+                existing_entry is not None
+                and self._compare_versions(version or "", _MIN_USABLE_VERSION) >= 0
+            ):
+                logger.warning(
+                    "Unable to check for a combiner update; using installed v%s",
+                    version,
+                )
+                return existing_entry
             raise CombinerNotInstalled(
-                "No combiner installed and unable to reach GitHub to download one.  "
-                "See %s for manual installation." % _GITHUB_REPO_URL
+                "No usable combiner installed and unable to reach GitHub to "
+                "download one. See %s for manual installation." % _GITHUB_REPO_URL
             )
 
         ver, url = latest
-        return self.download_and_install(url, ver, progress_callback)
+        if (
+            existing_entry is not None
+            and self._compare_versions(ver, version or "") <= 0
+            and self._compare_versions(version or "", _MIN_USABLE_VERSION) >= 0
+        ):
+            return existing_entry
+
+        try:
+            return self.download_and_install(url, ver, progress_callback)
+        except (CombinerNotInstalled, requests.RequestException,
+                zipfile.BadZipFile, OSError) as exc:
+            if (
+                existing_entry is not None
+                and self._compare_versions(version or "", _MIN_USABLE_VERSION) >= 0
+            ):
+                logger.warning(
+                    "Combiner update to v%s failed; using installed v%s: %s",
+                    ver,
+                    version,
+                    exc,
+                )
+                return existing_entry
+            raise
 
     # ------------------------------------------------------------------
     # write_run_config
@@ -328,11 +364,14 @@ class CombinerManager:
         run_dir: Path,
         timeout: int = 900,
         progress_callback: Optional[Callable[[str], None]] = None,
+        standalone_html_template: Optional[Path] = None,
     ) -> Path:
         """Run the combiner as a subprocess.
 
-        The combiner is invoked with ``-c <config.ini>`` and the working
-        directory set to *run_dir*.  On Windows a hidden window flag is used.
+        The combiner is invoked with ``-c <config.ini>`` and, when a viewer
+        template is supplied, upstream's ``-s <Top_Stats_Index.html>`` option.
+        The working directory is *run_dir*. On Windows a hidden window flag
+        is used.
 
         Returns:
             The path to the ``Drag_and_Drop_Log_Summary_*.json`` file that the
@@ -349,6 +388,13 @@ class CombinerManager:
             raise CombinerNotInstalled("No installed combiner entry point found")
 
         config_path = self.write_run_config(run_dir, input_dir)
+        template_path = None
+        if standalone_html_template is not None:
+            template_path = Path(standalone_html_template).resolve()
+            if not template_path.is_file():
+                raise CombinerRunError(
+                    "Standalone HTML template is not a file: %s" % template_path
+                )
 
         kwargs: dict = {
             "capture_output": True,
@@ -369,6 +415,8 @@ class CombinerManager:
             cmd = [sys.executable, entry, "-c", str(config_path)]
         else:
             cmd = [entry, "-c", str(config_path)]
+        if template_path is not None:
+            cmd.extend(["-s", str(template_path)])
 
         logger.info("Running combiner: %s", cmd)
 
@@ -412,7 +460,16 @@ class CombinerManager:
                 "Drag_and_Drop_Log_Summary_*.json was found in %s" % input_dir
             )
 
-        return summary_files[-1]
+        summary_path = summary_files[-1]
+        if template_path is not None:
+            standalone_path = summary_path.with_suffix(".html")
+            if not standalone_path.is_file():
+                raise CombinerRunError(
+                    "Combiner reported success but no standalone HTML was "
+                    "found at %s" % standalone_path
+                )
+
+        return summary_path
 
     # ------------------------------------------------------------------
     # internals
@@ -452,6 +509,16 @@ class CombinerManager:
             for candidate in install_dir.rglob("tw5_top_stats.py"):
                 return str(candidate)
         return None
+
+    @staticmethod
+    def _compare_versions(first: str, second: str) -> int:
+        """Compare release-style versions without adding a packaging dependency."""
+        first_parts = tuple(int(part) for part in re.findall(r"\d+", first))
+        second_parts = tuple(int(part) for part in re.findall(r"\d+", second))
+        width = max(len(first_parts), len(second_parts))
+        left = first_parts + (0,) * (width - len(first_parts))
+        right = second_parts + (0,) * (width - len(second_parts))
+        return (left > right) - (left < right)
 
     def _write_meta(self, version: str, url: str, entry: str):
         self._meta_path.write_text(

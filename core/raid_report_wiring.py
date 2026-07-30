@@ -1,5 +1,6 @@
 """Raid Report wiring — builds RaidReportTab with real dependencies and CLI headless entry."""
 
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -39,6 +40,16 @@ def _resolve_viewer(config):
     from core.apppaths import local_machine_dir
 
     combiner_root = local_machine_dir() / "RaidReportData" / "combiner"
+    try:
+        metadata = json.loads(
+            (combiner_root / "meta.json").read_text(encoding="utf-8")
+        )
+        current_dir = combiner_root / str(metadata["version"])
+        for candidate in current_dir.rglob("Top_Stats_Index.html"):
+            return candidate
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+        pass
+
     for candidate in combiner_root.rglob("Top_Stats_Index.html"):
         return candidate
 

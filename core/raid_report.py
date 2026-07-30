@@ -1,5 +1,6 @@
 """Raid Report pipeline orchestrator — glue log discovery → combiner → bake."""
 
+import json
 import logging
 import re
 import shutil
@@ -17,7 +18,7 @@ from core.raid_session import (
     plan_report,
     RECENT_WINDOW_HOURS,
 )
-from core.report_bake import bake_report, summarize_tiddlers
+from core.report_bake import merge_augmented_tiddlers, summarize_tiddlers
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class RaidReportRunner:
             from core.combiner_manager import CombinerNotInstalled
             logger.error("Combiner install failed", exc_info=True)
             raise RuntimeError(
-                "SparkyBot needs to download its stats builder (one time) \u2014 "
+                "SparkyBot needs to download or update its stats builder \u2014 "
                 "check your internet connection and try again."
             )
         if self._viewer_factory:
@@ -204,14 +205,30 @@ class RaidReportRunner:
             run_dir, input_dir,
             self.guild_name, self.guild_id, self.api_key,
         )
-        dragdrop_json = self.combiner.run(input_dir, run_dir)
+        dragdrop_json = self.combiner.run(
+            input_dir,
+            run_dir,
+            standalone_html_template=self.viewer_html,
+        )
+        standalone_html = dragdrop_json.with_suffix(".html")
         self._emit("combine", 1, 1)
 
         self._check_cancelled()
         if self.augment_json:
             self._emit("augment", 1, 1)
             try:
+                original_tiddlers = json.loads(
+                    dragdrop_json.read_text(encoding="utf-8")
+                )
                 self.augment_json(dragdrop_json)
+                augmented_tiddlers = json.loads(
+                    dragdrop_json.read_text(encoding="utf-8")
+                )
+                merge_augmented_tiddlers(
+                    standalone_html,
+                    original_tiddlers,
+                    augmented_tiddlers,
+                )
             except Exception:
                 logger.warning(
                     "Poison augmentation failed — "
@@ -230,8 +247,7 @@ class RaidReportRunner:
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         html_path = self.output_dir / f"{safe}.html"
-        bake_report(self.viewer_html, dragdrop_json, html_path,
-                    report_title=name)
+        shutil.copy2(standalone_html, html_path)
         summary = summarize_tiddlers(dragdrop_json)
         json_path_out = self.output_dir / f"{safe}.json"
         shutil.copy2(dragdrop_json, json_path_out)

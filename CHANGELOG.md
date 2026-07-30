@@ -2,6 +2,21 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Raid Reports now use GW2 EI Log Combiner's supported compressed standalone
+  HTML output instead of SparkyBot's private bake path.
+- The combiner manager checks for newer releases and upgrades in place while
+  retaining a usable installed version when GitHub is temporarily unavailable.
+
+### Fixed
+
+- Current Elite Insights logs containing non-numeric damage-modifier gains no
+  longer strand SparkyBot on an old combiner release. The updater moves online
+  installs to v1.8.3 or newer; v1.8.1 is the minimum safe offline fallback.
+
 ## [2.0.0] — 2026-07-20
 
 ### Added
