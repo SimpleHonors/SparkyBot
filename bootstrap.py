@@ -27,10 +27,28 @@ def apply_pending_update():
     import shutil
     import stat
     import time
-    app_dir = Path(__file__).parent
+    frozen = bool(getattr(sys, "frozen", False))
+    app_dir = Path(sys.executable).resolve().parent if frozen else Path(__file__).parent
     pending = app_dir / ".update_pending"
     if not pending.is_dir():
-        return
+        return True
+
+    # A frozen executable cannot replace itself while its PyInstaller parent is
+    # still running. Hand the complete tree to a dedicated helper copied to the
+    # OS temp directory, then exit so no old runtime DLL remains loaded.
+    if frozen and os.name == "nt":
+        from core.update_handoff import launch_frozen_update_helper
+
+        launched = launch_frozen_update_helper(
+            app_dir=app_dir,
+            executable=Path(sys.executable),
+            process_id=os.getpid(),
+            app_args=sys.argv[1:],
+        )
+        if launched:
+            return False
+        print("ERROR: staged update found but SparkyBotUpdater.exe is missing.")
+        return True
 
     # Build the work list first so we can retry the stragglers.
     work = []
@@ -45,7 +63,7 @@ def apply_pending_update():
 
     if not work:
         shutil.rmtree(pending, ignore_errors=True)
-        return
+        return True
 
     print("Applying pending SparkyBot update...")
 
@@ -128,6 +146,7 @@ def apply_pending_update():
     else:
         shutil.rmtree(pending, ignore_errors=True)
         print(f"Update applied: {applied} files updated. Continuing startup...\n")
+    return True
 
 
 def check_and_install():
@@ -173,7 +192,8 @@ def check_and_install():
 if __name__ == "__main__":
     # Apply any staged update FIRST — before importing app modules, while
     # nothing is locked (works on local disks AND network shares).
-    apply_pending_update()
+    if not apply_pending_update():
+        sys.exit(0)
 
     if not check_and_install():
         sys.exit(1)

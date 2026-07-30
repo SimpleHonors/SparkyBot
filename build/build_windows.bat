@@ -14,7 +14,7 @@ echo ============================================================
 echo.
 
 REM --- Step 1: venv ---
-echo [1/3] Creating virtual environment...
+echo [1/4] Creating virtual environment...
 if exist build\venv (
     echo   Removing old venv...
     rmdir /s /q build\venv
@@ -35,7 +35,7 @@ call build\venv\Scripts\activate.bat
 
 REM --- Step 2: pip install ---
 echo.
-echo [2/3] Installing packages...
+echo [2/4] Installing packages...
 python -m pip install --upgrade pip --quiet
 pip install -r requirements.txt --quiet
 pip install pyinstaller --quiet
@@ -49,7 +49,7 @@ if errorlevel 1 (
 
 REM --- Step 3: PyInstaller ---
 echo.
-echo [3/3] Building SparkyBot.exe...
+echo [3/4] Building SparkyBot.exe...
 pyinstaller --clean --noconfirm build\sparkybot.spec
 
 if errorlevel 1 (
@@ -58,6 +58,20 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+REM --- Step 4: standalone updater (one-file, copied beside SparkyBot.exe) ---
+echo.
+echo [4/4] Building SparkyBotUpdater.exe...
+pyinstaller --clean --noconfirm build\sparkybot_updater.spec
+
+if errorlevel 1 (
+    echo.
+    echo ERROR: Updater build failed. See the output above.
+    pause
+    exit /b 1
+)
+
+copy /Y dist\SparkyBotUpdater.exe dist\SparkyBot\SparkyBotUpdater.exe >nul
 
 REM --- Copy GW2EI next to the exe (writable, outside _internal) ---
 echo.

@@ -1007,6 +1007,22 @@ class SparkyBotApp(QApplication):
         app_dir = os.path.dirname(os.path.abspath(__file__))
         args = [a for a in sys.argv[1:] if a != '--test-update']
 
+        if getattr(sys, "frozen", False) and os.name == "nt":
+            from core.apppaths import app_dir as installed_app_dir
+            from core.update_handoff import launch_frozen_update_helper
+
+            launched = launch_frozen_update_helper(
+                app_dir=installed_app_dir(),
+                executable=sys.executable,
+                process_id=os.getpid(),
+                app_args=args,
+            )
+            if not launched:
+                self.logger.error(
+                    "SparkyBotUpdater.exe is missing; exiting so a manual relaunch can retry."
+                )
+            os._exit(0)
+
         relauncher = os.path.join(tempfile.gettempdir(), "sparkybot_relaunch.py")
         try:
             with open(relauncher, "w", encoding="utf-8") as f:

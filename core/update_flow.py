@@ -77,7 +77,12 @@ class UpdateFlow(QObject):
         self.config = config
         # Live install tree (where main.py / bootstrap.py sit). Injectable so
         # tests can stage into a scratch directory.
-        self._app_root = Path(app_root) if app_root else Path(__file__).resolve().parent.parent
+        if app_root is not None:
+            self._app_root = Path(app_root)
+        else:
+            from core.apppaths import app_dir
+
+            self._app_root = app_dir()
 
     # ------------------------------------------------------------------
     # Staging locations

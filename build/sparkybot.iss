@@ -35,6 +35,8 @@ SolidCompression=yes
 WizardStyle=modern
 DisableWelcomePage=yes
 DisableProgramGroupPage=yes
+CloseApplications=yes
+RestartApplications=no
 
 [Dirs]
 ; Grant normal users write access so the app can keep its config, logs,
