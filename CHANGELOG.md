@@ -2,6 +2,23 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.0.2] — 2026-08-08
+
+### Changed
+
+- Discord destination fields now accept either a complete webhook URL or
+  `ID/token` shorthand, which SparkyBot expands automatically.
+- Invalid token-only values explain where to use Discord's **Copy Webhook
+  URL** action instead of failing later during fight processing.
+
+### Fixed
+
+- Incomplete Discord webhook values are rejected before settings are written.
+- The active Discord destination cannot be blank while Discord posting is
+  enabled.
+- Windows UTF-8 BOM config files load correctly, and SparkyBot writes future
+  config files as BOM-free UTF-8.
+
 ## [2.0.1] — 2026-07-29
 
 ### Changed
