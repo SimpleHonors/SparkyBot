@@ -674,7 +674,11 @@ class SettingsDialog(QDialog):
         """Persist through the engine's single save path. True on success."""
         saved, relaunch_needed = self.engine._save_settings()
         if not saved:
-            QMessageBox.warning(self, "Settings", "Failed to save settings.")
+            QMessageBox.warning(
+                self, "Settings",
+                getattr(self.engine, "_last_save_error", "")
+                or "Failed to save settings.",
+            )
             return False
         self._take_snapshot()
         self.apply_button.setEnabled(False)

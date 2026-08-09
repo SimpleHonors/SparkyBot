@@ -20,6 +20,7 @@ from pathlib import Path
 from core import theme
 from core.update_flow import UpdateFlow
 from core.version import VERSION
+from core.discord_bot import validate_webhook_url
 
 
 def _parse_version(version_str: str) -> tuple:
@@ -382,12 +383,14 @@ class SettingsWindow(QWidget):
         form.addRow("", color_layout)
 
         self.discord_webhook2 = QLineEdit()
+        self.discord_webhook2.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.discord_webhook_name2 = QLineEdit()
         self.discord_webhook_name2.setPlaceholderText("e.g. Raid Reports")
         form.addRow("Destination 2 name:", self.discord_webhook_name2)
         form.addRow("Destination 2 webhook:", self.discord_webhook2)
 
         self.discord_webhook3 = QLineEdit()
+        self.discord_webhook3.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.discord_webhook_name3 = QLineEdit()
         self.discord_webhook_name3.setPlaceholderText("e.g. Officers")
         form.addRow("Destination 3 name:", self.discord_webhook_name3)
@@ -2810,6 +2813,26 @@ class SettingsWindow(QWidget):
         Settings dialog's OK/Apply and the legacy Save button both route
         here. Returns (saved, relaunch_needed).
         """
+        webhook_fields = (
+            ("Destination 1", self.discord_webhook.text()),
+            ("Destination 2", self.discord_webhook2.text()),
+            ("Destination 3", self.discord_webhook3.text()),
+        )
+        invalid = [name for name, value in webhook_fields
+                   if not validate_webhook_url(value)]
+        active_index = int(self.active_webhook.currentData() or 1) - 1
+        active_value = webhook_fields[active_index][1].strip()
+        if self.enable_discord.isChecked() and not active_value:
+            invalid.append("Active destination")
+        if invalid:
+            self._last_save_error = (
+                f"{', '.join(invalid)} has an incomplete webhook. "
+                "Paste the full Discord webhook URL beginning with "
+                "https://discord.com/api/webhooks/..."
+            )
+            return False, False
+
+        self._last_save_error = ""
         cfg = self.config.update
         cfg('Discord', 'discordWebhook', self.discord_webhook.text())
         cfg('Discord', 'discordWebhookName1', self.discord_webhook_name1.text())
@@ -2954,7 +2977,10 @@ class SettingsWindow(QWidget):
                     "Console window and Windows startup changes will take effect the next time SparkyBot is launched.",
                 )
         else:
-            QMessageBox.warning(self, "Settings", "Failed to save settings.")
+            QMessageBox.warning(
+                self, "Settings",
+                getattr(self, "_last_save_error", "") or "Failed to save settings.",
+            )
 
     def _on_start_clicked(self):
         """Toggle watcher start/stop"""

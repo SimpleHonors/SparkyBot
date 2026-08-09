@@ -7,13 +7,14 @@ from PySide6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox,
     QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout,
-    QRadioButton, QSpinBox, QInputDialog
+    QRadioButton, QSpinBox, QInputDialog, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal, Slot, QUrl
 from PySide6.QtGui import QIcon
 from pathlib import Path
 
 from core import theme
+from core.discord_bot import validate_webhook_url
 
 # Explicit page IDs. The default flow is ID order; declining AI on the
 # opt-in page removes the AI setup and voice pages from the flow entirely
@@ -818,11 +819,18 @@ class DiscordPage(QWizardPage):
         if self.skip_check.isChecked():
             return True
         url = self.webhook_edit.text().strip()
-        if url.startswith("https://discord.com/api/webhooks/"):
-            return True
         if not url:
             return True
-        return True
+        if validate_webhook_url(url):
+            return True
+        QMessageBox.warning(
+            self,
+            "Incomplete Discord Webhook",
+            "Paste the full Discord webhook URL beginning with "
+            "https://discord.com/api/webhooks/...",
+        )
+        self.webhook_edit.setFocus()
+        return False
 
 
 class TwitchPage(QWizardPage):

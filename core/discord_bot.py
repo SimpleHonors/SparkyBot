@@ -3,6 +3,7 @@
 import io
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -12,6 +13,17 @@ logger = logging.getLogger(__name__)
 
 MAX_TOTAL_CHARS = 5900  # Safe margin under Discord's 6000 total embed char limit
 MAX_EMBEDS_PER_POST = 10  # Discord caps at 10 embeds per message
+
+_DISCORD_WEBHOOK_RE = re.compile(
+    r"^https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[^/\s?#]+(?:\?[^\s#]*)?$",
+    re.IGNORECASE,
+)
+
+
+def validate_webhook_url(url: str) -> bool:
+    """Return True for a blank slot or a complete Discord webhook URL."""
+    value = (url or "").strip()
+    return not value or bool(_DISCORD_WEBHOOK_RE.fullmatch(value))
 
 
 class DiscordBot:
