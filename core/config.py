@@ -158,7 +158,10 @@ class Config:
         self.is_new_config = not config_path.exists()
 
         if config_path.exists():
-            self._config.read(config_path)
+            # utf-8-sig accepts both ordinary UTF-8 and files written with the
+            # Windows BOM. The latter must not turn "[Discord]" into an invalid
+            # section header.
+            self._config.read(config_path, encoding='utf-8-sig')
         else:
             # Do NOT write to disk here. Just use in-memory defaults.
             # The file will only be created when save() is explicitly called.
@@ -181,7 +184,7 @@ class Config:
         """Create default configuration file"""
         # All sections/keys already seeded by read_dict(_DEFAULTS) in __init__
         try:
-            with open(config_path, 'w') as f:
+            with open(config_path, 'w', encoding='utf-8') as f:
                 self._config.write(f)
         except OSError as e:
             logging.getLogger(__name__).warning(
@@ -445,7 +448,7 @@ class Config:
             config_path = Path(config_path)
 
         try:
-            with open(config_path, 'w') as f:
+            with open(config_path, 'w', encoding='utf-8') as f:
                 self._config.write(f)
             self._load_values()
         except OSError as e:
