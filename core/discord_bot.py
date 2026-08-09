@@ -18,12 +18,31 @@ _DISCORD_WEBHOOK_RE = re.compile(
     r"^https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[^/\s?#]+(?:\?[^\s#]*)?$",
     re.IGNORECASE,
 )
+_DISCORD_WEBHOOK_SHORTHAND_RE = re.compile(
+    r"^(\d+)/([^/\s?#]+(?:\?[^\s#]*)?)$",
+    re.IGNORECASE,
+)
+
+
+def normalize_webhook_url(url: str) -> Optional[str]:
+    """Normalize a full URL or Discord's ``ID/token`` shorthand.
+
+    A raw token cannot be expanded because the webhook ID is not encoded in it.
+    """
+    value = (url or "").strip()
+    if not value:
+        return ""
+    if _DISCORD_WEBHOOK_RE.fullmatch(value):
+        return value
+    shorthand = _DISCORD_WEBHOOK_SHORTHAND_RE.fullmatch(value)
+    if shorthand:
+        return f"https://discord.com/api/webhooks/{shorthand.group(1)}/{shorthand.group(2)}"
+    return None
 
 
 def validate_webhook_url(url: str) -> bool:
     """Return True for a blank slot or a complete Discord webhook URL."""
-    value = (url or "").strip()
-    return not value or bool(_DISCORD_WEBHOOK_RE.fullmatch(value))
+    return normalize_webhook_url(url) is not None
 
 
 class DiscordBot:

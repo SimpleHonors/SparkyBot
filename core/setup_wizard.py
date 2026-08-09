@@ -14,7 +14,7 @@ from PySide6.QtGui import QIcon
 from pathlib import Path
 
 from core import theme
-from core.discord_bot import validate_webhook_url
+from core.discord_bot import normalize_webhook_url
 
 # Explicit page IDs. The default flow is ID order; declining AI on the
 # opt-in page removes the AI setup and voice pages from the flow entirely
@@ -821,13 +821,16 @@ class DiscordPage(QWizardPage):
         url = self.webhook_edit.text().strip()
         if not url:
             return True
-        if validate_webhook_url(url):
+        normalized = normalize_webhook_url(url)
+        if normalized is not None:
+            self.webhook_edit.setText(normalized)
             return True
         QMessageBox.warning(
             self,
             "Incomplete Discord Webhook",
-            "Paste the full Discord webhook URL beginning with "
-            "https://discord.com/api/webhooks/...",
+            "A token alone is missing the webhook ID. In Discord, open "
+            "Server Settings > Integrations > Webhooks, choose your webhook, "
+            "then click Copy Webhook URL. You can also paste ID/token.",
         )
         self.webhook_edit.setFocus()
         return False

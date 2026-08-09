@@ -20,7 +20,7 @@ from pathlib import Path
 from core import theme
 from core.update_flow import UpdateFlow
 from core.version import VERSION
-from core.discord_bot import validate_webhook_url
+from core.discord_bot import normalize_webhook_url
 
 
 def _parse_version(version_str: str) -> tuple:
@@ -2818,8 +2818,9 @@ class SettingsWindow(QWidget):
             ("Destination 2", self.discord_webhook2.text()),
             ("Destination 3", self.discord_webhook3.text()),
         )
-        invalid = [name for name, value in webhook_fields
-                   if not validate_webhook_url(value)]
+        normalized = [normalize_webhook_url(value) for _name, value in webhook_fields]
+        invalid = [webhook_fields[index][0] for index, value in enumerate(normalized)
+                   if value is None]
         active_index = int(self.active_webhook.currentData() or 1) - 1
         active_value = webhook_fields[active_index][1].strip()
         if self.enable_discord.isChecked() and not active_value:
@@ -2827,12 +2828,16 @@ class SettingsWindow(QWidget):
         if invalid:
             self._last_save_error = (
                 f"{', '.join(invalid)} has an incomplete webhook. "
-                "Paste the full Discord webhook URL beginning with "
-                "https://discord.com/api/webhooks/..."
+                "A token alone is missing the webhook ID. In Discord, open "
+                "Server Settings > Integrations > Webhooks, then choose "
+                "Copy Webhook URL. You can paste a full URL or ID/token."
             )
             return False, False
 
         self._last_save_error = ""
+        self.discord_webhook.setText(normalized[0])
+        self.discord_webhook2.setText(normalized[1])
+        self.discord_webhook3.setText(normalized[2])
         cfg = self.config.update
         cfg('Discord', 'discordWebhook', self.discord_webhook.text())
         cfg('Discord', 'discordWebhookName1', self.discord_webhook_name1.text())
