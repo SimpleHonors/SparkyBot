@@ -2,7 +2,7 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
-## [2.0.2] — 2026-08-08
+## [2.0.2] — 2026-08-10
 
 ### Changed
 
@@ -18,6 +18,9 @@ All notable changes to SparkyBot will be documented in this file.
   enabled.
 - Windows UTF-8 BOM config files load correctly, and SparkyBot writes future
   config files as BOM-free UTF-8.
+- Quitting with a run open now offers separate **post to Discord** and
+  **without posting** choices. The no-post choice can no longer reuse a
+  remembered auto-post setting.
 
 ## [2.0.1] — 2026-07-29
 

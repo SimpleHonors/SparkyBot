@@ -1157,13 +1157,15 @@ class MainWindow(QMainWindow):
 
     def _quit_app(self):
         """Explicit quit request (File > Exit, or closeEvent fallthrough).
-        With a run open this becomes the 3-way confirm."""
+        With a run open this becomes the explicit post/no-post confirm."""
         if self._run_confirm_needed():
             choice = self._confirm_quit_with_run()
             if choice == "tray":
                 self.hide()
-            elif choice == "end":
-                self._end_run_and_quit()
+            elif choice == "end_no_post":
+                self._end_run_and_quit(auto_post=False)
+            elif choice == "end_post":
+                self._end_run_and_quit(auto_post=True)
             return
         self._quit_app_now()
 
@@ -1178,23 +1180,31 @@ class MainWindow(QMainWindow):
         return self._run_open() and not self._quit_after_run
 
     def _build_quit_confirm(self):
-        """3-way confirm for quitting with an open run. Returns
-        (box, {"tray"|"end"|"cancel": button})."""
+        """Quit confirm with explicit Discord and no-Discord choices."""
         box = QMessageBox(self)
         box.setWindowTitle("A run is still open")
         box.setIcon(QMessageBox.Icon.Question)
         box.setText("A run is still open.")
         box.setInformativeText(
-            "Keep SparkyBot running in the tray, or end the run and quit? "
-            "Ending the run makes its report first.")
+            "Keep SparkyBot running in the tray, or end the run and quit. "
+            "Choose explicitly whether the report may be posted to Discord.")
         keep_btn = box.addButton(
             "Keep running in tray", QMessageBox.ButtonRole.AcceptRole)
-        end_btn = box.addButton(
-            "End run && quit", QMessageBox.ButtonRole.DestructiveRole)
+        no_post_btn = box.addButton(
+            "End run without posting && quit",
+            QMessageBox.ButtonRole.DestructiveRole)
+        post_btn = box.addButton(
+            "End run, post to Discord && quit",
+            QMessageBox.ButtonRole.DestructiveRole)
         cancel_btn = box.addButton(
             "Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(keep_btn)
-        return box, {"tray": keep_btn, "end": end_btn, "cancel": cancel_btn}
+        return box, {
+            "tray": keep_btn,
+            "end_no_post": no_post_btn,
+            "end_post": post_btn,
+            "cancel": cancel_btn,
+        }
 
     def _confirm_quit_with_run(self) -> str:
         box, buttons = self._build_quit_confirm()
@@ -1205,10 +1215,8 @@ class MainWindow(QMainWindow):
                 return name
         return "cancel"
 
-    def _end_run_and_quit(self):
-        """Quit path 'End run & quit': the 3-way WAS the confirm, so the
-        run ends with the remembered auto-post setting, the inline report
-        runs to completion, then the app quits."""
+    def _end_run_and_quit(self, auto_post: bool):
+        """End the run, honor the explicit post choice, then quit."""
         recorded_paths = self._run_session.recorded_logs
         started, ended = self._run_session.end()
         selected = collect_run_logs(
@@ -1222,9 +1230,8 @@ class MainWindow(QMainWindow):
             return
         name = (f"Raid Report {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
-        self._start_run_report(selected, name,
-                               bool(self.config.run_auto_post),
-                               quit_after=True)
+        self._start_run_report(
+            selected, name, auto_post=auto_post, quit_after=True)
 
     def _show_about(self):
         """Small About box; full credits live on Settings > Application."""
@@ -1238,14 +1245,16 @@ class MainWindow(QMainWindow):
         """X button: hide to tray or quit, per config (same semantics the
         old window had — but quitting is explicit now because the app runs
         with quitOnLastWindowClosed off). With a run open, closing always
-        goes through the 3-way confirm first."""
+        goes through the explicit post/no-post confirm first."""
         if self._run_confirm_needed() and not self.config.close_to_tray:
             choice = self._confirm_quit_with_run()
             event.ignore()
             if choice == "tray":
                 self.hide()
-            elif choice == "end":
-                self._end_run_and_quit()
+            elif choice == "end_no_post":
+                self._end_run_and_quit(auto_post=False)
+            elif choice == "end_post":
+                self._end_run_and_quit(auto_post=True)
             return
         if self.config.close_to_tray:
             event.ignore()
