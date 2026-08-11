@@ -85,11 +85,11 @@ From the repo root, after `build_windows.bat` has completed:
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\sparkybot.iss
 ```
 
-Output: `dist\SparkyBot-v2.0.0-setup.exe`
+Output: `dist\SparkyBot-vX.Y.Z-setup.exe`
 
 ### Smoke checklist additions (installer)
 
-- [ ] Run `SparkyBot-v2.0.0-setup.exe /VERYSILENT /DIR=C:\Temp\SparkyBotTest`
+- [ ] Run `SparkyBot-vX.Y.Z-setup.exe /VERYSILENT /DIR=C:\Temp\SparkyBotTest`
       — installs without UI to a temp directory.
 - [ ] Run `C:\Temp\SparkyBotTest\SparkyBot.exe` — app launches.
 - [ ] Uninstall via `"C:\Temp\SparkyBotTest\unins000.exe" /VERYSILENT` — temp
