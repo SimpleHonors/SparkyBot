@@ -752,6 +752,9 @@ class SettingsWindow(QWidget):
         if not theme_id:
             return
         self.config.update('UI', 'theme', theme_id)
+        # Keep the loaded attribute in step: _load_settings reads it, so a
+        # reopened dialog must show the theme that is actually applied.
+        self.config.ui_theme = theme_id
         theme.set_theme(theme_id)
         app = QApplication.instance()
         if app is not None:
