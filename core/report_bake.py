@@ -68,8 +68,29 @@ _GUILD_ICON_SLOT_TITLE = "index.png"
 _GUILD_ICON_OVERRIDE_FIELD = "sparkybot-guild-icon"
 _GUILD_ICON_OVERRIDE_MARKER = f'"{_GUILD_ICON_OVERRIDE_FIELD}":"override"'
 
+# The upstream combiner hardcodes its own product name as the report title in
+# three places: the visible "Header Image" tiddler's wikitext carries it
+# beside the logo slot —
+#     |[img height=86 [index.png]]| <font size="35">Top Stats - ...</font>|
+# — and the same string rides in $:/SiteTitle and the document's <title>
+# tag. All three are ours to rename: we append same-titled tiddlers to the
+# store (last title wins) with ONLY the text cell swapped, so the icon cell —
+# and the index.png tiddler the guild-icon feature owns — stay byte-for-byte
+# as upstream baked them.
+_UPSTREAM_REPORT_TITLE = "Top Stats - Elite Insight Log Summary"
+DEFAULT_REPORT_TITLE = "SparkyBot \u2014 Combined Fight Log Summary"
+_REPORT_TITLE_HEADER_TIDDLER = "Header Image"
+_REPORT_TITLE_SITE_TIDDLER = "$:/SiteTitle"
+
+# Provenance and idempotency stamp, same pattern as the guild-icon override.
+_REPORT_TITLE_OVERRIDE_FIELD = "sparkybot-report-title"
+_REPORT_TITLE_OVERRIDE_MARKER = f'"{_REPORT_TITLE_OVERRIDE_FIELD}":"override"'
+
 _CLOSE_HEAD_RE = re.compile(r"</head\s*>", re.IGNORECASE)
 _OPEN_HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+_HEAD_TITLE_RE = re.compile(
+    r"<title\b[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL
+)
 
 
 def _inject_style_into_head(
@@ -377,6 +398,167 @@ def apply_guild_icon(standalone_html: Path, icon_source: str | None) -> Path:
         logger.warning(
             "Guild icon injection failed — "
             "report will ship without the icon",
+            exc_info=True,
+        )
+    return report_path
+
+
+def _store_tiddlers_by_title(content: str) -> dict:
+    """Map each tiddler title to the tiddler TiddlyWiki would render.
+
+    Store blocks load in document order and the LAST tiddler with a title
+    wins, so this collects them in that same order. The override builder
+    starts from the tiddler the report actually renders and keeps its tags
+    and fields. An unparsable block contributes nothing rather than making
+    the whole rename guess at the report's structure.
+    """
+    winners = {}
+    pos = 0
+    while True:
+        start = content.find(_STORE_OPENER, pos)
+        if start == -1:
+            return winners
+        body_start = start + len(_STORE_OPENER)
+        end = content.find("</script>", body_start)
+        if end == -1:
+            raise ValueError("tiddler store block in the viewer is never closed")
+        pos = end + len("</script>")
+        block = content[body_start:end].strip()
+        if not block:
+            continue
+        try:
+            batch = json.loads(block)
+        except Exception:
+            logger.warning("skipping an unparsable tiddler store block")
+            continue
+        if not isinstance(batch, list):
+            continue
+        for item in batch:
+            if isinstance(item, dict) and item.get("title") is not None:
+                winners[item["title"]] = item
+
+
+def _title_override_tiddler(original: dict, text: str) -> dict:
+    """Clone an existing tiddler with new text plus the override stamp.
+
+    Every other field (tags, type, anything upstream carries) is copied
+    verbatim, so the override renders exactly like the tiddler it out-votes:
+    the Header Image rename keeps its $:/tags/AboveStory tag and its icon
+    cell untouched.
+    """
+    override = dict(original)
+    override["text"] = text
+    override[_REPORT_TITLE_OVERRIDE_FIELD] = "override"
+    return override
+
+
+def _title_rename_tiddlers(full_html: str, title: str) -> list[dict]:
+    """Build the Header Image / $:/SiteTitle overrides carrying our title.
+
+    Only the known upstream title is ever replaced, and only inside the
+    tiddlers' own text; a tiddler that drifted upstream away from that
+    string is left alone (with a warning) rather than clobbered. A tiddler
+    already renamed by a previous run is skipped, which is what keeps
+    re-applying idempotent.
+    """
+    winners = _store_tiddlers_by_title(full_html)
+    new_tiddlers = []
+    for tiddler_title in (
+        _REPORT_TITLE_HEADER_TIDDLER,
+        _REPORT_TITLE_SITE_TIDDLER,
+    ):
+        original = winners.get(tiddler_title)
+        text = original.get("text") if isinstance(original, dict) else None
+        if not isinstance(text, str):
+            logger.warning(
+                "report has no %s tiddler to rename — it keeps the "
+                "upstream title",
+                tiddler_title,
+            )
+            continue
+        if _UPSTREAM_REPORT_TITLE not in text:
+            if title in text and (
+                original.get(_REPORT_TITLE_OVERRIDE_FIELD) == "override"
+            ):
+                continue  # already carries our title
+            logger.warning(
+                "the %s tiddler no longer carries the known upstream "
+                "title — left as the report baked it",
+                tiddler_title,
+            )
+            continue
+        new_tiddlers.append(
+            _title_override_tiddler(
+                original, text.replace(_UPSTREAM_REPORT_TITLE, title)
+            )
+        )
+    return new_tiddlers
+
+
+def _patch_head_title(
+    full_html: str, title: str, session_date: str | None
+) -> str:
+    """Replace the document's first <title> tag text, idempotent.
+
+    The browser tab shows this string, so it gets the same rename; with a
+    session date it reads "SparkyBot — Combined Fight Log Summary —
+    2026-08-10". A document without a <title> tag ships unchanged here with
+    a warning — a missing head is upstream drift, not a reason to bloat a
+    hand-written one into an unknown structure.
+    """
+    display = f"{title} \u2014 {session_date}" if session_date else title
+    match = _HEAD_TITLE_RE.search(full_html)
+    if match is None:
+        logger.warning(
+            "no <title> tag in the report head — the browser tab keeps "
+            "the title the viewer template shipped"
+        )
+        return full_html
+    if match.group(1) == display:
+        return full_html
+    return (
+        full_html[:match.start(1)] + display + full_html[match.end(1):]
+    )
+
+
+def apply_report_title(
+    standalone_html: Path,
+    title: str = DEFAULT_REPORT_TITLE,
+    session_date: str | None = None,
+) -> Path:
+    """Stamp SparkyBot's own report title onto an upstream standalone report.
+
+    Same augmentation path as the guild icon: unpack the compressed report,
+    append same-titled overrides for the "Header Image" and $:/SiteTitle
+    tiddlers (TiddlyWiki loads stores in order, last title wins) with only
+    the text cell swapped — the icon cell beside it, and the index.png
+    tiddler the guild-icon feature owns, are never touched — then rename the
+    document's <title> tag, optionally suffixed with the session date for
+    the browser tab, and repack atomically. Unpacking is skipped for
+    reports that were never compressed. Any failure — no store block,
+    drifted tiddlers, corrupt payload — is logged and swallowed so the
+    report still ships exactly as the combiner baked it: the title must
+    never fail a report.
+    """
+    report_path = Path(standalone_html)
+    try:
+        packed = report_path.read_text(encoding="utf-8")
+        was_packed = is_packed(packed)
+        full_html = unpack_html(packed) if was_packed else packed
+        renamed_tiddlers = _title_rename_tiddlers(full_html, title)
+        enriched = full_html
+        if renamed_tiddlers:
+            enriched = _append_tiddler_block(enriched, renamed_tiddlers)
+        enriched = _patch_head_title(enriched, title, session_date)
+        if enriched == full_html:
+            return report_path
+        _atomic_write_text(
+            report_path, pack_html(enriched) if was_packed else enriched
+        )
+    except Exception:
+        logger.warning(
+            "Report title override failed — "
+            "report will ship with the combiner's own title",
             exc_info=True,
         )
     return report_path
