@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config import Config
+import core.shareable_config as shareable_config
 from core.shareable_config import (
     FORMAT_NAME,
     FORMAT_VERSION,
@@ -158,3 +159,104 @@ def test_import_file_size_is_bounded(tmp_path):
 
     with pytest.raises(GuildConfigError, match="too large"):
         load_guild_config(target)
+
+
+def test_routing_summary_uses_the_two_jobs_people_recognize(tmp_path):
+    bundle = bundle_from_config(configured(tmp_path))
+
+    assert bundle.routing_summary() == (
+        "Individual fight reports → Fight Reports\n"
+        "End-of-night debrief and logs → Raid Reports"
+    )
+
+
+def test_enabled_bundle_requires_the_nightly_destination_webhook(tmp_path):
+    data = bundle_from_config(configured(tmp_path)).as_dict()
+    data["discord"]["destinations"][1]["webhook_url"] = ""
+
+    with pytest.raises(GuildConfigError, match="end-of-night destination 2"):
+        parse_guild_config(data)
+
+
+@pytest.mark.parametrize(
+    "mutate, message",
+    [
+        (lambda d: d.update({"version": True}), "version"),
+        (lambda d: d.update({"warning": {"not": "text"}}), "warning"),
+        (
+            lambda d: d["discord"]["destinations"][0].update(
+                {"name": "\ud800"}
+            ),
+            "invalid text",
+        ),
+    ],
+)
+def test_strict_parser_rejects_ambiguous_or_unencodable_values(
+    tmp_path, mutate, message
+):
+    data = bundle_from_config(configured(tmp_path)).as_dict()
+    mutate(data)
+
+    with pytest.raises(GuildConfigError, match=message):
+        parse_guild_config(data)
+
+
+def test_export_works_when_platform_has_no_fchmod(tmp_path, monkeypatch):
+    monkeypatch.delattr(shareable_config.os, "fchmod", raising=False)
+    target = tmp_path / "guild.json"
+
+    write_guild_config(configured(tmp_path), target)
+
+    assert target.is_file()
+    assert json.loads(target.read_text(encoding="utf-8"))["format"] == FORMAT_NAME
+
+
+def test_export_wraps_parent_directory_failure(tmp_path, monkeypatch):
+    def deny_mkdir(*_args, **_kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "mkdir", deny_mkdir)
+
+    with pytest.raises(GuildConfigError, match="Could not export guild config"):
+        write_guild_config(configured(tmp_path), tmp_path / "blocked" / "guild.json")
+
+
+def test_failed_import_rolls_back_in_memory_values(tmp_path, monkeypatch):
+    destination = configured(tmp_path)
+    data = bundle_from_config(destination).as_dict()
+    data["discord"]["destinations"][0]["webhook_url"] = (
+        "https://discord.com/api/webhooks/999999999999999999/new-token"
+    )
+    bundle = parse_guild_config(data)
+    before_parser = destination._config.get("Discord", "discordWebhook")
+    before_attribute = destination.discord_webhook
+    monkeypatch.setattr(destination, "save", lambda: False)
+
+    with pytest.raises(GuildConfigError, match="could not save"):
+        apply_guild_config(destination, bundle)
+
+    assert destination._config.get("Discord", "discordWebhook") == before_parser
+    assert destination.discord_webhook == before_attribute
+
+
+def test_config_saves_back_to_the_path_it_loaded(tmp_path):
+    custom_path = tmp_path / "custom.properties"
+    cfg = Config(custom_path)
+    cfg.update("AI", "aiApiKey", "keep-this-path")
+
+    assert cfg.save()
+
+    assert custom_path.is_file()
+    assert "keep-this-path" in custom_path.read_text(encoding="utf-8")
+
+
+def test_atomic_config_save_preserves_original_on_encoding_failure(tmp_path):
+    config_path = tmp_path / "config.properties"
+    cfg = Config(config_path)
+    assert cfg.save()
+    before = config_path.read_bytes()
+    cfg.update("Discord", "discordWebhookName1", "\ud800")
+
+    assert not cfg.save()
+
+    assert config_path.read_bytes() == before

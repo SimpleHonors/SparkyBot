@@ -52,7 +52,7 @@ from core.run_session import (
 )
 from core.shareable_config import (
     DEFAULT_FILENAME, GuildConfigError, apply_guild_config,
-    load_guild_config, write_guild_config,
+    bundle_from_config, load_guild_config, write_guild_config,
 )
 from core.version import VERSION
 
@@ -205,13 +205,13 @@ class MainWindow(QMainWindow):
         self.action_watcher.triggered.connect(self._on_start_clicked)
         file_menu.addSeparator()
         self.action_import_guild_config = file_menu.addAction(
-            "&Import Guild Config..."
+            "&Use Guild Setup File..."
         )
         self.action_import_guild_config.triggered.connect(
             self._import_guild_config
         )
         self.action_export_guild_config = file_menu.addAction(
-            "&Export Guild Config..."
+            "&Create Guild Setup File..."
         )
         self.action_export_guild_config.triggered.connect(
             self._export_guild_config
@@ -255,35 +255,24 @@ class MainWindow(QMainWindow):
         """Validate and apply a deliberately limited guild config bundle."""
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
-            "Import SparkyBot Guild Config",
+            "Choose Guild Setup File",
             "",
-            "SparkyBot Guild Config (*.json);;JSON files (*.json)",
+            "SparkyBot Guild Setup (*.json);;JSON files (*.json)",
         )
         if not path:
             return
         try:
             bundle = load_guild_config(path)
         except GuildConfigError as exc:
-            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            QMessageBox.warning(self, "Setup File Not Used", str(exc))
             return
 
-        count = bundle.configured_destination_count
-        answer = QMessageBox.question(
-            self,
-            "Import Guild Config?",
-            f"Replace this installation's Discord settings with {count} "
-            "configured destination(s)?\n\n"
-            "AI providers, API keys, Twitch, voice, file paths, and all "
-            "other settings will remain unchanged.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not self._confirm_guild_setup_import(bundle):
             return
         try:
             apply_guild_config(self.config, bundle)
         except GuildConfigError as exc:
-            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            QMessageBox.warning(self, "Setup File Not Used", str(exc))
             return
 
         if self._settings is not None:
@@ -291,48 +280,92 @@ class MainWindow(QMainWindow):
         self.settings_changed.emit()
         QMessageBox.information(
             self,
-            "Guild Config Imported",
-            f"Imported {count} Discord destination(s). No AI or provider "
-            "credentials were read from the file.",
+            "Guild Setup Ready",
+            f"SparkyBot will now post to:\n\n{bundle.routing_summary()}\n\n"
+            "Nothing else on this computer was changed.",
         )
+
+    def _confirm_guild_setup_import(self, bundle):
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Use This Guild Setup?")
+        box.setText("Replace the current Discord destinations?")
+        box.setInformativeText(
+            f"{bundle.routing_summary()}\n\n"
+            "Only use a setup file sent by a guild admin you trust. "
+            "AI, voice, Twitch, and files on this computer will not change."
+        )
+        box.setMinimumWidth(480)
+        accept_button = box.addButton(
+            "Use Guild Setup", QMessageBox.ButtonRole.AcceptRole
+        )
+        cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        return box.clickedButton() is accept_button
 
     def _export_guild_config(self, checked=False):
         """Export only allowlisted Discord settings, never provider secrets."""
-        answer = QMessageBox.warning(
-            self,
-            "Discord Webhooks Are Credentials",
-            "This file will contain working Discord webhook URLs. Share it "
-            "privately. If it is exposed, revoke those webhooks in Discord.\n\n"
-            "AI provider tokens, Twitch tokens, voice keys, and local paths "
-            "will not be included.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        try:
+            bundle = bundle_from_config(self.config)
+        except GuildConfigError as exc:
+            QMessageBox.warning(self, "Setup File Not Created", str(exc))
+            return
+        if not self._confirm_guild_setup_export(bundle):
             return
 
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Export SparkyBot Guild Config",
+            "Create Guild Setup File",
             str(Path.home() / DEFAULT_FILENAME),
-            "SparkyBot Guild Config (*.json)",
+            "SparkyBot Guild Setup (*.json)",
         )
         if not path:
             return
         target = Path(path)
         if target.suffix.lower() != ".json":
             target = target.with_name(target.name + ".json")
+            if target.exists():
+                overwrite = QMessageBox.question(
+                    self,
+                    "Replace Existing Setup File?",
+                    f"A file named {target.name} already exists. Replace it?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if overwrite != QMessageBox.StandardButton.Yes:
+                    return
         try:
             bundle = write_guild_config(self.config, target)
         except GuildConfigError as exc:
-            QMessageBox.warning(self, "Guild Config Not Exported", str(exc))
+            QMessageBox.warning(self, "Setup File Not Created", str(exc))
             return
         QMessageBox.information(
             self,
-            "Guild Config Exported",
-            f"Saved {bundle.configured_destination_count} Discord "
-            f"destination(s) to:\n{target}\n\nKeep this file private.",
+            "Guild Setup File Created",
+            f"Saved:\n\n{bundle.routing_summary()}\n\n"
+            f"File: {target}\n\nShare it only with guild members you trust.",
         )
+
+    def _confirm_guild_setup_export(self, bundle):
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Create a Guild Setup File?")
+        box.setText("This file can post messages to your Discord channels.")
+        box.setInformativeText(
+            f"{bundle.routing_summary()}\n\n"
+            "Share it only with guild members you trust. It does not include "
+            "AI keys, voice settings, Twitch, or files from this computer."
+        )
+        box.setMinimumWidth(480)
+        accept_button = box.addButton(
+            "Create Setup File", QMessageBox.ButtonRole.AcceptRole
+        )
+        cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        return box.clickedButton() is accept_button
 
     def _build_central(self):
         """Sidebar (QListWidget) + page stack (QStackedWidget)."""

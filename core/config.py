@@ -3,6 +3,7 @@
 import logging
 import os
 import configparser
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -154,6 +155,7 @@ class Config:
             config_path = self.home_dir / "config.properties"
         else:
             config_path = Path(config_path)
+        self.config_path = config_path
 
         self.is_new_config = not config_path.exists()
 
@@ -437,25 +439,46 @@ class Config:
         return folders
 
     def save(self, config_path: Optional[Union[str, Path]] = None):
-        """Save current config values to disk and reload attributes
+        """Atomically save current config values and reload attributes.
 
         Args:
-            config_path: Path to write to. Defaults to home_dir / 'config.properties'.
+            config_path: Optional one-off destination. By default, save back to
+                the path this Config instance was loaded from.
         """
         if config_path is None:
-            config_path = self.home_dir / "config.properties"
+            config_path = self.config_path
         else:
             config_path = Path(config_path)
 
+        temp_name = None
         try:
-            with open(config_path, 'w', encoding='utf-8') as f:
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                encoding='utf-8',
+                newline='\n',
+                prefix=f'.{config_path.name}.',
+                suffix='.tmp',
+                dir=config_path.parent,
+                delete=False,
+            ) as f:
+                temp_name = f.name
                 self._config.write(f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_name, config_path)
+            temp_name = None
             self._load_values()
-        except OSError as e:
+        except (OSError, UnicodeError) as e:
             logging.getLogger(__name__).warning(
                 f"Could not save config to {config_path}: {e}"
             )
             return False
+        finally:
+            if temp_name is not None:
+                try:
+                    Path(temp_name).unlink()
+                except OSError:
+                    pass
         return True
 
     def update(self, section: str, key: str, value: str):

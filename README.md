@@ -106,12 +106,16 @@ enjoy owning more screwdrivers than furniture.
 
 Channel → gear icon (Edit Channel) → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**. Paste it into the setup wizard or Settings → Messaging.
 
-Guild admins can configure the Discord destinations once and choose **File →
-Export Guild Config...**. A guildie can load that file from the first-run
-Welcome screen or **File → Import Guild Config...**. The file contains only the
-three Discord webhook slots, destination names/routing, enabled state, bot name,
-and embed color. It never contains AI provider keys, Twitch tokens, voice keys,
-or local paths.
+Guild admins configure the Discord destinations once and choose **File →
+Create Guild Setup File...**. A guildie chooses that file on first launch or
+uses **File → Use Guild Setup File...** later. SparkyBot shows exactly where
+individual fights and the end-of-night debrief will post. On first launch it
+then checks only the parser and fight-log folder on that computer; AI, voice,
+Twitch, and other extras stay off and can be added later in Settings.
+
+The setup file contains only the three Discord webhook slots, destination
+names/routing, enabled state, bot name, and embed color. It never contains AI
+provider keys, Twitch tokens, voice keys, or local paths.
 
 > **Treat an exported guild config like a password.** Its Discord webhook URLs
 > can post to your channels. Share it privately and revoke the webhooks in

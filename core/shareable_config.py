@@ -7,6 +7,7 @@ AI, Twitch, TTS, filesystem, or other application settings.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import json
 import os
@@ -65,6 +66,26 @@ class GuildConfigBundle:
     def configured_destination_count(self) -> int:
         return sum(bool(item.webhook_url) for item in self.destinations)
 
+    def destination_name(self, index: int) -> str:
+        """Human-readable name for a one-based destination slot."""
+        item = self.destinations[index - 1]
+        return item.name or f"Destination {index}"
+
+    @property
+    def fight_destination_name(self) -> str:
+        return self.destination_name(self.active_destination)
+
+    @property
+    def nightly_destination_name(self) -> str:
+        index = self.raid_report_destination or self.active_destination
+        return self.destination_name(index)
+
+    def routing_summary(self) -> str:
+        return (
+            f"Individual fight reports → {self.fight_destination_name}\n"
+            f"End-of-night debrief and logs → {self.nightly_destination_name}"
+        )
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "format": FORMAT_NAME,
@@ -101,6 +122,10 @@ def _required_text(value: Any, field: str, *, allow_blank: bool = True) -> str:
         raise GuildConfigError(f"{field} cannot be blank.")
     if len(clean) > MAX_LABEL_LENGTH:
         raise GuildConfigError(f"{field} is longer than {MAX_LABEL_LENGTH} characters.")
+    try:
+        clean.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise GuildConfigError(f"{field} contains invalid text.") from exc
     return clean
 
 
@@ -119,11 +144,21 @@ def parse_guild_config(data: Any) -> GuildConfigBundle:
 
     if data.get("format") != FORMAT_NAME:
         raise GuildConfigError(f"This is not a {FORMAT_NAME} file.")
-    if data.get("version") != FORMAT_VERSION:
+    version = data.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) or version != FORMAT_VERSION:
         raise GuildConfigError(
-            f"Unsupported guild config version {data.get('version')!r}; "
+            f"Unsupported guild config version {version!r}; "
             f"this app supports version {FORMAT_VERSION}."
         )
+
+    warning = data.get("warning")
+    if warning is not None:
+        if not isinstance(warning, str):
+            raise GuildConfigError("warning must be text when present.")
+        try:
+            warning.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise GuildConfigError("warning contains invalid text.") from exc
 
     discord = data.get("discord")
     if not isinstance(discord, dict):
@@ -170,6 +205,10 @@ def parse_guild_config(data: Any) -> GuildConfigBundle:
         raise GuildConfigError(
             f"Discord is enabled, but active destination {active} has no webhook URL."
         )
+    if enabled and raid and not destinations[raid - 1].webhook_url:
+        raise GuildConfigError(
+            f"Discord is enabled, but end-of-night destination {raid} has no webhook URL."
+        )
 
     return GuildConfigBundle(
         enabled=enabled,
@@ -185,16 +224,17 @@ def load_guild_config(path: str | Path) -> GuildConfigBundle:
     """Read and validate a small UTF-8/UTF-8-BOM guild config file."""
     source = Path(path)
     try:
-        size = source.stat().st_size
+        with source.open("rb") as handle:
+            raw = handle.read(MAX_FILE_BYTES + 1)
     except OSError as exc:
         raise GuildConfigError(f"Could not read guild config: {exc}") from exc
-    if size > MAX_FILE_BYTES:
+    if len(raw) > MAX_FILE_BYTES:
         raise GuildConfigError(
-            f"Guild config is too large ({size} bytes; maximum is {MAX_FILE_BYTES})."
+            f"Guild config is too large (maximum is {MAX_FILE_BYTES} bytes)."
         )
     try:
-        data = json.loads(source.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise GuildConfigError(f"Guild config is not valid UTF-8 JSON: {exc}") from exc
     return parse_guild_config(data)
 
@@ -235,31 +275,45 @@ def apply_guild_config(config: Any, bundle: GuildConfigBundle, *, persist: bool 
         ("enableDiscordBot", str(bundle.enabled).lower()),
         ("embedColor", f"0x{bundle.embed_color[1:]}"),
     )
-    for key, value in keys:
-        config.update("Discord", key, value)
-    if persist:
-        if not config.save():
-            raise GuildConfigError("SparkyBot could not save the imported guild config.")
-    else:
-        # First-run imports remain in memory until the wizard is completed;
-        # cancelling the wizard must not leave a partial config on disk.
+    snapshot = copy.deepcopy(config._config)
+    try:
+        for key, value in keys:
+            config.update("Discord", key, value)
+        if persist:
+            if not config.save():
+                raise GuildConfigError(
+                    "SparkyBot could not save the imported guild setup."
+                )
+        else:
+            # First-run imports remain in memory until the wizard is completed;
+            # cancelling the wizard must not leave a partial config on disk.
+            config._load_values()
+    except Exception as exc:
+        config._config = snapshot
         config._load_values()
+        if isinstance(exc, GuildConfigError):
+            raise
+        raise GuildConfigError(f"SparkyBot could not apply the guild setup: {exc}") from exc
 
 
 def write_guild_config(config: Any, path: str | Path) -> GuildConfigBundle:
     """Atomically export an allowlisted bundle with owner-only permissions."""
     bundle = bundle_from_config(config)
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(bundle.as_dict(), indent=2, ensure_ascii=False) + "\n"
 
     temp_name: str | None = None
+    fd: int | None = None
     try:
+        target.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(
             prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
         )
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        handle = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+        fd = None  # handle owns and closes the descriptor from here.
+        with handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
@@ -269,9 +323,14 @@ def write_guild_config(config: Any, path: str | Path) -> GuildConfigBundle:
             target.chmod(0o600)
         except OSError:
             pass  # Windows ACLs, rather than POSIX mode bits, govern access.
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise GuildConfigError(f"Could not export guild config: {exc}") from exc
     finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         if temp_name is not None:
             try:
                 Path(temp_name).unlink()

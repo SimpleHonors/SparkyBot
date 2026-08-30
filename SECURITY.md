@@ -56,12 +56,14 @@ Users should protect this file with appropriate filesystem permissions. SparkyBo
 
 ### Shareable Guild Config Files
 
-**File → Export Guild Config...** creates a portable JSON file containing
+**File → Create Guild Setup File...** creates a portable JSON file containing
 Discord webhook URLs and a strict allowlist of Discord-only presentation and
 routing settings. The exporter never reads or writes AI provider keys, Twitch
 tokens, ElevenLabs keys, or filesystem paths. Import rejects unknown fields,
 unsupported versions, oversized files, and invalid webhook URLs before changing
-the live configuration.
+the live configuration. Configuration writes use a same-directory temporary
+file and atomic replacement so a failed import cannot truncate unrelated
+settings.
 
 These files are intentionally portable, so their webhook credentials are not
 machine-encrypted. Keep them private. Export uses owner-only POSIX permissions

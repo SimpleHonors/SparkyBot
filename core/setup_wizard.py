@@ -16,7 +16,7 @@ from pathlib import Path
 from core import theme
 from core.discord_bot import normalize_webhook_url
 from core.shareable_config import (
-    GuildConfigError, apply_guild_config, load_guild_config,
+    GuildConfigBundle, GuildConfigError, apply_guild_config, load_guild_config,
 )
 
 # Explicit page IDs. The default flow is ID order; declining AI on the
@@ -31,6 +31,7 @@ class SetupWizard(QWizard):
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
+        self.imported_guild_config: GuildConfigBundle | None = None
         self.setWindowTitle("SparkyBot Setup")
         # 760 wide so the usage-mode page's verbatim radio copy (FINAL-
         # DESIGN wording) never clips; was 700 before that page existed.
@@ -45,7 +46,8 @@ class SetupWizard(QWizard):
         # No private palette or stylesheet here — the wizard inherits the
         # app-wide Workbench Dark theme applied in main.py (before this
         # wizard ever constructs).
-        self.setPage(PAGE_WELCOME, WelcomePage(config))
+        self.welcome_page = WelcomePage(config)
+        self.setPage(PAGE_WELCOME, self.welcome_page)
         # LAW #2a: the AI question comes right after Welcome, before any
         # plumbing — a "No thanks" user never sees an AI setup page.
         self.ai_optin_page = AIOptInPage()
@@ -59,8 +61,10 @@ class SetupWizard(QWizard):
         from core.apppaths import is_frozen
         if not is_frozen():
             self.setPage(PAGE_DEPENDENCIES, DependenciesPage())
-        self.setPage(PAGE_GW2EI, GW2EIPage(config))
-        self.setPage(PAGE_LOG_FOLDER, LogFolderPage(config))
+        self.gw2ei_page = GW2EIPage(config)
+        self.log_folder_page = LogFolderPage(config)
+        self.setPage(PAGE_GW2EI, self.gw2ei_page)
+        self.setPage(PAGE_LOG_FOLDER, self.log_folder_page)
         self.discord_page = DiscordPage(config)
         self.setPage(PAGE_DISCORD, self.discord_page)
         self.twitch_page = TwitchPage(config)
@@ -71,7 +75,8 @@ class SetupWizard(QWizard):
         self.setPage(PAGE_AI_SETUP, self.ai_page)
         self.setPage(PAGE_TTS_VOICE, self.tts_page)
         self.setPage(PAGE_BEHAVIOR, self.behavior_page)
-        self.setPage(PAGE_COMPLETE, CompletePage())
+        self.complete_page = CompletePage()
+        self.setPage(PAGE_COMPLETE, self.complete_page)
         self.setStartId(PAGE_WELCOME)
 
     def ai_opted_in(self) -> bool:
@@ -79,31 +84,53 @@ class SetupWizard(QWizard):
         for what accept() writes to AI/enableAiAnalysis."""
         return self.ai_optin_page.opted_in()
 
+    def use_imported_guild_config(self, bundle: GuildConfigBundle) -> None:
+        """Stage a GO-ready guild setup without writing a partial install."""
+        if not bundle.enabled:
+            raise GuildConfigError(
+                "Discord posting is turned off in this setup file. Ask your "
+                "guild admin to create a new setup file with posting enabled."
+            )
+        apply_guild_config(self.config, bundle, persist=False)
+        self.imported_guild_config = bundle
+        self.discord_page.load_from_config()
+
     def accept(self):
         """Save all wizard values to config on finish"""
         cfg = self.config.update
+        imported_setup = self.imported_guild_config is not None
         ei_path = self.field("gw2ei_path")
         if ei_path:
             cfg('Paths', 'gw2eiExe', ei_path)
         log_folder = self.field("log_folder")
         if log_folder:
             cfg('Paths', 'logFolder', log_folder)
-        webhook = self.field("webhook")
-        if webhook:
-            cfg('Discord', 'discordWebhook', webhook)
+        webhook = self.field("webhook") or ""
+        cfg('Discord', 'discordWebhook', webhook)
+        if not imported_setup:
+            cfg(
+                'Discord', 'enableDiscordBot',
+                str(not self.discord_page.skip_check.isChecked()).lower(),
+            )
 
         # AI opt-in (page 2) is the SINGLE writer of the master switch —
         # the same AI/enableAiAnalysis key the Settings Application page
         # edits (LAW #2: zero new keys, zero renames).
-        opted_in = self.ai_opted_in()
+        opted_in = False if imported_setup else self.ai_opted_in()
         cfg('AI', 'enableAiAnalysis', 'true' if opted_in else 'false')
 
         # Usage mode (page 3) — RaidReport/runMode, the same key the
         # Settings > Raid Reports "How reports get made" switch edits.
-        cfg('RaidReport', 'runMode', self.usage_mode_page.selected_mode())
+        cfg(
+            'RaidReport', 'runMode',
+            'run-button' if imported_setup else self.usage_mode_page.selected_mode(),
+        )
 
         # Twitch
-        if hasattr(self.twitch_page, 'enable_twitch'):
+        if imported_setup:
+            cfg('Twitch', 'enableTwitchBot', 'false')
+            cfg('TTS', 'enableTts', 'false')
+        elif hasattr(self.twitch_page, 'enable_twitch'):
             cfg('Twitch', 'enableTwitchBot', str(self.twitch_page.enable_twitch.isChecked()).lower())
             cfg('Twitch', 'twitchChannelName', self.twitch_page.twitch_channel.text().strip())
             cfg('Twitch', 'twitchBotToken', self.twitch_page.twitch_token.text().strip())
@@ -155,7 +182,14 @@ class SetupWizard(QWizard):
             cfg('Behavior', 'minimizeToTray', str(self.behavior_page.minimize_to_tray.isChecked()))
             cfg('Behavior', 'checkUpdatesOnLaunch', str(self.behavior_page.check_updates_on_launch.isChecked()))
 
-        self.config.save()
+        if not self.config.save():
+            QMessageBox.warning(
+                self,
+                "Setup Was Not Saved",
+                "SparkyBot could not save setup on this computer. Nothing was "
+                "finished; check that the program folder is writable and try again.",
+            )
+            return
         super().accept()
 
 
@@ -304,78 +338,128 @@ class WelcomePage(QWizardPage):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.setTitle("Welcome to SparkyBot")
+        self.setTitle("Set up SparkyBot")
         layout = QVBoxLayout(self)
-        label = QLabel(
-            "<p>This wizard will help you configure SparkyBot for first use.</p>"
-            "<p>You will need:</p>"
-            "<ul>"
-            "<li>GuildWars2EliteInsights-CLI.exe (GW2EI parser)</li>"
-            "<li>Your ArcDPS log folder path</li>"
-            "<li>A Discord webhook URL <b>or</b> a Twitch bot token (at least one required)</li>"
-            "</ul>"
-            "<p>Optional features configured in this wizard:</p>"
-            "<ul>"
-            "<li>AI-powered fight commentary</li>"
-            "<li>Text-to-speech / voice commentary</li>"
-            "</ul>"
-            "<p>Click <b>Next</b> to begin.</p>"
+        layout.setSpacing(12)
+
+        intro = QLabel(
+            "Have a setup file from your guild admin? Choose it below and "
+            "SparkyBot will load the correct Discord channels automatically."
         )
-        label.setWordWrap(True)
-        label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(label)
-        self.import_button = QPushButton("Import a guild config...")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        route_help = QLabel(
+            "It sets up:\n"
+            "• Individual fight reports (Logspam)\n"
+            "• End-of-night debrief and logs\n\n"
+            "AI, voice, Twitch, and other extras stay off. You can add them later."
+        )
+        route_help.setWordWrap(True)
+        theme.mark_hint(route_help)
+        layout.addWidget(route_help)
+
+        self.import_button = QPushButton("Choose Guild Setup File...")
+        self.import_button.setMinimumHeight(42)
+        theme.set_widget_class(self.import_button, "primary")
         self.import_button.setToolTip(
-            "Load Discord webhooks and limited guild defaults from a file."
+            "Use the setup file sent by your guild admin."
         )
         self.import_button.clicked.connect(self._import_guild_config)
         layout.addWidget(self.import_button)
+
         self.import_status = QLabel("")
         self.import_status.setWordWrap(True)
+        self.import_status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.import_status)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(divider)
+
+        manual = QLabel(
+            "No guild setup file? Click Next to configure SparkyBot manually."
+        )
+        manual.setWordWrap(True)
+        theme.mark_hint(manual)
+        layout.addWidget(manual)
         layout.addStretch()
+
+    def nextId(self):
+        wizard = self.wizard()
+        if wizard is not None and getattr(wizard, "imported_guild_config", None):
+            if wizard.page(PAGE_DEPENDENCIES) is not None:
+                return PAGE_DEPENDENCIES
+            if wizard.gw2ei_page.is_ready():
+                if wizard.log_folder_page.is_ready():
+                    return PAGE_COMPLETE
+                return PAGE_LOG_FOLDER
+            return PAGE_GW2EI
+        return PAGE_AI_OPTIN
+
+    def _confirm_import(self, bundle: GuildConfigBundle) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Use This Guild Setup?")
+        box.setText("Set up SparkyBot with these Discord destinations?")
+        box.setInformativeText(
+            f"{bundle.routing_summary()}\n\n"
+            "Only use a setup file sent by a guild admin you trust."
+        )
+        box.setMinimumWidth(480)
+        accept_button = box.addButton(
+            "Set Up SparkyBot", QMessageBox.ButtonRole.AcceptRole
+        )
+        cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        return box.clickedButton() is accept_button
 
     def _import_guild_config(self):
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
-            "Import SparkyBot Guild Config",
+            "Choose Guild Setup File",
             "",
-            "SparkyBot Guild Config (*.json);;JSON files (*.json)",
+            "SparkyBot Guild Setup (*.json);;JSON files (*.json)",
         )
         if not path:
             return
         try:
             bundle = load_guild_config(path)
         except GuildConfigError as exc:
-            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            QMessageBox.warning(self, "Setup File Not Used", str(exc))
             return
 
-        count = bundle.configured_destination_count
-        answer = QMessageBox.question(
-            self,
-            "Import Guild Config?",
-            f"Load {count} Discord destination(s) from this file?\n\n"
-            "AI providers, API keys, Twitch, voice, file paths, and all "
-            "other settings are not part of guild config files.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not bundle.enabled:
+            QMessageBox.warning(
+                self,
+                "Setup File Not Ready",
+                "Discord posting is turned off in this setup file. Ask your "
+                "guild admin to create a new setup file with posting enabled.",
+            )
+            return
+
+        if not self._confirm_import(bundle):
             return
         try:
-            apply_guild_config(self.config, bundle, persist=False)
+            wizard = self.wizard()
+            if wizard is None or not hasattr(wizard, "use_imported_guild_config"):
+                raise GuildConfigError("The setup window is not ready. Please try again.")
+            wizard.use_imported_guild_config(bundle)
         except GuildConfigError as exc:
-            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            QMessageBox.warning(self, "Setup File Not Used", str(exc))
             return
 
-        wizard = self.wizard()
-        if wizard is not None and hasattr(wizard, "discord_page"):
-            wizard.discord_page.load_from_config()
         theme.set_state(self.import_status, "success")
         self.import_status.setText(
-            f"Imported {count} Discord destination(s). Continue through the "
-            "wizard for this computer's folders and optional integrations."
+            "Guild setup loaded.\n"
+            f"{bundle.routing_summary()}\n\n"
+            "Click Next. SparkyBot will only check the parser and fight-log "
+            "folder on this computer."
         )
+        self.import_button.setText("Choose a Different Setup File...")
+        theme.set_widget_class(self.import_button, "")
+        wizard.next()
 
 
 class AIOptInPage(QWizardPage):
@@ -485,7 +569,7 @@ class GW2EIPage(QWizardPage):
         self.sig_status.connect(self._set_status)
         self.sig_progress.connect(lambda pct: self.progress_bar.setValue(pct))
         self.sig_download_complete.connect(self._on_download_complete)
-        self.setTitle("GW2 Elite Insights Parser")
+        self.setTitle("Install the fight-log parser")
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -493,24 +577,25 @@ class GW2EIPage(QWizardPage):
 
         # Description - NOT in setSubTitle so it wraps properly
         desc = QLabel(
-            "SparkyBot requires GW2 Elite Insights to parse log files."
+            "SparkyBot needs GW2 Elite Insights to turn game logs into reports. "
+            "The recommended button handles the setup automatically."
         )
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         # PRIMARY: Download and install
-        rec_label = QLabel("<b>Recommended: Automatic Install</b>")
+        rec_label = QLabel("<b>Automatic setup (recommended)</b>")
         rec_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(rec_label)
 
         rec_desc = QLabel(
-            "Click below to automatically download and install GW2EI directly "
-            "into the SparkyBot program folder. No manual steps required."
+            "Install the required parser in the SparkyBot program folder. "
+            "No paths or technical choices are needed."
         )
         rec_desc.setWordWrap(True)
         layout.addWidget(rec_desc)
 
-        self.download_btn = QPushButton("Download GW2 Elite Insights (Recommended)")
+        self.download_btn = QPushButton("Install Fight-Log Parser")
         self.download_btn.setMinimumHeight(36)
         theme.set_widget_class(self.download_btn, "primary")
         self.download_btn.clicked.connect(self._do_download)
@@ -525,35 +610,43 @@ class GW2EIPage(QWizardPage):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        # Divider
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(divider)
+        self.advanced_toggle = QPushButton("I already have the parser (advanced)")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        layout.addWidget(self.advanced_toggle)
+
+        self.advanced_divider = QFrame()
+        self.advanced_divider.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(self.advanced_divider)
 
         # SECONDARY: Manual path
-        adv_label = QLabel("<b>Advanced: I already have GW2EI installed elsewhere</b>")
-        adv_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(adv_label)
-
-        adv_desc = QLabel(
-            "Only use this if you want to point SparkyBot to an existing "
-            "GW2EI installation. Leave blank if you used the automatic install above."
+        self.advanced_label = QLabel(
+            "<b>Use an existing GW2EI installation</b>"
         )
-        adv_desc.setWordWrap(True)
-        theme.mark_hint(adv_desc)
-        layout.addWidget(adv_desc)
+        self.advanced_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.advanced_label)
+
+        self.advanced_description = QLabel(
+            "Only use this if you want to point SparkyBot to an existing "
+            "parser. Leave this blank after using automatic setup."
+        )
+        self.advanced_description.setWordWrap(True)
+        theme.mark_hint(self.advanced_description)
+        layout.addWidget(self.advanced_description)
 
         row = QHBoxLayout()
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText(
-            "Optional: path to GuildWars2EliteInsights-CLI.exe"
+            "Optional existing GuildWars2EliteInsights-CLI.exe"
         )
         # No prefill - do not expose user's personal folder structure
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse)
+        self.browse_btn = QPushButton("Browse...")
+        self.browse_btn.clicked.connect(self._browse)
         row.addWidget(self.path_edit)
-        row.addWidget(browse_btn)
+        row.addWidget(self.browse_btn)
         layout.addLayout(row)
+
+        self._toggle_advanced(False)
 
         layout.addStretch()
         self.registerField("gw2ei_path", self.path_edit)
@@ -561,12 +654,22 @@ class GW2EIPage(QWizardPage):
         # Determine initial button state by checking install and version
         self._check_initial_state()
 
+    def _toggle_advanced(self, visible: bool):
+        for widget in (
+            self.advanced_divider,
+            self.advanced_label,
+            self.advanced_description,
+            self.path_edit,
+            self.browse_btn,
+        ):
+            widget.setVisible(visible)
+
     def _check_initial_state(self):
         """Check if GW2EI is installed and whether it needs updating."""
         default_exe = __import__("core.apppaths", fromlist=["gw2ei_dir"]).gw2ei_dir() / "GuildWars2EliteInsights-CLI.exe"
 
         if not default_exe.exists():
-            self.download_btn.setText("Download GW2 Elite Insights (Recommended)")
+            self.download_btn.setText("Install Fight-Log Parser")
             return
 
         # Installed - check version in background
@@ -671,11 +774,11 @@ class GW2EIPage(QWizardPage):
             self._install_success = True
             theme.set_state(self.download_status, "ok")
             self.download_status.setText(f"GW2EI {message} installed successfully")
-            self.download_btn.setText("Re-download GW2 Elite Insights")
+            self.download_btn.setText("Reinstall Fight-Log Parser")
         else:
             theme.set_state(self.download_status, "error")
             self.download_status.setText(f"Download failed: {message}")
-            self.download_btn.setText("Download GW2 Elite Insights (Recommended)")
+            self.download_btn.setText("Install Fight-Log Parser")
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -692,19 +795,33 @@ class GW2EIPage(QWizardPage):
             return True
         theme.set_state(self.download_status, "warn")
         self.download_status.setText(
-            "GW2EI was not found. Download it above or provide a valid path. "
-            "You can continue but parsing will not work."
+            "The fight-log parser is required. Click Install Fight-Log Parser "
+            "above, or choose an existing copy under Advanced."
         )
-        return True
+        return False
+
+    def is_ready(self) -> bool:
+        path = self.path_edit.text().strip()
+        return bool((path and Path(path).is_file()) or self._install_success)
+
+    def nextId(self):
+        wizard = self.wizard()
+        if (
+            wizard is not None
+            and getattr(wizard, "imported_guild_config", None)
+            and wizard.log_folder_page.is_ready()
+        ):
+            return PAGE_COMPLETE
+        return PAGE_LOG_FOLDER
 
 
 class LogFolderPage(QWizardPage):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.setTitle("ArcDPS Log Folder")
+        self.setTitle("Find fight logs on this computer")
         self.setSubTitle(
-            "Select the folder where ArcDPS writes WvW combat logs."
+            "SparkyBot watches the folder where ArcDPS saves WvW fight logs."
         )
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -718,18 +835,20 @@ class LogFolderPage(QWizardPage):
             detected_label = QLabel(
                 f"Default ArcDPS log location detected:<br>"
                 f"<code>{self._default_path}</code><br>"
-                f"<small>WvW logs are saved in a numbered subfolder here. "
-                f"Clicking the button below will select it automatically.</small>"
+                f"<small>SparkyBot selects the WvW subfolder automatically. "
+                f"Change it below only if this location is wrong.</small>"
             )
             detected_label.setWordWrap(True)
             detected_label.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(detected_label)
 
-            use_default_btn = QPushButton("Use Default Location (Recommended)")
-            use_default_btn.setMinimumHeight(36)
-            theme.set_widget_class(use_default_btn, "primary")
-            use_default_btn.clicked.connect(self._use_default)
-            layout.addWidget(use_default_btn)
+            self.use_default_btn = QPushButton("Use Detected Location")
+            self.use_default_btn.setMinimumHeight(36)
+            theme.set_widget_class(self.use_default_btn, "primary")
+            self.use_default_btn.clicked.connect(self._use_default)
+            layout.addWidget(self.use_default_btn)
+        else:
+            self.use_default_btn = None
 
         # Divider
         divider = QFrame()
@@ -759,6 +878,7 @@ class LogFolderPage(QWizardPage):
 
         layout.addStretch()
         self.registerField("log_folder", self.folder_edit)
+        self._use_default()
 
     def _detect_default_log_path(self) -> str:
         """Auto-detect the default ArcDPS log folder for the current Windows user."""
@@ -815,6 +935,8 @@ class LogFolderPage(QWizardPage):
             self.status_label.setText(
                 f"WvW log folder found: {target}"
             )
+            if self.use_default_btn is not None:
+                self.use_default_btn.setVisible(False)
         elif base.exists():
             theme.set_state(self.status_label, "warn")
             self.status_label.setText(
@@ -839,13 +961,27 @@ class LogFolderPage(QWizardPage):
 
     def validatePage(self):
         folder = self.folder_edit.text().strip()
-        if not folder:
+        if not self.is_ready():
             theme.set_state(self.status_label, "warn")
             self.status_label.setText(
-                "No folder selected. You can continue but the watcher "
-                "will not work until a log folder is configured."
+                "SparkyBot needs a real fight-log folder before setup can finish. "
+                "Play one WvW fight with ArcDPS logging enabled, then use the "
+                "recommended location again or choose the folder manually."
             )
+            return False
+        theme.set_state(self.status_label, "ok")
+        self.status_label.setText("Fight-log folder ready.")
         return True
+
+    def is_ready(self) -> bool:
+        folder = self.folder_edit.text().strip()
+        return bool(folder and Path(folder).is_dir())
+
+    def nextId(self):
+        wizard = self.wizard()
+        if wizard is not None and getattr(wizard, "imported_guild_config", None):
+            return PAGE_COMPLETE
+        return PAGE_DISCORD
 
 
 class DiscordPage(QWizardPage):
@@ -880,7 +1016,14 @@ class DiscordPage(QWizardPage):
             return True
         url = self.webhook_edit.text().strip()
         if not url:
-            return True
+            QMessageBox.warning(
+                self,
+                "Discord Webhook Needed",
+                "Paste the Discord webhook from your guild admin, or choose "
+                "Skip Discord setup for now.",
+            )
+            self.webhook_edit.setFocus()
+            return False
         normalized = normalize_webhook_url(url)
         if normalized is not None:
             self.webhook_edit.setText(normalized)
@@ -1990,16 +2133,35 @@ class BehaviorPage(QWizardPage):
 class CompletePage(QWizardPage):
     def __init__(self):
         super().__init__()
-        self.setTitle("Setup Complete")
+        self.setTitle("Ready to go")
         layout = QVBoxLayout(self)
-        label = QLabel(
-            "<p>SparkyBot is configured and ready.</p>"
-            "<p>Click <b>Finish</b> to open the main settings window "
-            "where you can adjust additional options.</p>"
-            "<p>To start watching for logs, click <b>Start Watcher</b> "
-            "in the main window.</p>"
+        self.summary_label = QLabel(
+            "SparkyBot is configured and ready.\n\n"
+            "Click Finish and Open SparkyBot, then click Start Watcher."
         )
-        label.setWordWrap(True)
-        label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(label)
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.summary_label)
         layout.addStretch()
+
+    def initializePage(self):
+        wizard = self.wizard()
+        bundle = getattr(wizard, "imported_guild_config", None)
+        if bundle is not None:
+            self.summary_label.setText(
+                "SparkyBot is ready.\n\n"
+                f"✓ {bundle.routing_summary().replace(chr(10), chr(10) + '✓ ')}\n"
+                "✓ AI, voice, and Twitch are off\n"
+                "✓ This computer's parser and fight-log folder are ready\n\n"
+                "Click Finish and Open SparkyBot, then click Start Watcher."
+            )
+        else:
+            self.summary_label.setText(
+                "SparkyBot is configured and ready.\n\n"
+                "Click Finish and Open SparkyBot, then click Start Watcher."
+            )
+        if wizard is not None:
+            wizard.setButtonText(
+                QWizard.WizardButton.FinishButton,
+                "Finish and Open SparkyBot"
+            )
