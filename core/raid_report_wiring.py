@@ -31,9 +31,9 @@ def _resolve_viewer(config):
         if not p.exists():
             logger.error("Configured viewer file not found: %s", p)
             raise RuntimeError(
-                "The Raid Report could not find its stats page at the "
-                "configured location. Clear the path in Settings > "
-                "Raid Reports to use the automatic one instead."
+                "The Combined Fight Log Summary could not find its stats page "
+                "at the configured location. Clear the path in Settings > "
+                "Fight Summary to use the automatic one instead."
             )
         return p
 
@@ -55,8 +55,8 @@ def _resolve_viewer(config):
 
     logger.error("Stats page not found after combiner install in %s", combiner_root)
     raise RuntimeError(
-        "The Raid Report stats page could not be located. "
-        "Please try again or set the path in Settings > Raid Reports."
+        "The Combined Fight Log Summary stats page could not be located. "
+        "Please try again or set the path in Settings > Fight Summary."
     )
 
 
@@ -221,7 +221,7 @@ def run_headless_raid_report(config):
         augment_json=augment_json,
     )
 
-    name = f"Raid Report {selected[0].timestamp:%Y-%m-%d} ({len(selected)} fights)"
+    name = f"Combined Fight Log Summary {selected[0].timestamp:%Y-%m-%d} ({len(selected)} fights)"
     logger.info("Raid Report: generating %s with %d logs", name, len(selected))
 
     result = runner.generate(selected, report_name=name)

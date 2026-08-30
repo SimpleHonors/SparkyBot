@@ -82,7 +82,7 @@ def pack_html(html: str) -> str:
         # encodes it a second time and the loader tab shows "&amp;" & co.
         title = html_escape.unescape(title_m.group(1).strip())
     else:
-        title = "Raid Report"
+        title = "Combined Fight Log Summary"
     payload = base64.b64encode(
         gzip.compress(html.encode("utf-8"), 9)
     ).decode("ascii")

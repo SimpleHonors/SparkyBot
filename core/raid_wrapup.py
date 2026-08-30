@@ -191,7 +191,7 @@ def build_wrapup(tiddlers: list[dict]) -> dict:
             }
             for l in leaders
         ],
-        "footer": {"text": "SparkyBot Raid Report"},
+        "footer": {"text": "SparkyBot Fight Summary"},
         "color": 0x4CAF50,
     }
 

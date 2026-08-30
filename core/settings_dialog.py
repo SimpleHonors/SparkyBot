@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 CAT_DISCORD = "Discord"
 CAT_FIGHT_REPORTS = "Fight Reports"
 CAT_WATCHER = "Watcher & Parsing"
-CAT_RAID_REPORTS = "Raid Reports"
+CAT_RAID_REPORTS = "Fight Summary"
 CAT_TWITCH = "Twitch"
 CAT_APPLICATION = "Application"
 CAT_UPDATES = "Updates"
@@ -331,7 +331,7 @@ class SettingsDialog(QDialog):
         form.addRow("Destination 3 name", e.discord_webhook_name3)
         form.addRow("Destination 3 webhook", e.discord_webhook3)
         form.addRow("Fight reports", e.active_webhook)
-        form.addRow("Raid reports", e.raid_report_webhook)
+        form.addRow("Fight Summary", e.raid_report_webhook)
         form.addRow("Bot name", e.discord_webhook_label)
         layout.addWidget(webhooks)
 
@@ -418,7 +418,7 @@ class SettingsDialog(QDialog):
         fform = QFormLayout(filters)
         intro = QLabel(
             "A fight must pass all of these to be posted to Discord. "
-            "Skipped fights still count for raid reports."
+            "Skipped fights still count for fight summaries."
         )
         intro.setWordWrap(True)
         theme.mark_hint(intro)

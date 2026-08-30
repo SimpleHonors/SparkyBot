@@ -180,7 +180,7 @@ def test_routing_summary_uses_the_two_jobs_people_recognize(tmp_path):
 
     assert bundle.routing_summary() == (
         "Individual fight reports → Fight Reports\n"
-        "End-of-night debrief and logs → Raid Reports"
+        "Fight summary and logs → Raid Reports"
     )
 
 
@@ -188,7 +188,7 @@ def test_enabled_bundle_requires_the_nightly_destination_webhook(tmp_path):
     data = bundle_from_config(configured(tmp_path)).as_dict()
     data["discord"]["destinations"][1]["webhook_url"] = ""
 
-    with pytest.raises(GuildConfigError, match="end-of-night destination 2"):
+    with pytest.raises(GuildConfigError, match="fight-summary destination 2"):
         parse_guild_config(data)
 
 

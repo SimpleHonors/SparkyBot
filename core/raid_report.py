@@ -112,7 +112,7 @@ class RaidReportRunner:
 
     def default_name(self, selected: list[LogInfo]) -> str:
         return (
-            f"Raid Report {selected[0].timestamp:%Y-%m-%d} "
+            f"Combined Fight Log Summary {selected[0].timestamp:%Y-%m-%d} "
             f"({len(selected)} fights)"
         )
 
