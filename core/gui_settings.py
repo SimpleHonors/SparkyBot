@@ -85,6 +85,10 @@ class ProcessFilesWidget(QWidget):
 
         # Browse button
         browse_btn = QPushButton("Browse Files...")
+        browse_btn.setToolTip(
+            "Pick .evtc or .zevtc fight recordings to add to the queue "
+            "below."
+        )
         browse_btn.clicked.connect(self._browse_files)
         layout.addWidget(browse_btn)
 
@@ -347,20 +351,41 @@ class SettingsWindow(QWidget):
 
         self.discord_webhook = QLineEdit()
         self.discord_webhook.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.discord_webhook.setToolTip(
+            "Paste the webhook link for the Discord channel posts should go "
+            "to. In Discord: Server Settings > Integrations > Webhooks > "
+            "Copy Webhook URL."
+        )
         self.discord_webhook_name1 = QLineEdit()
         self.discord_webhook_name1.setPlaceholderText("e.g. Main WvW")
+        self.discord_webhook_name1.setToolTip(
+            "A friendly nickname for this destination, shown in the "
+            "destination dropdowns below. Only you see it — Discord doesn't."
+        )
         form.addRow("Destination 1 name:", self.discord_webhook_name1)
         form.addRow("Destination 1 webhook:", self.discord_webhook)
 
         self.discord_webhook_label = QLineEdit()
         self.discord_webhook_label.setPlaceholderText("SparkyBot")
+        self.discord_webhook_label.setToolTip(
+            "The name that appears as the poster of each Discord message. "
+            "Leave blank to post as \"SparkyBot\"."
+        )
         form.addRow("Webhook Label:", self.discord_webhook_label)
 
         # Thumbnail icon file
         thumb_layout = QHBoxLayout()
         self.guild_icon = QLineEdit()
         self.guild_icon.setPlaceholderText("assets/wvw_icon.png")
+        self.guild_icon.setToolTip(
+            "Small picture shown in the corner of each Discord post — "
+            "usually your guild logo. PNG or JPG both work."
+        )
         self.guild_icon_browse_btn = QPushButton("Browse...")
+        self.guild_icon_browse_btn.setToolTip(
+            "Pick an image file from your computer to use as the post "
+            "thumbnail."
+        )
         self.guild_icon_browse_btn.clicked.connect(self._browse_guild_icon)
         thumb_layout.addWidget(self.guild_icon)
         thumb_layout.addWidget(self.guild_icon_browse_btn)
@@ -376,6 +401,10 @@ class SettingsWindow(QWidget):
             self.config.embed_color & 0xFF,
         )
         self._update_color_preview()
+        self.color_preview.setToolTip(
+            "Click to choose the accent color for the stripe along the left "
+            "edge of your Discord posts."
+        )
         self.color_preview.clicked.connect(self._pick_embed_color)
         self.color_hex_label = QLabel(f"#{self.config.embed_color:06X}")
         color_layout.addWidget(QLabel("Embed Color:"))
@@ -386,20 +415,45 @@ class SettingsWindow(QWidget):
 
         self.discord_webhook2 = QLineEdit()
         self.discord_webhook2.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.discord_webhook2.setToolTip(
+            "Optional second Discord channel webhook — handy for sending "
+            "summaries somewhere different. Leave blank if one channel is "
+            "enough."
+        )
         self.discord_webhook_name2 = QLineEdit()
         self.discord_webhook_name2.setPlaceholderText("e.g. Fight Summaries")
+        self.discord_webhook_name2.setToolTip(
+            "Nickname for the second destination, shown in the dropdowns "
+            "below (for example \"Fight Summaries\")."
+        )
         form.addRow("Destination 2 name:", self.discord_webhook_name2)
         form.addRow("Destination 2 webhook:", self.discord_webhook2)
 
         self.discord_webhook3 = QLineEdit()
         self.discord_webhook3.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.discord_webhook3.setToolTip(
+            "Optional third Discord channel webhook. Leave blank if you "
+            "don't need it."
+        )
         self.discord_webhook_name3 = QLineEdit()
         self.discord_webhook_name3.setPlaceholderText("e.g. Officers")
+        self.discord_webhook_name3.setToolTip(
+            "Nickname for the third destination, shown in the dropdowns "
+            "below (for example \"Officers\")."
+        )
         form.addRow("Destination 3 name:", self.discord_webhook_name3)
         form.addRow("Destination 3 webhook:", self.discord_webhook3)
 
         self.active_webhook = QComboBox()
+        self.active_webhook.setToolTip(
+            "Which destination gets the per-fight reports posted while the "
+            "watcher runs."
+        )
         self.raid_report_webhook = QComboBox()
+        self.raid_report_webhook.setToolTip(
+            "Where finished Combined Fight Log Summaries are posted. "
+            "\"Same as fight reports\" sends them to the destination above."
+        )
         form.addRow("Fight reports:", self.active_webhook)
         form.addRow("Fight Summary:", self.raid_report_webhook)
 
@@ -422,6 +476,10 @@ class SettingsWindow(QWidget):
         options_layout = QVBoxLayout(options_group)
 
         self.enable_discord = QCheckBox("Enable Discord Bot")
+        self.enable_discord.setToolTip(
+            "Master switch for Discord posting. When off, SparkyBot still "
+            "watches and analyzes fights but sends nothing to Discord."
+        )
         self.enable_discord.setChecked(True)
         options_layout.addWidget(self.enable_discord)
 
@@ -596,7 +654,15 @@ class SettingsWindow(QWidget):
         log_layout = QHBoxLayout()
         self.log_folder = QLineEdit()
         self.log_folder.setPlaceholderText("Path to GW2 logs folder")
+        self.log_folder.setToolTip(
+            "The folder where ArcDPS saves your fight recordings — SparkyBot "
+            "watches it for new fights. Usually under Documents\\Guild Wars "
+            "2\\addons\\arcdps."
+        )
         self.log_folder_browse_btn = QPushButton("Browse...")
+        self.log_folder_browse_btn.setToolTip(
+            "Pick the ArcDPS log folder on your computer."
+        )
         self.log_folder_browse_btn.clicked.connect(lambda: self._browse_folder(self.log_folder))
         log_layout.addWidget(self.log_folder)
         log_layout.addWidget(self.log_folder_browse_btn)
@@ -611,7 +677,15 @@ class SettingsWindow(QWidget):
         gw2ei_layout = QHBoxLayout()
         self.gw2ei_exe = QLineEdit()
         self.gw2ei_exe.setPlaceholderText("Path to GuildWars2EliteInsights-CLI.exe")
+        self.gw2ei_exe.setToolTip(
+            "Where the Elite Insights program lives — it's what reads your "
+            "fight logs. Install or update it from the Updates page and this "
+            "fills itself in."
+        )
         self.gw2ei_browse_btn = QPushButton("Browse...")
+        self.gw2ei_browse_btn.setToolTip(
+            "Pick the GuildWars2EliteInsights-CLI.exe file on your computer."
+        )
         self.gw2ei_browse_btn.clicked.connect(self._browse_gw2ei_exe)
         gw2ei_layout.addWidget(self.gw2ei_exe)
         gw2ei_layout.addWidget(self.gw2ei_browse_btn)
@@ -653,24 +727,44 @@ class SettingsWindow(QWidget):
         self.min_duration.setRange(1, 3600)
         self.min_duration.setSingleStep(1)
         self.min_duration.setSuffix(" seconds")
+        self.min_duration.setToolTip(
+            "Fights shorter than this are skipped and never posted. "
+            "Example: 30 seconds filters out brief skirmishes."
+        )
         form.addRow("Min Fight Duration:", self.min_duration)
 
         self.min_downs = QSpinBox()
         self.min_downs.setRange(0, 10)
+        self.min_downs.setToolTip(
+            "A fight needs at least this many downed players to get posted. "
+            "Set 0 if downs shouldn't matter."
+        )
         form.addRow("Min Fight Downs:", self.min_downs)
 
         self.min_damage = QSpinBox()
         self.min_damage.setRange(0, 9999999)
         self.min_damage.setSingleStep(10000)
+        self.min_damage.setToolTip(
+            "Fights with less total damage than this are skipped — filters "
+            "out door-tapping and camp flips. Set 0 to post everything."
+        )
         form.addRow("Min Fight Total DMG:", self.min_damage)
 
         self.max_upload = QSpinBox()
         self.max_upload.setRange(1, 1024)
         self.max_upload.setSingleStep(1)
         self.max_upload.setSuffix(" MB")
+        self.max_upload.setToolTip(
+            "Log files bigger than this aren't attached to the Discord post. "
+            "Discord's free upload limit is 10 MB."
+        )
         form.addRow("Max Upload Size:", self.max_upload)
 
         self.large_upload_after = QCheckBox("Upload Large Files After Parsing")
+        self.large_upload_after.setToolTip(
+            "For logs over the size limit: still upload them once parsing "
+            "finishes, instead of leaving the attachment off entirely."
+        )
         form.addRow("", self.large_upload_after)
 
         layout.addWidget(group)
@@ -690,23 +784,48 @@ class SettingsWindow(QWidget):
         grid = QGridLayout(group)
 
         checkboxes = [
-            ("show_quick_report", "Show Quick Report"),
-            ("show_damage", "Show Damage Stats"),
-            ("show_heals", "Show Heals"),
-            ("show_defense", "Show Defense"),
-            ("show_ccs", "Show Crowd Control"),
-            ("show_strips", "Show Strips"),
-            ("show_cleanses", "Show Cleanses"),
-            ("show_downs", "Show Downs/Kills"),
-            ("show_burst", "Show Burst Damage"),
-            ("show_top_skills", "Show Top Enemy Skills"),
-            ("show_offensive_boons", "Show Offensive Boons"),
-            ("show_defensive_boons", "Show Defensive Boons"),
-            ("show_enemy_breakdown", "Show Enemy Breakdown"),
+            ("show_quick_report", "Show Quick Report",
+             "Adds the at-a-glance summary block — outcome, squad sizes, and "
+             "headline numbers — to the top of each Discord fight report."),
+            ("show_damage", "Show Damage Stats",
+             "Adds the top damage dealers table to each fight report."),
+            ("show_heals", "Show Heals",
+             "Adds the top healers table to each fight report."),
+            ("show_defense", "Show Defense",
+             "Adds the defensive stats section — who soaked damage and "
+             "stayed alive — to each fight report."),
+            ("show_ccs", "Show Crowd Control",
+             "Adds the crowd-control section: who stunned, knocked, and "
+             "pulled enemies the most."),
+            ("show_strips", "Show Strips",
+             "Adds the boon strips section: who removed the most boons from "
+             "enemies."),
+            ("show_cleanses", "Show Cleanses",
+             "Adds the cleanses section: who removed the most conditions "
+             "from allies."),
+            ("show_downs", "Show Downs/Kills",
+             "Adds the section showing who downed and finished the most "
+             "enemies."),
+            ("show_burst", "Show Burst Damage",
+             "Adds the burst section: the biggest short-window damage "
+             "spikes."),
+            ("show_top_skills", "Show Top Enemy Skills",
+             "Adds a list of the enemy skills that hurt your squad the "
+             "most — useful for spotting what killed people."),
+            ("show_offensive_boons", "Show Offensive Boons",
+             "Adds a table of offensive boon output like might, fury, and "
+             "quickness."),
+            ("show_defensive_boons", "Show Defensive Boons",
+             "Adds a table of defensive boon output like protection, "
+             "stability, and aegis."),
+            ("show_enemy_breakdown", "Show Enemy Breakdown",
+             "Adds a breakdown of the enemy squad by profession, with how "
+             "hard each one hit."),
         ]
 
-        for i, (attr, label) in enumerate(checkboxes):
+        for i, (attr, label, tip) in enumerate(checkboxes):
             cb = QCheckBox(label)
+            cb.setToolTip(tip)
             setattr(self, attr, cb)
             row = i // 2
             col = i % 2
@@ -722,6 +841,10 @@ class SettingsWindow(QWidget):
         self.theme_group_box = theme_group
         theme_form = QFormLayout(theme_group)
         self.theme_combo = QComboBox()
+        self.theme_combo.setToolTip(
+            "Pick the look of the app. Each choice previews instantly; "
+            "click Save or OK to keep it."
+        )
         for theme_id, label in theme.available_themes():
             self.theme_combo.addItem(label, theme_id)
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
@@ -770,21 +893,45 @@ class SettingsWindow(QWidget):
         grid = QVBoxLayout(group)
 
         self.close_to_tray = QCheckBox("Close to System Tray")
+        self.close_to_tray.setToolTip(
+            "Clicking the window's X hides SparkyBot to the tray instead of "
+            "quitting, so it keeps watching for fights in the background."
+        )
         grid.addWidget(self.close_to_tray)
 
         self.minimize_to_tray = QCheckBox("Minimize to System Tray")
+        self.minimize_to_tray.setToolTip(
+            "Minimizing tucks the window into the tray by the clock instead "
+            "of leaving it on the taskbar."
+        )
         grid.addWidget(self.minimize_to_tray)
 
         self.start_minimized = QCheckBox("Start Minimized")
+        self.start_minimized.setToolTip(
+            "SparkyBot opens hidden in the tray instead of showing its "
+            "window — good when it launches with Windows."
+        )
         grid.addWidget(self.start_minimized)
 
         self.start_watcher_on_startup = QCheckBox("Start Watcher on Startup")
+        self.start_watcher_on_startup.setToolTip(
+            "Begin watching the log folder the moment SparkyBot opens, so "
+            "you never have to click Start Watcher."
+        )
         grid.addWidget(self.start_watcher_on_startup)
 
         self.start_with_windows = QCheckBox("Start with Windows")
+        self.start_with_windows.setToolTip(
+            "Launch SparkyBot automatically every time you sign in to "
+            "Windows."
+        )
         grid.addWidget(self.start_with_windows)
 
         self.hide_console = QCheckBox("Hide Console Window (use pythonw.exe)")
+        self.hide_console.setToolTip(
+            "Hides the black text window that opens alongside the app. "
+            "Takes effect the next time SparkyBot starts."
+        )
         grid.addWidget(self.hide_console)
 
         self.check_updates_on_launch = QCheckBox("Check for updates on launch")
@@ -803,6 +950,11 @@ class SettingsWindow(QWidget):
         self.max_parse_memory.setRange(512, 16384)
         self.max_parse_memory.setSingleStep(256)
         self.max_parse_memory.setSuffix(" MB")
+        self.max_parse_memory.setToolTip(
+            "The most memory Elite Insights may use while reading one log. "
+            "Raise it if huge fights fail to parse; lower it on machines "
+            "with little RAM."
+        )
         memory_form.addRow("Max Parse Memory:", self.max_parse_memory)
 
         layout.addWidget(memory_group)
@@ -826,6 +978,11 @@ class SettingsWindow(QWidget):
         # Master switch — re-homed by the Settings dialog onto the
         # Application page as "AI features" (design-B §5.2, same config key).
         self.enable_ai = QCheckBox("Enable AI features (fight commentary and voice)")
+        self.enable_ai.setToolTip(
+            "Turns on the optional AI extras: short written commentary about "
+            "each fight, and optional spoken audio. Everything else in "
+            "SparkyBot works fine with this off."
+        )
         form.addRow("", self.enable_ai)
 
         # Provider + Model on one row
@@ -834,12 +991,22 @@ class SettingsWindow(QWidget):
         provider_label = QLabel("Provider:")
         self.ai_provider = QComboBox()
         self.ai_provider.addItems(list(PRESETS.keys()))
+        self.ai_provider.setToolTip(
+            "The AI service that writes the commentary. Picking one fills in "
+            "the web address and a sensible model for you — including local "
+            "servers that cost nothing."
+        )
         self.ai_provider.currentTextChanged.connect(self._on_ai_provider_changed)
 
         model_label = QLabel("Model:")
         self.ai_model = QComboBox()
         self.ai_model.setEditable(True)
         self.ai_model.setPlaceholderText("Select or type model")
+        self.ai_model.setToolTip(
+            "The exact model the service should use, for example "
+            "gpt-4o-mini. Pick from the list, or click Refresh Models to see "
+            "what your service offers."
+        )
         self.ai_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
 
         provider_model_row.addWidget(provider_label)
@@ -853,7 +1020,16 @@ class SettingsWindow(QWidget):
         url_row = QHBoxLayout()
         self.ai_base_url = QLineEdit()
         self.ai_base_url.setPlaceholderText("https://api.example.com/v1")
+        self.ai_base_url.setToolTip(
+            "The web address of the AI service, for example "
+            "https://api.openai.com/v1 — or your own local server's address. "
+            "Picking a provider fills this in."
+        )
         self.ai_refresh_models_btn = QPushButton("Refresh Models")
+        self.ai_refresh_models_btn.setToolTip(
+            "Asks the service at the Base URL which models it offers and "
+            "fills the Model list with them."
+        )
         self.ai_refresh_models_btn.setFixedWidth(110)
         self.ai_refresh_models_btn.clicked.connect(self._refresh_ai_models)
         url_row.addWidget(self.ai_base_url, 1)  # stretch=1, takes most of the space
@@ -864,12 +1040,21 @@ class SettingsWindow(QWidget):
         self.ai_api_key = QLineEdit()
         self.ai_api_key.setPlaceholderText("sk-... (leave blank for local models)")
         self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_api_key.setToolTip(
+            "The secret key from your AI service account that proves it's "
+            "you. Local servers usually don't need one — leave it blank."
+        )
         form.addRow("API Key:", self.ai_api_key)
 
         # Max tokens
         self.ai_max_tokens = QSpinBox()
         self.ai_max_tokens.setRange(100, 8000)
         self.ai_max_tokens.setValue(450)
+        self.ai_max_tokens.setToolTip(
+            "Caps how long each piece of commentary can get. Bigger allows "
+            "longer write-ups but costs more on paid services; 450 fits a "
+            "punchy paragraph."
+        )
         form.addRow("Max Tokens:", self.ai_max_tokens)
 
         # API Timeout
@@ -877,6 +1062,10 @@ class SettingsWindow(QWidget):
         self.ai_timeout.setRange(10, 120)
         self.ai_timeout.setValue(30)
         self.ai_timeout.setSuffix(" seconds")
+        self.ai_timeout.setToolTip(
+            "How long to wait for the AI to answer before giving up on that "
+            "fight's commentary. Slow local models may need 60+."
+        )
         form.addRow("API Timeout:", self.ai_timeout)
 
         # Disable Thinking / Reasoning Mode
@@ -895,6 +1084,11 @@ class SettingsWindow(QWidget):
 
         self.ai_prompt_mode = QComboBox()
         self.ai_prompt_mode.addItems(["Default (SparkyBot Analyst)", "Custom"])
+        self.ai_prompt_mode.setToolTip(
+            "Default lets SparkyBot build its proven commentary instructions "
+            "fresh for every fight. Custom replaces them with your own "
+            "written below."
+        )
         self.ai_prompt_mode.currentTextChanged.connect(self._on_prompt_mode_changed)
         prompt_layout.addWidget(self.ai_prompt_mode)
 
@@ -911,6 +1105,11 @@ class SettingsWindow(QWidget):
         self.ai_system_prompt = QTextEdit()
         self.ai_system_prompt.setMaximumHeight(80)
         self.ai_system_prompt.setPlaceholderText("Using default SparkyBot analyst prompt")
+        self.ai_system_prompt.setToolTip(
+            "The standing instructions the AI gets before each fight — its "
+            "personality and style. Editable only in Custom mode; use Edit "
+            "System Prompt for a bigger window."
+        )
         prompt_layout.addWidget(self.ai_system_prompt)
 
         self.ai_edit_prompt_btn = QPushButton("Edit System Prompt...")
@@ -947,6 +1146,11 @@ class SettingsWindow(QWidget):
         # Shock row: mode + spinbox + edit
         self.ai_vocab_shock_mode = QComboBox()
         self.ai_vocab_shock_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_shock_mode.setToolTip(
+            "Default keeps SparkyBot's built-in shock exclamations at the "
+            "standard frequency. Switch to Custom to edit the list and set "
+            "your own frequency."
+        )
         self.ai_vocab_shock_mode.setFixedWidth(80)
         self.ai_vocab_shock = QSpinBox()
         self.ai_vocab_shock.setRange(0, 100)
@@ -975,6 +1179,11 @@ class SettingsWindow(QWidget):
         # Positive row: mode + spinbox + edit
         self.ai_vocab_positive_mode = QComboBox()
         self.ai_vocab_positive_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_positive_mode.setToolTip(
+            "Default keeps the built-in hype terms at the standard "
+            "frequency. Switch to Custom to edit the list and set your own "
+            "frequency."
+        )
         self.ai_vocab_positive_mode.setFixedWidth(80)
         self.ai_vocab_positive = QSpinBox()
         self.ai_vocab_positive.setRange(0, 100)
@@ -1003,6 +1212,11 @@ class SettingsWindow(QWidget):
         # Negative row: mode + spinbox + edit
         self.ai_vocab_negative_mode = QComboBox()
         self.ai_vocab_negative_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_negative_mode.setToolTip(
+            "Default keeps the built-in negative terms at the standard "
+            "frequency. Switch to Custom to edit the list and set your own "
+            "frequency."
+        )
         self.ai_vocab_negative_mode.setFixedWidth(80)
         self.ai_vocab_negative = QSpinBox()
         self.ai_vocab_negative.setRange(0, 100)
@@ -1031,6 +1245,10 @@ class SettingsWindow(QWidget):
         # Gates row: mode + spinbox + edit
         self.ai_vocab_gates_mode = QComboBox()
         self.ai_vocab_gates_mode.addItems(["Default", "Custom"])
+        self.ai_vocab_gates_mode.setToolTip(
+            "Default keeps the built-in situational slang and its triggers. "
+            "Switch to Custom to edit the terms and when they fire."
+        )
         self.ai_vocab_gates_mode.setFixedWidth(80)
         self.ai_vocab_gates = QSpinBox()
         self.ai_vocab_gates.setRange(0, 100)
@@ -1129,6 +1347,11 @@ class SettingsWindow(QWidget):
         self.tts_edge_voice.setEditable(True)
         self.tts_edge_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.tts_edge_voice.setPlaceholderText("e.g. en-GB-RyanNeural")
+        self.tts_edge_voice.setToolTip(
+            "Which Microsoft voice reads the commentary aloud, for example "
+            "en-GB-RyanNeural. Click Refresh Voices to load the full list to "
+            "pick from."
+        )
         self.tts_refresh_voices_btn = QPushButton("Refresh Voices")
         self.tts_refresh_voices_btn.setFixedWidth(110)
         self.tts_refresh_voices_btn.clicked.connect(self._refresh_tts_voices)
@@ -1143,6 +1366,10 @@ class SettingsWindow(QWidget):
         self.tts_elevenlabs_api_key = QLineEdit()
         self.tts_elevenlabs_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.tts_elevenlabs_api_key.setPlaceholderText("sk_...")
+        self.tts_elevenlabs_api_key.setToolTip(
+            "The secret key from your ElevenLabs account — find it at "
+            "elevenlabs.io under your profile's API Keys."
+        )
         provider_form.addRow(self.tts_el_api_key_label, self.tts_elevenlabs_api_key)
 
         self.tts_el_voice_id_label = QLabel("Voice ID:")
@@ -1163,6 +1390,11 @@ class SettingsWindow(QWidget):
             "eleven_monolingual_v1",
         ])
         self.tts_elevenlabs_model.setEditable(True)
+        self.tts_elevenlabs_model.setToolTip(
+            "Which ElevenLabs engine generates the speech. "
+            "eleven_multilingual_v2 is the safe default; the turbo models "
+            "are faster and cheaper with slightly lower quality."
+        )
         provider_form.addRow(self.tts_el_model_label, self.tts_elevenlabs_model)
 
         # Stability slider
@@ -1242,6 +1474,11 @@ class SettingsWindow(QWidget):
         self.tts_local_voice.setEditable(True)
         self.tts_local_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.tts_local_voice.setPlaceholderText("pick or type a voice name")
+        self.tts_local_voice.setToolTip(
+            "The voice on your own speech server that reads the commentary. "
+            "Click Refresh to list what the server offers, or Upload Sample "
+            "to clone a new one."
+        )
         self.tts_local_refresh_btn = QPushButton("Refresh")
         self.tts_local_refresh_btn.setFixedWidth(70)
         self.tts_local_refresh_btn.clicked.connect(self._refresh_local_voices)
@@ -1933,6 +2170,10 @@ class SettingsWindow(QWidget):
         # Term name
         term_input = QLineEdit()
         term_input.setPlaceholderText("e.g. YEET YEET DELETE")
+        term_input.setToolTip(
+            "The catchphrase itself, exactly as SparkyBot should say it in "
+            "commentary."
+        )
         if existing:
             term_input.setText(existing.get("term", ""))
         layout.addRow("Term:", term_input)
@@ -1940,12 +2181,20 @@ class SettingsWindow(QWidget):
         # Alternate term
         alt_input = QLineEdit()
         alt_input.setPlaceholderText("Optional alternate wording")
+        alt_input.setToolTip(
+            "A second spelling or variant that counts as the same "
+            "catchphrase. Leave blank if there isn't one."
+        )
         if existing:
             alt_input.setText(existing.get("alt", ""))
         layout.addRow("Also matches:", alt_input)
 
         # Description - this is the key field
         desc_input = QTextEdit()
+        desc_input.setToolTip(
+            "Tell the AI what kind of moment this phrase fits — it picks "
+            "terms whose description matches how the fight went."
+        )
         desc_input.setMaximumHeight(80)
         desc_input.setPlaceholderText(
             "Describe when SparkyBot should use this term.\n"
@@ -1957,6 +2206,10 @@ class SettingsWindow(QWidget):
 
         # Caps - simplified labels
         caps_input = QComboBox()
+        caps_input.setToolTip(
+            "ALL CAPS always makes the phrase shouted every time; Normal "
+            "lets the AI match it to the sentence."
+        )
         caps_input.addItems(["ALL CAPS always", "Normal (caps optional)"])
         if existing:
             if existing.get("caps") == "always":
@@ -1970,6 +2223,10 @@ class SettingsWindow(QWidget):
         instruction_input = None
         if category == "gates":
             condition_input = QTextEdit()
+            condition_input.setToolTip(
+                "The fight situation that unlocks this term — it stays "
+                "unused unless the described condition actually happens."
+            )
             condition_input.setMaximumHeight(60)
             condition_input.setPlaceholderText(
                 "What fight conditions trigger this term?\n"
@@ -1980,6 +2237,10 @@ class SettingsWindow(QWidget):
             layout.addRow("Triggers when:", condition_input)
 
             instruction_input = QTextEdit()
+            instruction_input.setToolTip(
+                "What the commentary should actually do with the term when "
+                "the trigger fires — the AI follows this direction."
+            )
             instruction_input.setMaximumHeight(60)
             instruction_input.setPlaceholderText(
                 "What should SparkyBot say or do?\n"
@@ -3606,7 +3867,15 @@ class SettingsWindow(QWidget):
         self.raidreport_viewer_html.setPlaceholderText(
             "Path to Top_Stats_Index.html (leave blank to auto-detect)"
         )
+        self.raidreport_viewer_html.setToolTip(
+            "The web page template used to display finished summaries. Leave "
+            "blank and SparkyBot finds its bundled copy — only set this if "
+            "you keep a customized viewer somewhere else."
+        )
         self.raidreport_viewer_browse_btn = QPushButton("Browse...")
+        self.raidreport_viewer_browse_btn.setToolTip(
+            "Pick a Top_Stats_Index.html file on your computer."
+        )
         self.raidreport_viewer_browse_btn.clicked.connect(self._browse_raidreport_viewer)
         viewer_layout.addWidget(self.raidreport_viewer_html)
         viewer_layout.addWidget(self.raidreport_viewer_browse_btn)
@@ -3620,6 +3889,11 @@ class SettingsWindow(QWidget):
         runmode_layout = QVBoxLayout(self.runmode_group_box)
 
         self.runmode_run_button = QRadioButton("One-button runs (recommended)")
+        self.runmode_run_button.setToolTip(
+            "Puts Start Run / End Run buttons on the Home page: press Start "
+            "when your session begins, End when it's over, and the summary "
+            "builds itself from everything in between."
+        )
         theme.mark_option(self.runmode_run_button)
         runmode_layout.addWidget(self.runmode_run_button)
         run_hint = QLabel(
@@ -3631,6 +3905,10 @@ class SettingsWindow(QWidget):
         runmode_layout.addWidget(run_hint)
 
         self.runmode_manual = QRadioButton("I'll pick fights myself")
+        self.runmode_manual.setToolTip(
+            "No run buttons — you open the Fight Summary page, tick exactly "
+            "the fights you want, and build a summary whenever you like."
+        )
         theme.mark_option(self.runmode_manual)
         runmode_layout.addWidget(self.runmode_manual)
         manual_hint = QLabel(
@@ -3652,6 +3930,11 @@ class SettingsWindow(QWidget):
         # mode, so it grays with the mode choice.
         self.run_autopost = QCheckBox(
             "When I end a run, post the report to Discord automatically")
+        self.run_autopost.setToolTip(
+            "After End Run, the finished summary goes straight to your "
+            "Discord channel without asking. Untick if you want to look it "
+            "over first and post it yourself."
+        )
         self.run_autopost.setChecked(True)
         runmode_layout.addSpacing(4)
         runmode_layout.addWidget(self.run_autopost)
@@ -3668,7 +3951,15 @@ class SettingsWindow(QWidget):
         self.raidreport_output_dir.setPlaceholderText(
             "Leave blank: same folder as viewer, then app directory"
         )
+        self.raidreport_output_dir.setToolTip(
+            "The folder where finished summary files are saved on your "
+            "computer. Leave blank and SparkyBot keeps them next to the "
+            "stats viewer."
+        )
         self.raidreport_output_browse_btn = QPushButton("Browse...")
+        self.raidreport_output_browse_btn.setToolTip(
+            "Pick the folder where finished summaries should be saved."
+        )
         self.raidreport_output_browse_btn.clicked.connect(self._browse_raidreport_output)
         output_layout.addWidget(self.raidreport_output_dir)
         output_layout.addWidget(self.raidreport_output_browse_btn)
@@ -3698,10 +3989,19 @@ class SettingsWindow(QWidget):
         self.raidreport_poison_tab = QCheckBox(
             "Include poison coverage page in the report"
         )
+        self.raidreport_poison_tab.setToolTip(
+            "Adds an extra page to each summary tracking poison field "
+            "coverage. Leave off if your guild doesn't track that."
+        )
         options_layout.addWidget(self.raidreport_poison_tab)
 
         self.raidreport_always_zip = QCheckBox(
             "Always zip Discord uploads"
+        )
+        self.raidreport_always_zip.setToolTip(
+            "Compress every summary into a .zip before uploading, even ones "
+            "small enough to send as-is. Readers then download and unzip "
+            "instead of opening the file directly."
         )
         options_layout.addWidget(self.raidreport_always_zip)
 
