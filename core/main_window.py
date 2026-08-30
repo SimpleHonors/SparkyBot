@@ -139,6 +139,9 @@ class MainWindow(QMainWindow):
     sig_run_progress = Signal(str, int, int, str)
     sig_run_done = Signal(object)
     sig_run_error = Signal(str)
+    # Background log-folder scan -> GUI thread. The log folder is often a
+    # network share; a hiccup there must never freeze the UI (ticket 6c8e08f9).
+    sig_run_logs_scanned = Signal(str, object)   # (purpose, logs)
 
     def __init__(self, config, parent=None, update_flow=None, clock=None):
         super().__init__(parent)
@@ -167,6 +170,9 @@ class MainWindow(QMainWindow):
         self._run_scan_timer = QTimer(self)          # slow fights-so-far scan
         self._run_scan_timer.setInterval(60_000)
         self._run_scan_timer.timeout.connect(self._refresh_run_counter)
+        # Cross-thread (worker emits, GUI consumes) -> auto-queued connection.
+        self._run_scan_inflight = False
+        self.sig_run_logs_scanned.connect(self._on_run_logs_scanned)
 
         self.setWindowTitle("SparkyBot")
         # Shell target size — replaces the old 13-tab-label width computation.
@@ -717,15 +723,25 @@ class MainWindow(QMainWindow):
         if not self._run_session.is_open:
             self._show_run_idle()
             return
-        logs = self._discover_run_logs()
+        # Show the open-run panel right away; the log-folder scan (network
+        # share — can stall for tens of seconds on a hiccup) runs on a worker
+        # thread and the resume-vs-stale verdict lands via signal.
+        self._show_run_open()
+        self._scan_run_logs_async("init")
+
+    def _finish_init_run_state(self, logs):
+        """Worker-scan completion for _init_run_state (GUI thread)."""
+        if not self._run_open():
+            return
         in_window = self._collect_run_logs(logs=logs)
+        self._run_fight_count = len(in_window)
+        self._update_run_panel_clock()
         candidates = [self._run_session.started_at]
         if in_window:
             candidates.append(in_window[-1].timestamp)
         if self._run_session.last_activity_at:
             candidates.append(self._run_session.last_activity_at)
         newest = max(candidates)
-        self._show_run_open()
         if self._clock() - newest < timedelta(hours=RESUME_WINDOW_HOURS):
             self.feed_event("run", "Run resumed")
         else:
@@ -881,10 +897,39 @@ class MainWindow(QMainWindow):
 
     def _refresh_run_counter(self):
         """Fights-so-far from discover_logs over the open window — refreshed
-        on every file-processed signal plus the slow timer."""
+        on every file-processed signal plus the slow timer. The scan itself
+        runs off the GUI thread (network-share folder; a share hiccup used
+        to freeze every click for the duration of the stall)."""
         if not self._run_open():
             return
-        logs = self._discover_run_logs()
+        self._scan_run_logs_async("counter")
+
+    def _scan_run_logs_async(self, purpose: str):
+        """discover_logs on a daemon thread; result arrives on the GUI
+        thread via sig_run_logs_scanned. Single-flight: while one scan is
+        out, further requests are dropped (the timer retries in 60s)."""
+        if self._run_scan_inflight:
+            return
+        self._run_scan_inflight = True
+
+        def _work():
+            try:
+                logs = self._discover_run_logs()
+            except Exception:
+                logger.warning("Run log scan failed", exc_info=True)
+                logs = []
+            self.sig_run_logs_scanned.emit(purpose, logs)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_run_logs_scanned(self, purpose: str, logs):
+        """GUI-thread landing slot for the background folder scan."""
+        self._run_scan_inflight = False
+        if purpose == "init":
+            self._finish_init_run_state(logs)
+            return
+        if not self._run_open():
+            return
         self._run_fight_count = len(
             self._collect_run_logs(logs=logs))
         self._update_run_panel_clock()
