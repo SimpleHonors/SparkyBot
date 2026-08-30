@@ -119,7 +119,14 @@ def test_no_detected_tools_show_no_neighbor_feature_at_all(
     assert welcome.competitor_offer.isHidden()
     assert welcome.competitor_import_button.text() == ""
     assert welcome.competitor_import_status.text() == ""
-    assert welcome.import_button.text() == "Choose Guild Setup File..."
+    # Default screen leads with the walk-through; the guild file offer is a
+    # quiet flat button at the bottom, since most people never receive one.
+    assert not welcome.easy_path_intro.isHidden()
+    assert "Click Next to begin" in welcome.easy_path_intro.text()
+    assert welcome.import_button.text() == "Use a Guild Setup File..."
+    assert welcome.import_button.isFlat()
+    assert welcome.guild_file_help.isHidden()
+    assert welcome.manual_help.isHidden()
     assert welcome.advanced_options.isHidden()
     assert welcome.advanced_toggle.text() == "Advanced"
 

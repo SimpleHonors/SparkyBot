@@ -417,46 +417,58 @@ class WelcomePage(QWizardPage):
         self._detected_findings = ()
         self._competitor_scan_done = False
 
+        # The easy path leads: most people have nothing to import, so the
+        # default screen is just "click Next and we'll walk you through it."
+        self.easy_path_intro = QLabel(
+            "SparkyBot will walk you through setup step by step — your fight "
+            "logs, your Discord channels, and your first night watch.\n\n"
+            "Click Next to begin."
+        )
+        self.easy_path_intro.setWordWrap(True)
+        layout.addWidget(self.easy_path_intro)
+
+        layout.addStretch()
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(divider)
+
+        # Guild setup files are rare (one guild's members); the offer stays
+        # findable at the bottom without competing with the main path.
         self.guild_file_intro = QLabel(
-            "Have a setup file from your guild admin? Choose it below and "
-            "SparkyBot will load the correct Discord channels automatically."
+            "Did a guild member send you a SparkyBot setup file? Most people "
+            "won't have one."
         )
         self.guild_file_intro.setWordWrap(True)
+        theme.mark_hint(self.guild_file_intro)
         layout.addWidget(self.guild_file_intro)
 
-        self.guild_file_help = QLabel(
-            "It sets up:\n"
-            "• Individual fight reports (Logspam)\n"
-            "• End-of-night debrief and logs\n\n"
-            "AI, voice, Twitch, and other extras stay off. You can add them later."
-        )
-        self.guild_file_help.setWordWrap(True)
-        theme.mark_hint(self.guild_file_help)
-        layout.addWidget(self.guild_file_help)
-
-        self.import_button = QPushButton("Choose Guild Setup File...")
-        self.import_button.setMinimumHeight(42)
-        theme.set_widget_class(self.import_button, "primary")
+        self.import_button = QPushButton("Use a Guild Setup File...")
+        self.import_button.setFlat(True)
+        self.import_button.setMinimumHeight(32)
+        theme.set_widget_class(self.import_button, "secondary")
         self.import_button.setToolTip(
-            "Use the setup file sent by your guild admin."
+            "Loads your guild's Discord channels automatically. Only needed "
+            "if a guild admin sent you a SparkyBot setup file."
         )
         self.import_button.clicked.connect(self._import_guild_config)
         layout.addWidget(self.import_button)
+
+        self.guild_file_help = QLabel("")
+        self.guild_file_help.setWordWrap(True)
+        theme.mark_hint(self.guild_file_help)
+        self.guild_file_help.hide()
+        layout.addWidget(self.guild_file_help)
 
         self.import_status = QLabel("")
         self.import_status.setWordWrap(True)
         self.import_status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.import_status)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(divider)
-
-        self.manual_help = QLabel(
-            "No guild setup file? Click Next to configure SparkyBot manually."
-        )
+        self.manual_help = QLabel("")
         self.manual_help.setWordWrap(True)
         theme.mark_hint(self.manual_help)
+        self.manual_help.hide()
         layout.addWidget(self.manual_help)
 
         # Power-user escape hatch. The default screen says only "Advanced";
@@ -484,7 +496,6 @@ class WelcomePage(QWizardPage):
         advanced_layout.addWidget(self.advanced_competitor_button)
         self.advanced_options.hide()
         layout.addWidget(self.advanced_options)
-        layout.addStretch()
 
     def initializePage(self):
         super().initializePage()
@@ -559,6 +570,12 @@ class WelcomePage(QWizardPage):
 
     def _set_guild_file_tone(self, app: str, *, imported: bool) -> None:
         """Keep the guild override available without competing with detection."""
+        # Detection (or a finished import) is now the lead story; the generic
+        # walk-through pitch would contradict it, and the helper labels earn
+        # their space back.
+        self.easy_path_intro.hide()
+        self.guild_file_help.show()
+        self.manual_help.show()
         if imported:
             self.guild_file_intro.setText(
                 "Did your guild admin also send you a SparkyBot file? Add it "
