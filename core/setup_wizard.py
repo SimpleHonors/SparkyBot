@@ -7,10 +7,10 @@ from PySide6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox,
     QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout,
-    QRadioButton, QSpinBox, QInputDialog, QMessageBox
+    QRadioButton, QSpinBox, QInputDialog, QMessageBox, QToolButton
 )
 from PySide6.QtCore import Qt, Signal, Slot, QUrl, QStandardPaths
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QDesktopServices
 from pathlib import Path
 
 from core import theme
@@ -36,6 +36,7 @@ from core.competitor_migration_ui import (
 from core.shareable_config import (
     GuildConfigBundle, GuildConfigError, apply_guild_config, load_guild_config,
 )
+from core.helplinks import help_url as _help_url
 
 # Explicit page IDs. The default flow is ID order; declining AI on the
 # opt-in page removes the AI setup and voice pages from the flow entirely
@@ -97,6 +98,23 @@ class SetupWizard(QWizard):
         self.complete_page = CompletePage()
         self.setPage(PAGE_COMPLETE, self.complete_page)
         self.setStartId(PAGE_WELCOME)
+
+        # Help control beside the wizard buttons: opens the help page for
+        # the CURRENT page (openUrl only — the browser handles offline).
+        self.help_button = QToolButton(autoRaise=True)
+        self.help_button.setText("?")
+        self.help_button.setToolTip(
+            "Open the help page for this setup screen"
+            "<br><br>Opens the matching SparkyBot help page on GitHub in "
+            "your browser."
+        )
+        self.setButton(QWizard.WizardButton.CustomButton1, self.help_button)
+        self.help_button.clicked.connect(self._on_help_clicked)
+
+    def _on_help_clicked(self, checked=False):
+        """Per-page Help: the slug map keys on the wizard page id; an
+        unknown id falls back to the help index (README.md)."""
+        QDesktopServices.openUrl(_help_url(self.currentId()))
 
     def ai_opted_in(self) -> bool:
         """The page-2 answer — single source for the AI/TTS page skip and
