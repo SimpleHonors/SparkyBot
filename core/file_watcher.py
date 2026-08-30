@@ -2,7 +2,7 @@
    Falls back to polling for network shares since OS events don't work over SMB
 """
 
-import subprocess
+import ctypes
 import time
 import logging
 import threading
@@ -15,38 +15,48 @@ logger = logging.getLogger(__name__)
 
 
 def is_network_path(path: Path) -> bool:
-    """Check if a path is a network share (UNC path)"""
-    path_str = str(path)
-    # UNC paths start with \\
-    if path_str.startswith('\\\\'):
-        return True
-    # Check if path contains common network share patterns
-    if 'network' in path_str.lower() or 'smb' in path_str.lower():
-        return True
-    return False
+    """Check if a path is a network share (UNC path).
+
+    Only the real UNC prefix counts. The old 'network'/'smb' substring
+    heuristic false-positived on ordinary folder names and is gone.
+    """
+    return str(path).startswith('\\\\')
+
+
+DRIVE_UNKNOWN = 0
+DRIVE_REMOVABLE = 1
+DRIVE_LOCAL = 2
+DRIVE_REMOTE = 3  # GetDriveTypeW: mapped/remote drive (4 is CDROM!)
+DRIVE_CDROM = 4
+DRIVE_RAMDISK = 5
+
+
+def _drive_type(drive_root: str) -> Optional[int]:
+    """Return kernel32.GetDriveTypeW(drive_root), or None off-Windows.
+
+    ``drive_root`` must be the 'X:\\' form. Seam for tests to mock ctypes.
+    No argtypes/restype fiddling needed: ctypes maps a Python str to
+    LPCWSTR and the default restype (c_int) compares fine against the
+    DRIVE_* constants.
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32
+        return kernel32.GetDriveTypeW(drive_root)
+    except AttributeError:
+        return None  # non-Windows: no windll / no kernel32
 
 
 def check_remote_drive(path: Path) -> bool:
-    """Check if a path is on a remote/mapped drive"""
+    """Check if a path is on a mapped network drive (Windows API).
+
+    Asks kernel32.GetDriveTypeW directly instead of shelling out to
+    PowerShell (no process spawn, no console flash, no 10s timeout).
+    Off-Windows and drive-less paths keep the UNC-prefix-only behavior.
+    """
     try:
         drive = str(path.drive).upper()
-        if not drive:
-            return is_network_path(path)
-
-        # Use PowerShell to get network drives and check if our drive is one of them
-        from core.apppaths import no_window_kwargs
-        result = subprocess.run(
-            ['powershell', '-c',
-             '[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq [System.IO.DriveType]::Network } | ForEach-Object { $_.Name }'],
-            capture_output=True, text=True, timeout=10,
-            **no_window_kwargs(),
-        )
-        network_drives = result.stdout.strip().split('\n')
-        # network_drives will be like ['Y:\\', 'Z:\\', '']
-        drive_letter = drive[0] + ':\\'
-        if drive_letter in network_drives:
+        if drive and _drive_type(drive + '\\') == DRIVE_REMOTE:
             return True
-
     except Exception:
         pass
 
