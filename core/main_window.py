@@ -544,6 +544,11 @@ class MainWindow(QMainWindow):
         watcher_row.addWidget(self.home_status_label)
         watcher_row.addStretch()
         self.start_button = QPushButton("Start Watcher")
+        self.start_button.setToolTip(
+            "Turns the log watcher on or off. While it runs, SparkyBot "
+            "notices each new fight recording, analyzes it, and posts the "
+            "report for you."
+        )
         theme.set_widget_class(self.start_button, "secondary")
         self.start_button.clicked.connect(self._on_start_clicked)
         watcher_row.addWidget(self.start_button)
@@ -607,9 +612,18 @@ class MainWindow(QMainWindow):
         bv.addWidget(self.run_stale_label)
         stale_buttons = QHBoxLayout()
         self.run_stale_end_button = QPushButton("End run && make report")
+        self.run_stale_end_button.setToolTip(
+            "Closes the forgotten run at its last fight and builds the "
+            "summary for just those fights — newer fights stay out of it."
+        )
         self.run_stale_end_button.clicked.connect(self._end_stale_run)
         stale_buttons.addWidget(self.run_stale_end_button)
         self.run_stale_discard_button = QPushButton("Discard")
+        self.run_stale_discard_button.setToolTip(
+            "Forgets the old run without making a summary. Your fight "
+            "recordings are kept — you can still build one later on the "
+            "Fight Summary page."
+        )
         self.run_stale_discard_button.clicked.connect(self._discard_stale_run)
         stale_buttons.addWidget(self.run_stale_discard_button)
         stale_buttons.addStretch()
@@ -623,6 +637,11 @@ class MainWindow(QMainWindow):
         v.addWidget(self.run_status_label)
 
         self.run_button = QPushButton("Start Run")
+        self.run_button.setToolTip(
+            "Press when your play session begins — SparkyBot counts every "
+            "fight from then on. Press again to end the run and get one "
+            "combined summary of the whole session."
+        )
         theme.set_widget_class(self.run_button, "primary")
         self.run_button.setMinimumHeight(36)
         self.run_button.clicked.connect(self._on_run_button_clicked)
@@ -814,6 +833,11 @@ class MainWindow(QMainWindow):
         box.setText(f"{fights} · {elapsed_text}\n\n"
                     "A fight summary will be made for these fights.")
         check = QCheckBox("Post it to Discord when done")
+        check.setToolTip(
+            "Sends the finished summary straight to your Discord channel. "
+            "Untick to keep it on this computer; your choice is remembered "
+            "for next time."
+        )
         check.setChecked(bool(getattr(self.config, "run_auto_post", True)))
         box.setCheckBox(check)
         end_btn = box.addButton(
