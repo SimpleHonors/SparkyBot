@@ -33,9 +33,9 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QGroupBox, QHBoxLayout,
     QFileDialog, QLabel, QListView, QListWidget, QListWidgetItem, QMainWindow,
     QMenu, QMessageBox, QProgressBar, QPushButton, QStackedWidget, QVBoxLayout,
-    QWidget,
+    QToolButton, QWidget,
 )
-from PySide6.QtGui import QIcon, QKeySequence
+from PySide6.QtGui import QIcon, QKeySequence, QDesktopServices
 from PySide6.QtCore import Qt, Signal, QEvent, QTimer, QStandardPaths
 from pathlib import Path
 
@@ -52,6 +52,7 @@ from core.competitor_migration_ui import (
     show_interop_catalog,
 )
 from core.gui_settings import ProcessFilesWidget, SettingsWindow
+from core.helplinks import help_url as _help_url
 from core.raid_session import discover_logs
 # Stage-weighted progress shares the Raid Report page's weights — the run
 # panel's inline bar must behave exactly like the page's.
@@ -445,6 +446,28 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # App-bar column above the sidebar: the Help control opens the help
+        # page for the CURRENT section (no layout overhaul of the shell).
+        bar_column = QWidget()
+        bar_column.setFixedWidth(176)
+        bar_layout = QHBoxLayout(bar_column)
+        bar_layout.setContentsMargins(6, 4, 6, 4)
+        bar_layout.setSpacing(0)
+        self.help_button = QToolButton(autoRaise=True)
+        self.help_button.setText("?")
+        self.help_button.setToolTip(
+            "Open the help page for this screen"
+            "<br><br>Opens the matching SparkyBot help page on GitHub in "
+            "your browser."
+        )
+        self.help_button.clicked.connect(self._on_help_clicked)
+        bar_layout.addWidget(self.help_button)
+        bar_layout.addStretch(1)
+        sidebar_column = QWidget()
+        sidebar_column_layout = QVBoxLayout(sidebar_column)
+        sidebar_column_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_column_layout.setSpacing(0)
+
         self.sidebar = QListWidget()
         theme.set_widget_class(self.sidebar, "nav")
         self.sidebar.setFixedWidth(176)
@@ -453,7 +476,9 @@ class MainWindow(QMainWindow):
                 continue      # absent, not grayed (LAW #2)
             self._add_nav_item(key, label)
         self.sidebar.currentRowChanged.connect(self._on_nav_changed)
-        layout.addWidget(self.sidebar)
+        sidebar_column_layout.addWidget(bar_column)
+        sidebar_column_layout.addWidget(self.sidebar, 1)
+        layout.addWidget(sidebar_column)
 
         self.stack = QStackedWidget()
         layout.addWidget(self.stack, 1)
@@ -1239,6 +1264,11 @@ class MainWindow(QMainWindow):
         (currentRowChanged does not fire for a same-row click)."""
         if item.data(_NAV_ROLE) == PAGE_SETTINGS:
             self.open_settings_dialog()
+
+    def _on_help_clicked(self, checked=False):
+        """Help app-bar button: open the help page for the current sidebar
+        section (openUrl only — the browser handles offline)."""
+        QDesktopServices.openUrl(_help_url(self.current_page or PAGE_HOME))
 
     # ------------------------------------------------------------------
     # AI gating (LAW #2) — the master switch takes effect live
