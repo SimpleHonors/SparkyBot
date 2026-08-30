@@ -12,6 +12,10 @@ All notable changes to SparkyBot will be documented in this file.
 - A GO-ready first-run path: after choosing a Guild Setup File, SparkyBot skips
   AI, voice, Twitch, and other optional pages, auto-detects local requirements,
   and confirms the individual-fight and end-of-night Discord destinations.
+- Consent-based environment discovery for every first-run path. SparkyBot
+  keeps multiple executable-verified GW2 installs, checks Steam libraries and
+  common folders on each drive, finds separate ArcDPS settings, honors
+  ArcDPS's configured log path, and asks which detected setup to use.
 
 ### Security
 

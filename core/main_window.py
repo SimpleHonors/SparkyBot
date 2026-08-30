@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtGui import QIcon, QKeySequence
-from PySide6.QtCore import Qt, Signal, QEvent, QTimer
+from PySide6.QtCore import Qt, Signal, QEvent, QTimer, QStandardPaths
 from pathlib import Path
 
 from core import theme
@@ -253,10 +253,13 @@ class MainWindow(QMainWindow):
 
     def _import_guild_config(self, checked=False):
         """Validate and apply a deliberately limited guild config bundle."""
+        downloads = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation
+        )
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Choose Guild Setup File",
-            "",
+            downloads,
             "SparkyBot Guild Setup (*.json);;JSON files (*.json)",
         )
         if not path:
@@ -314,10 +317,14 @@ class MainWindow(QMainWindow):
         if not self._confirm_guild_setup_export(bundle):
             return
 
+        documents = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DocumentsLocation
+        )
+        start_dir = Path(documents) if documents else Path.home()
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             "Create Guild Setup File",
-            str(Path.home() / DEFAULT_FILENAME),
+            str(start_dir / DEFAULT_FILENAME),
             "SparkyBot Guild Setup (*.json)",
         )
         if not path:

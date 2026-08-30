@@ -9,11 +9,17 @@ from PySide6.QtWidgets import (
     QProgressBar, QFrame, QComboBox, QWidget, QScrollArea, QFormLayout,
     QRadioButton, QSpinBox, QInputDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, Signal, Slot, QUrl
+from PySide6.QtCore import Qt, Signal, Slot, QUrl, QStandardPaths
 from PySide6.QtGui import QIcon
 from pathlib import Path
 
 from core import theme
+from core.arcdps_config import (
+    ArcDPSSetup,
+    GW2Installation,
+    discover_arcdps_setups,
+    discover_gw2_installations,
+)
 from core.discord_bot import normalize_webhook_url
 from core.shareable_config import (
     GuildConfigBundle, GuildConfigError, apply_guild_config, load_guild_config,
@@ -416,10 +422,13 @@ class WelcomePage(QWizardPage):
         return box.clickedButton() is accept_button
 
     def _import_guild_config(self):
+        downloads = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation
+        )
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Choose Guild Setup File",
-            "",
+            downloads,
             "SparkyBot Guild Setup (*.json);;JSON files (*.json)",
         )
         if not path:
@@ -827,38 +836,78 @@ class LogFolderPage(QWizardPage):
         layout.setSpacing(8)
         layout.setContentsMargins(12, 8, 12, 8)
 
-        # Detect default path
+        # Prefer ArcDPS's own explicit setting. The conventional Documents
+        # location remains a fallback when ArcDPS has no custom path set.
+        self._gw2_installations = self._detect_gw2_installations()
+        self._arcdps_setups = self._detect_arcdps_setups()
+        self._arcdps_setup = self._arcdps_setups[0] if self._arcdps_setups else None
         self._default_path = self._detect_default_log_path()
 
-        # Show detected default as informational label
-        if self._default_path:
-            detected_label = QLabel(
+        if self._arcdps_setup is not None:
+            self.detected_label = QLabel(self._detected_setup_text(self._arcdps_setup))
+        else:
+            gw2_note = ""
+            if self._gw2_installations:
+                first = self._gw2_installations[0].directory
+                more = len(self._gw2_installations) - 1
+                gw2_note = (
+                    f"Guild Wars 2 found: <code>{first}</code><br>"
+                    + (f"<small>Also found {more} other GW2 install(s).</small><br>" if more else "")
+                    + "<small>ArcDPS settings were not found beside it.</small><br><br>"
+                )
+            self.detected_label = QLabel(
+                gw2_note
+                +
                 f"Default ArcDPS log location detected:<br>"
                 f"<code>{self._default_path}</code><br>"
                 f"<small>SparkyBot selects the WvW subfolder automatically. "
                 f"Change it below only if this location is wrong.</small>"
             )
-            detected_label.setWordWrap(True)
-            detected_label.setTextFormat(Qt.TextFormat.RichText)
-            layout.addWidget(detected_label)
+        self.detected_label.setWordWrap(True)
+        self.detected_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.detected_label)
 
-            self.use_default_btn = QPushButton("Use Detected Location")
-            self.use_default_btn.setMinimumHeight(36)
-            theme.set_widget_class(self.use_default_btn, "primary")
-            self.use_default_btn.clicked.connect(self._use_default)
-            layout.addWidget(self.use_default_btn)
-        else:
-            self.use_default_btn = None
+        self.setup_combo = None
+        if len(self._arcdps_setups) > 1:
+            choose_label = QLabel("More than one ArcDPS setup was found:")
+            layout.addWidget(choose_label)
+            self.setup_combo = QComboBox()
+            for setup in self._arcdps_setups:
+                self.setup_combo.addItem(str(setup.arcdps_directory), setup)
+            self.setup_combo.currentIndexChanged.connect(self._select_detected_setup)
+            layout.addWidget(self.setup_combo)
+
+        self.use_arcdps_btn = QPushButton("Yes — Use This ArcDPS Setup")
+        self.use_arcdps_btn.setMinimumHeight(36)
+        theme.set_widget_class(self.use_arcdps_btn, "primary")
+        self.use_arcdps_btn.clicked.connect(self._use_arcdps_location)
+        self.use_arcdps_btn.setVisible(self._arcdps_setup is not None)
+        layout.addWidget(self.use_arcdps_btn)
+
+        self.use_default_btn = QPushButton("Yes — Use This Folder")
+        self.use_default_btn.setMinimumHeight(36)
+        theme.set_widget_class(self.use_default_btn, "primary")
+        self.use_default_btn.clicked.connect(self._use_default)
+        self.use_default_btn.setVisible(self._arcdps_setup is None)
+        layout.addWidget(self.use_default_btn)
+
+        self.find_arcdps_btn = QPushButton("ArcDPS Is Somewhere Else...")
+        self.find_arcdps_btn.clicked.connect(self._browse_arcdps_settings)
+        layout.addWidget(self.find_arcdps_btn)
 
         # Divider
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(divider)
 
-        # Manual entry
-        manual_label = QLabel("<b>Or enter a custom path:</b>")
-        manual_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(manual_label)
+        self.manual_toggle = QPushButton("Choose a Different Folder (advanced)")
+        self.manual_toggle.setCheckable(True)
+        self.manual_toggle.toggled.connect(self._toggle_manual_folder)
+        layout.addWidget(self.manual_toggle)
+
+        self.manual_label = QLabel("<b>Enter the fight-log folder:</b>")
+        self.manual_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.manual_label)
 
         row = QHBoxLayout()
         self.folder_edit = QLineEdit()
@@ -866,10 +915,10 @@ class LogFolderPage(QWizardPage):
             "Path to your ArcDPS WvW log folder"
         )
         # No prefill - do not expose user's personal folder structure
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse)
+        self.browse_btn = QPushButton("Browse...")
+        self.browse_btn.clicked.connect(self._browse)
         row.addWidget(self.folder_edit)
-        row.addWidget(browse_btn)
+        row.addWidget(self.browse_btn)
         layout.addLayout(row)
 
         self.status_label = QLabel("")
@@ -878,41 +927,159 @@ class LogFolderPage(QWizardPage):
 
         layout.addStretch()
         self.registerField("log_folder", self.folder_edit)
-        self._use_default()
+        self._toggle_manual_folder(False)
+        if self._arcdps_setup is not None:
+            theme.set_state(self.status_label, "warn")
+            self.status_label.setText(
+                "Check the locations above, then accept them or choose another setup."
+            )
+        else:
+            theme.set_state(self.status_label, "warn")
+            self.status_label.setText(
+                "Use the folder above if it is right, or choose a different folder."
+            )
 
-    def _detect_default_log_path(self) -> str:
-        """Auto-detect the default ArcDPS log folder for the current Windows user."""
+    def _toggle_manual_folder(self, visible: bool):
+        self.manual_label.setVisible(visible)
+        self.folder_edit.setVisible(visible)
+        self.browse_btn.setVisible(visible)
+
+    @staticmethod
+    def _documents_path() -> Path:
+        """Resolve the current Windows user's Documents folder."""
         try:
             import ctypes
             import ctypes.wintypes
 
-            # Use SHGetFolderPath to get Documents folder reliably
-            # CSIDL_PERSONAL = 0x0005 (My Documents)
             buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
             ctypes.windll.shell32.SHGetFolderPathW(0, 0x0005, 0, 0, buf)
-            documents = Path(buf.value)
-
-            candidate = (
-                documents
-                / "Guild Wars 2"
-                / "addons"
-                / "arcdps"
-                / "arcdps.cbtlogs"
-            )
-            # Return the path whether or not it exists yet -
-            # the user may not have run GW2 since installing ArcDPS
-            return str(candidate)
+            if buf.value:
+                return Path(buf.value)
         except Exception:
-            # Non-Windows or shell API unavailable - fall back to Path.home()
-            candidate = (
-                Path.home()
-                / "Documents"
-                / "Guild Wars 2"
-                / "addons"
-                / "arcdps"
-                / "arcdps.cbtlogs"
+            pass
+        return Path.home() / "Documents"
+
+    def _detect_gw2_installations(self) -> tuple[GW2Installation, ...]:
+        return discover_gw2_installations()
+
+    def _detect_arcdps_setups(self) -> tuple[ArcDPSSetup, ...]:
+        return discover_arcdps_setups(
+            self._documents_path(),
+            gw2_installations=self._gw2_installations,
+        )
+
+    @staticmethod
+    def _detected_setup_text(setup: ArcDPSSetup) -> str:
+        gw2 = (
+            str(setup.gw2_directory)
+            if setup.gw2_directory
+            else "not matched automatically"
+        )
+        return (
+            "SparkyBot found an ArcDPS setup:<br>"
+            f"<small>Guild Wars 2: <code>{gw2}</code><br>"
+            f"ArcDPS: <code>{setup.arcdps_directory}</code></small><br><br>"
+            "ArcDPS says fight logs go here:<br>"
+            f"<code>{setup.log_directory}</code><br>"
+            "<small>Use these locations?</small>"
+        )
+
+    def _select_detected_setup(self, index: int):
+        if self.setup_combo is None:
+            return
+        setup = self.setup_combo.itemData(index)
+        if not isinstance(setup, ArcDPSSetup):
+            return
+        self._arcdps_setup = setup
+        self.detected_label.setText(self._detected_setup_text(setup))
+        self.folder_edit.clear()
+        self.manual_toggle.setChecked(False)
+        self.use_arcdps_btn.setVisible(True)
+        theme.set_state(self.status_label, "warn")
+        self.status_label.setText("Check the locations above, then accept them.")
+
+    def _browse_arcdps_settings(self):
+        start = (
+            str(self._arcdps_setup.arcdps_directory)
+            if self._arcdps_setup is not None
+            else str(self._documents_path())
+        )
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Find ArcDPS Settings",
+            start,
+            "ArcDPS settings (arcdps.ini);;INI files (*.ini)",
+        )
+        if not path:
+            return
+        setups = discover_arcdps_setups(
+            self._documents_path(),
+            gw2_installations=(),
+            extra_config_files=(path,),
+            include_system=False,
+        )
+        if not setups:
+            QMessageBox.warning(
+                self,
+                "ArcDPS Settings Not Found",
+                "That file is not readable ArcDPS settings. Choose arcdps.ini.",
             )
-            return str(candidate)
+            return
+        selected = setups[0]
+        if self.setup_combo is not None:
+            selected_index = -1
+            for index in range(self.setup_combo.count()):
+                item = self.setup_combo.itemData(index)
+                if (
+                    isinstance(item, ArcDPSSetup)
+                    and item.config_file == selected.config_file
+                ):
+                    selected_index = index
+                    break
+            if selected_index < 0:
+                self.setup_combo.addItem(
+                    f"Chosen manually: {selected.arcdps_directory}", selected
+                )
+                selected_index = self.setup_combo.count() - 1
+            self.setup_combo.setCurrentIndex(selected_index)
+        self._arcdps_setup = selected
+        self.detected_label.setText(self._detected_setup_text(self._arcdps_setup))
+        self.use_default_btn.setVisible(False)
+        self.use_arcdps_btn.setVisible(True)
+        self.folder_edit.clear()
+        self.manual_toggle.setChecked(False)
+        theme.set_state(self.status_label, "warn")
+        self.status_label.setText("Check the locations above, then accept them.")
+
+    def _detect_default_log_path(self) -> str:
+        """Auto-detect the default ArcDPS log folder for the current Windows user."""
+        candidate = (
+            self._documents_path()
+            / "Guild Wars 2"
+            / "addons"
+            / "arcdps"
+            / "arcdps.cbtlogs"
+        )
+        # Return it even before it exists so the fallback remains visible.
+        return str(candidate)
+
+    def _use_arcdps_location(self):
+        if self._arcdps_setup is None:
+            return
+        target = self._arcdps_setup.log_directory
+        self.folder_edit.setText(str(target))
+        if target.is_dir():
+            theme.set_state(self.status_label, "ok")
+            self.status_label.setText("ArcDPS fight-log folder selected.")
+            if self.use_arcdps_btn is not None:
+                self.use_arcdps_btn.setVisible(False)
+            self.manual_toggle.setChecked(False)
+        else:
+            theme.set_state(self.status_label, "warn")
+            self.status_label.setText(
+                "ArcDPS points to this folder, but it is not available right "
+                "now. Connect that drive or choose a different folder."
+            )
 
     def _use_default(self):
         base = Path(self._default_path)
@@ -937,6 +1104,7 @@ class LogFolderPage(QWizardPage):
             )
             if self.use_default_btn is not None:
                 self.use_default_btn.setVisible(False)
+            self.manual_toggle.setChecked(False)
         elif base.exists():
             theme.set_state(self.status_label, "warn")
             self.status_label.setText(
@@ -958,6 +1126,7 @@ class LogFolderPage(QWizardPage):
         if folder:
             self.folder_edit.setText(folder)
             self.status_label.setText("")
+            self.manual_toggle.setChecked(True)
 
     def validatePage(self):
         folder = self.folder_edit.text().strip()

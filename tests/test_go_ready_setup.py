@@ -11,10 +11,12 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from core import apppaths
+from core.arcdps_config import ArcDPSSetup
 from core.config import Config
 from core.setup_wizard import (
     PAGE_COMPLETE,
     PAGE_GW2EI,
+    PAGE_LOG_FOLDER,
     GW2EIPage,
     LogFolderPage,
     SetupWizard,
@@ -86,6 +88,8 @@ def test_imported_setup_has_two_required_steps_then_ready(
 
     assert wizard.welcome_page.nextId() == PAGE_GW2EI
     assert wizard.log_folder_page.nextId() == PAGE_COMPLETE
+    assert wizard.log_folder_page.folder_edit.text() == ""
+    wizard.log_folder_page._use_default()
     assert wizard.log_folder_page.folder_edit.text() == str(wvw_logs)
     assert "Logspam" in wizard.complete_page.summary_label.text()
     assert "Nightly Debrief & Logs" in wizard.complete_page.summary_label.text()
@@ -96,7 +100,7 @@ def test_imported_setup_has_two_required_steps_then_ready(
     assert config.enable_twitch is False
 
 
-def test_fully_detected_computer_can_go_straight_to_ready(
+def test_fully_detected_computer_still_asks_before_using_log_folder(
     tmp_path, monkeypatch, qt_app
 ):
     wizard, _config, _wvw_logs = build_wizard(
@@ -105,7 +109,10 @@ def test_fully_detected_computer_can_go_straight_to_ready(
 
     wizard.use_imported_guild_config(guild_bundle())
 
-    assert wizard.welcome_page.nextId() == PAGE_COMPLETE
+    assert wizard.welcome_page.nextId() == PAGE_LOG_FOLDER
+    assert wizard.log_folder_page.folder_edit.text() == ""
+    wizard.log_folder_page._use_default()
+    assert wizard.log_folder_page.is_ready()
 
 
 def test_imported_setup_finish_persists_go_ready_defaults(
@@ -146,7 +153,50 @@ def test_machine_local_pages_block_a_fake_ready_state(
     wizard, _config, _wvw_logs = build_wizard(tmp_path, monkeypatch)
 
     assert wizard.gw2ei_page.validatePage() is False
+    assert wizard.log_folder_page.validatePage() is False
+    wizard.log_folder_page._use_default()
     assert wizard.log_folder_page.validatePage() is True
+
+
+def test_arcdps_configured_folder_is_shown_and_requires_consent(
+    tmp_path, monkeypatch, qt_app
+):
+    custom_logs = tmp_path / "custom ArcDPS logs" / "arcdps.cbtlogs"
+    custom_logs.mkdir(parents=True)
+    config_file = tmp_path / "ArcDPS elsewhere" / "arcdps.ini"
+    config_file.parent.mkdir()
+    config_file.write_text(
+        f"boss_encounter_path={custom_logs}\n", encoding="utf-8"
+    )
+    setup = ArcDPSSetup(
+        gw2_directory=tmp_path / "GW2 elsewhere",
+        arcdps_directory=config_file.parent,
+        config_file=config_file,
+        configured_log_base=custom_logs,
+        log_directory=custom_logs,
+        log_source="ArcDPS configured folder",
+        discovery_source="test",
+        rank=1000,
+    )
+    monkeypatch.setattr(
+        LogFolderPage,
+        "_detect_arcdps_setups",
+        lambda _self: (setup,),
+    )
+    wizard, _config, _wvw_logs = build_wizard(
+        tmp_path, monkeypatch, parser_ready=True
+    )
+
+    page = wizard.log_folder_page
+    assert str(custom_logs) in page.detected_label.text()
+    assert page.folder_edit.text() == ""
+    assert not page.is_ready()
+
+    page._use_arcdps_location()
+
+    assert page.folder_edit.text() == str(custom_logs)
+    assert page.is_ready()
+    assert "selected" in page.status_label.text()
 
 
 def test_choose_file_to_ready_is_one_bounded_flow(
@@ -172,6 +222,9 @@ def test_choose_file_to_ready_is_one_bounded_flow(
 
     assert wizard.currentId() == PAGE_GW2EI
     wizard.gw2ei_page._install_success = True
+    wizard.next()
+    assert wizard.currentPage() is wizard.log_folder_page
+    wizard.log_folder_page._use_default()
     wizard.next()
     assert wizard.currentId() == PAGE_COMPLETE
     wizard.accept()

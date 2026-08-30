@@ -113,6 +113,13 @@ individual fights and the end-of-night debrief will post. On first launch it
 then checks only the parser and fight-log folder on that computer; AI, voice,
 Twitch, and other extras stay off and can be added later in Settings.
 
+For every first-run setup—with or without a guild file—SparkyBot checks common
+and Steam GW2 locations, validates candidates with the real game executable,
+finds every ArcDPS setup it can prove, and reads ArcDPS's configured log
+folder. If there are multiple installs, you choose the right one. Nothing is
+saved until SparkyBot shows the exact locations and you accept them; unusual
+installs can point SparkyBot directly at `arcdps.ini`.
+
 The setup file contains only the three Discord webhook slots, destination
 names/routing, enabled state, bot name, and embed color. It never contains AI
 provider keys, Twitch tokens, voice keys, or local paths.

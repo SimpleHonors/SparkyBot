@@ -161,6 +161,20 @@ def test_import_file_size_is_bounded(tmp_path):
         load_guild_config(target)
 
 
+def test_wrong_file_gets_a_human_next_step_before_schema_details():
+    with pytest.raises(GuildConfigError, match="Ask your guild admin"):
+        parse_guild_config({"name": "some other app", "version": 1})
+
+
+def test_newer_file_tells_the_user_to_update(tmp_path):
+    data = bundle_from_config(configured(tmp_path)).as_dict()
+    data["version"] = FORMAT_VERSION + 1
+    data["new_field_from_the_future"] = True
+
+    with pytest.raises(GuildConfigError, match="Update SparkyBot"):
+        parse_guild_config(data)
+
+
 def test_routing_summary_uses_the_two_jobs_people_recognize(tmp_path):
     bundle = bundle_from_config(configured(tmp_path))
 
@@ -209,6 +223,15 @@ def test_export_works_when_platform_has_no_fchmod(tmp_path, monkeypatch):
 
     assert target.is_file()
     assert json.loads(target.read_text(encoding="utf-8"))["format"] == FORMAT_NAME
+
+
+def test_export_refuses_a_useless_file_with_no_discord_channels(tmp_path):
+    config = Config(tmp_path / "empty.properties")
+
+    with pytest.raises(GuildConfigError, match="nothing to put"):
+        write_guild_config(config, tmp_path / "empty.json")
+
+    assert not (tmp_path / "empty.json").exists()
 
 
 def test_export_wraps_parent_directory_failure(tmp_path, monkeypatch):
