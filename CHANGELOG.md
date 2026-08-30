@@ -2,13 +2,23 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
-## [Unreleased]
+## [2.1.0] — 2026-08-30
 
 ### Added
 
 - Import/export for portable guild config files containing Discord webhooks and
   a small Discord-only settings allowlist. First-run setup can import the file
   from the Welcome screen; existing installs use the File menu.
+- Interoperability with the other WvW log tools. SparkyBot can read the config
+  of eighteen tool families with your consent — PlenBot, MzFightReporter,
+  TopStatsAIO, WvW Insights, Drevarr's parsers, and friends — so switching in
+  means nothing gets retyped. Seven of them get reciprocal export (with unique
+  backups and neighbor settings preserved), because leaving should be as easy
+  as arriving. Credits, honest comparisons, and license posture live in
+  `docs/WVW_LOG_TOOL_INTEROPERABILITY.md`.
+- End-of-night reports ship as one compressed, self-contained HTML file by
+  default — big nights fit under Discord's free attachment limit. Uses the
+  upstream combiner capability SparkyBot contributed in its v1.8.0 release.
 - A GO-ready first-run path: after choosing a Guild Setup File, SparkyBot skips
   AI, voice, Twitch, and other optional pages, auto-detects local requirements,
   and confirms the individual-fight and end-of-night Discord destinations.
