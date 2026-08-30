@@ -131,6 +131,11 @@ function metricBoard(sfx, token, label){
     if(!nm||/\b(average|totals)\b/i.test(nm))return;
     rows.push([nm,acc,prof,val]);
   });
+  var best={},order=[];
+  rows.forEach(function(r){var k=r[1]||r[0];
+    if(!(k in best)){best[k]=r;order.push(k);}
+    else if(r[3]>best[k][3])best[k]=r;});
+  rows=order.map(function(k){return best[k];});
   if(!rows.length)return '';
   rows.sort(function(a,b){return b[3]-a[3];});
   rows=rows.slice(0,10);

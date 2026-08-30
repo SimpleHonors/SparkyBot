@@ -539,6 +539,17 @@ def _parse_highlights(tiddlers):
         rows = [r for r in rows
                 if not re.search(r"\b(average|totals)\b", r["name"],
                                  re.IGNORECASE)]
+        # The tables carry one row per STAT TIER per player (total,
+        # value/FightTime-sec, value/engaged-sec) - not per spec. Ranking
+        # them raw duplicates players; SUM would double-count the tiers.
+        # The total row dominates every tier value, so keep MAX per account.
+        best = {}
+        for r in rows:
+            k = r["account"] or r["name"]
+            prev = best.get(k)
+            if prev is None or r["value"] > prev["value"]:
+                best[k] = r
+        rows = list(best.values())
         rows.sort(key=lambda r: r["value"], reverse=True)
         top = rows[:HIGHLIGHT_TOP_N]
         for i, r in enumerate(top, 1):
