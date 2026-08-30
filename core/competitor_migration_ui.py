@@ -333,6 +333,16 @@ def choose_competitor_import(
     if finding is None:
         return None
 
+    return preview_competitor_finding(finding, parent)
+
+
+def preview_competitor_finding(
+    finding: CompetitorFinding, parent: QWidget | None
+) -> CompetitorImportPlan | None:
+    """Preview one already-discovered setup and return the consented plan.
+
+    Used by the wizard's proactive offer: discovery already ran, the user
+    clicked "Use <tool>'s Settings", so no picker — straight to consent."""
     dialog = CompetitorImportDialog(finding, parent)
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None

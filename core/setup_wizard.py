@@ -27,7 +27,11 @@ from core.competitor_import import (
     CompetitorImportPlan,
     apply_competitor_import,
 )
-from core.competitor_migration_ui import choose_competitor_import
+from core.competitor_import import discover_competitor_configs
+from core.competitor_migration_ui import (
+    choose_competitor_import,
+    preview_competitor_finding,
+)
 from core.shareable_config import (
     GuildConfigBundle, GuildConfigError, apply_guild_config, load_guild_config,
 )
@@ -439,6 +443,12 @@ class WelcomePage(QWizardPage):
         self.competitor_import_status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.competitor_import_status)
 
+        # Proactive offer state: filled by _offer_detected_setups() the
+        # first time the page shows. The user must never hunt for the
+        # import — if a known tool is set up, the button names it.
+        self._detected_findings = ()
+        self._competitor_scan_done = False
+
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(divider)
@@ -450,6 +460,48 @@ class WelcomePage(QWizardPage):
         theme.mark_hint(manual)
         layout.addWidget(manual)
         layout.addStretch()
+
+    def initializePage(self):
+        super().initializePage()
+        self._offer_detected_setups()
+
+    def _offer_detected_setups(self):
+        """Detect installed log tools and lead with a named one-click offer.
+
+        EZ pleb mode: if PlenBot (or friends) is already configured on this
+        computer, the user should not have to know or hunt for that — the
+        button names the tool and one click opens the consent preview."""
+        if self._competitor_scan_done:
+            return
+        self._competitor_scan_done = True
+        wizard = self.wizard()
+        if wizard is None or wizard.has_basic_import():
+            return
+        gw2_dirs = tuple(
+            install.directory
+            for install in getattr(
+                getattr(wizard, "log_folder_page", None),
+                "_gw2_installations", (),
+            )
+        )
+        try:
+            self._detected_findings = tuple(
+                discover_competitor_configs(gw2_dirs=gw2_dirs)
+            )
+        except Exception:
+            self._detected_findings = ()
+        if not self._detected_findings:
+            return
+        top = self._detected_findings[0]
+        extra = len(self._detected_findings) - 1
+        suffix = f" (and {extra} more)" if extra else ""
+        theme.set_state(self.competitor_import_status, "success")
+        self.competitor_import_status.setText(
+            f"Found {top.app} already set up on this computer{suffix}. "
+            "One click reuses its settings — nothing to hunt down."
+        )
+        self.competitor_import_button.setText(f"Use {top.app}'s Settings")
+        theme.set_widget_class(self.competitor_import_button, "primary")
 
     def nextId(self):
         wizard = self.wizard()
@@ -482,7 +534,12 @@ class WelcomePage(QWizardPage):
                 wizard.log_folder_page, "_gw2_installations", ()
             )
         )
-        plan = choose_competitor_import(self, gw2_dirs=gw2_dirs)
+        if len(self._detected_findings) == 1:
+            # The offer named this exact tool — no picker, straight to the
+            # consent preview.
+            plan = preview_competitor_finding(self._detected_findings[0], self)
+        else:
+            plan = choose_competitor_import(self, gw2_dirs=gw2_dirs)
         if plan is None:
             return
         try:
