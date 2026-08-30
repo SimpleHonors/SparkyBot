@@ -10,12 +10,14 @@ from core.competitor_import import (
     CompetitorFinding,
     CompetitorImportPlan,
     ImportedSetting,
+    ImportedWebhook,
     MAX_CONFIG_BYTES,
     apply_competitor_import,
     build_import_plan,
     discover_competitor_configs,
     expected_competitor_config_path,
     expected_competitor_config_paths,
+    merge_competitor_findings,
     parse_competitor_config,
 )
 from core.config import Config
@@ -560,6 +562,101 @@ def test_discovery_checks_known_app_addon_and_bounded_portable_locations(tmp_pat
         "MzFightReporter",
         "Nexus Wingman Uploader",
     }
+
+
+def test_merge_findings_primary_wins_conflicts_and_other_tools_fill_gaps(tmp_path):
+    logs_a = tmp_path / "logs-a"
+    logs_b = tmp_path / "logs-b"
+    logs_a.mkdir()
+    logs_b.mkdir()
+    parser_a = tmp_path / "parser-a.exe"
+    parser_b = tmp_path / "parser-b.exe"
+    parser_a.touch()
+    parser_b.touch()
+    source_a = tmp_path / "ToolA" / "config.json"
+    source_b = tmp_path / "ToolB" / "config.ini"
+
+    first = CompetitorFinding(
+        app="Tool A",
+        source_files=(source_a,),
+        log_folders=(logs_a,),
+        parser_executables=(parser_a,),
+        settings=(
+            ImportedSetting(
+                "Thresholds", "minFightDuration", "10", "Minimum fight duration"
+            ),
+            ImportedSetting(
+                "Thresholds", "minFightDowns", "2", "Minimum downs"
+            ),
+        ),
+    )
+    primary = CompetitorFinding(
+        app="Tool B",
+        source_files=(source_b,),
+        log_folders=(logs_b,),
+        parser_executables=(parser_b,),
+        settings=(
+            ImportedSetting(
+                "Thresholds", "minFightDuration", "25", "Minimum fight duration"
+            ),
+        ),
+    )
+
+    merged = merge_competitor_findings((first, primary), primary_index=1)
+    settings = {(item.section, item.key): item.value for item in merged.settings}
+
+    assert merged.app == "Tool A + Tool B"
+    assert merged.source_files == (source_b, source_a)
+    assert merged.log_folders == (logs_b, logs_a)
+    assert merged.parser_executables == (parser_b, parser_a)
+    assert settings[("Thresholds", "minFightDuration")] == "25"
+    assert settings[("Thresholds", "minFightDowns")] == "2"
+    assert any(
+        "Minimum fight duration differed" in warning and "Tool B" in warning
+        for warning in merged.warnings
+    )
+    plan = build_import_plan(merged)
+    assert plan.log_folder == logs_b
+    assert plan.parser_executable == parser_b
+
+
+def test_merge_findings_unions_routes_without_losing_nonprimary_nightly(tmp_path):
+    fight_old = ImportedWebhook("Old fights", webhook(31, "old"), "fight")
+    nightly = ImportedWebhook("Nightly debrief", webhook(32, "nightly"), "nightly")
+    extra = ImportedWebhook("Other guild", webhook(33, "extra"), "unknown")
+    fight_primary = ImportedWebhook(
+        "Current fights", webhook(34, "primary"), "fight"
+    )
+    first = CompetitorFinding(
+        app="Tool A",
+        source_files=(tmp_path / "ToolA" / "config.json",),
+        webhooks=(fight_old, nightly, extra),
+    )
+    primary = CompetitorFinding(
+        app="Tool B",
+        source_files=(tmp_path / "ToolB" / "config.json",),
+        webhooks=(fight_primary,),
+    )
+
+    merged = merge_competitor_findings((first, primary), primary_index=1)
+    plan = build_import_plan(merged)
+
+    assert plan.fight_webhook.url == fight_primary.url
+    assert plan.nightly_webhook.url == nightly.url
+    assert [hook.url for hook in merged.webhooks] == [
+        fight_primary.url,
+        nightly.url,
+        fight_old.url,
+    ]
+    assert any("Individual fight channel differed" in item for item in merged.warnings)
+    assert any("can save three" in item for item in merged.warnings)
+    assert all("discord.com/api/webhooks" not in item for item in merged.warnings)
+
+
+@pytest.mark.parametrize("findings, primary_index", [((), 0), ((None,), 1)])
+def test_merge_findings_rejects_missing_or_invalid_primary(findings, primary_index):
+    with pytest.raises(CompetitorConfigError):
+        merge_competitor_findings(findings, primary_index=primary_index)
 
 
 def test_apply_plan_sets_basic_routing_and_turns_optional_features_off(tmp_path):

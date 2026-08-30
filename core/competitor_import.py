@@ -1497,6 +1497,201 @@ def build_import_plan(finding: CompetitorFinding) -> CompetitorImportPlan:
     )
 
 
+def merge_competitor_findings(
+    findings: Sequence[CompetitorFinding], *, primary_index: int
+) -> CompetitorFinding:
+    """Combine detected setups, using one user-selected source for conflicts.
+
+    The selected source is prioritized only where two tools provide different
+    values. Missing paths, routes, and safe preferences are still filled from
+    every other finding. The result is an ordinary ``CompetitorFinding`` so the
+    existing grouped consent preview and single transactional apply path remain
+    authoritative.
+    """
+    items = tuple(findings)
+    if not items:
+        raise CompetitorConfigError("No existing log-tool setups were found to combine.")
+    if not isinstance(primary_index, int) or not 0 <= primary_index < len(items):
+        raise CompetitorConfigError("Choose which detected log tool you use most.")
+
+    primary = items[primary_index]
+    priority_indexes = (
+        primary_index,
+        *(index for index in range(len(items)) if index != primary_index),
+    )
+
+    def source_name(index: int) -> str:
+        finding = items[index]
+        duplicate = sum(item.app == finding.app for item in items) > 1
+        if duplicate and finding.source_files:
+            return f"{finding.app} at {finding.source_file.parent}"
+        return finding.app
+
+    conflict_notes: list[str] = []
+
+    def merge_paths(attribute: str, label: str) -> tuple[Path, ...]:
+        providers = [
+            index for index, item in enumerate(items) if getattr(item, attribute)
+        ]
+        if not providers:
+            return ()
+        winner = primary_index if primary_index in providers else providers[0]
+        representatives = {
+            os.path.normcase(str(getattr(items[index], attribute)[0]))
+            for index in providers
+        }
+        if len(representatives) > 1:
+            conflict_notes.append(
+                f"{label} differed; prioritizing {source_name(winner)}."
+            )
+        ordered_indexes = (winner, *(index for index in providers if index != winner))
+        return _unique_paths(
+            path
+            for index in ordered_indexes
+            for path in getattr(items[index], attribute)
+        )
+
+    setting_candidates: dict[
+        tuple[str, str], list[tuple[int, ImportedSetting]]
+    ] = {}
+    setting_keys: list[tuple[str, str]] = []
+    for index in priority_indexes:
+        for setting in items[index].settings:
+            key = (setting.section, setting.key)
+            if key not in setting_candidates:
+                setting_keys.append(key)
+                setting_candidates[key] = []
+    for index, item in enumerate(items):
+        for setting in item.settings:
+            setting_candidates[(setting.section, setting.key)].append((index, setting))
+
+    merged_settings: list[ImportedSetting] = []
+    for key in setting_keys:
+        candidates = setting_candidates[key]
+        primary_candidates = [
+            candidate for candidate in candidates if candidate[0] == primary_index
+        ]
+        winner_index, winner_setting = (
+            primary_candidates[0] if primary_candidates else candidates[0]
+        )
+        merged_settings.append(winner_setting)
+        if len({setting.value for _index, setting in candidates}) > 1:
+            conflict_notes.append(
+                f"{winner_setting.label} differed; using "
+                f"{source_name(winner_index)}: {winner_setting.display_value}."
+            )
+
+    def route_candidate(
+        role: WebhookRole,
+    ) -> tuple[ImportedWebhook | None, int | None, list[tuple[int, ImportedWebhook]]]:
+        explicit: list[tuple[int, ImportedWebhook]] = []
+        unknown: list[tuple[int, ImportedWebhook]] = []
+        for index, item in enumerate(items):
+            exact = [hook for hook in item.webhooks if hook.role == role]
+            fallback = [hook for hook in item.webhooks if hook.role == "unknown"]
+            if exact:
+                explicit.append(
+                    (index, next((hook for hook in exact if hook.preferred), exact[0]))
+                )
+            elif fallback:
+                unknown.append(
+                    (
+                        index,
+                        next((hook for hook in fallback if hook.preferred), fallback[0]),
+                    )
+                )
+        candidates = explicit or unknown
+        if not candidates:
+            return None, None, []
+        winner = next(
+            (candidate for candidate in candidates if candidate[0] == primary_index),
+            candidates[0],
+        )
+        return winner[1], winner[0], candidates
+
+    fight, fight_source, fight_candidates = route_candidate("fight")
+    nightly, nightly_source, nightly_candidates = route_candidate("nightly")
+    if fight is None and nightly is not None:
+        fight, fight_source = nightly, nightly_source
+    if nightly is None and fight is not None:
+        nightly, nightly_source = fight, fight_source
+
+    def note_route_conflict(
+        label: str,
+        selected: ImportedWebhook | None,
+        selected_source: int | None,
+        candidates: Sequence[tuple[int, ImportedWebhook]],
+    ) -> None:
+        if (
+            selected is not None
+            and selected_source is not None
+            and len({hook.url.casefold() for _index, hook in candidates}) > 1
+        ):
+            conflict_notes.append(
+                f"{label} differed; using {source_name(selected_source)}: "
+                f"{selected.display_name}."
+            )
+
+    note_route_conflict(
+        "Individual fight channel", fight, fight_source, fight_candidates
+    )
+    note_route_conflict(
+        "Nightly debrief channel", nightly, nightly_source, nightly_candidates
+    )
+
+    selected_hooks: list[ImportedWebhook] = []
+    if fight is not None:
+        selected_hooks.append(
+            ImportedWebhook(fight.name, fight.url, "fight", preferred=True)
+        )
+    if nightly is not None:
+        selected_hooks.append(
+            ImportedWebhook(nightly.name, nightly.url, "nightly", preferred=True)
+        )
+    all_hooks = _unique_webhooks(
+        (
+            *selected_hooks,
+            *(
+                hook
+                for index in priority_indexes
+                for hook in items[index].webhooks
+            ),
+        )
+    )
+    merged_hooks = all_hooks[:3]
+    if len(all_hooks) > len(merged_hooks):
+        conflict_notes.append(
+            f"Found {len(all_hooks)} Discord destinations; SparkyBot can save "
+            "three. The consent preview shows the three that will be copied."
+        )
+
+    app_names = tuple(dict.fromkeys(item.app for item in items))
+    return CompetitorFinding(
+        app=" + ".join(app_names),
+        source_files=_unique_paths(
+            path
+            for index in priority_indexes
+            for path in items[index].source_files
+        ),
+        log_folders=merge_paths("log_folders", "Fight-file folders"),
+        gw2_directories=merge_paths("gw2_directories", "Guild Wars 2 folders"),
+        parser_executables=merge_paths(
+            "parser_executables", "Report helpers"
+        ),
+        webhooks=merged_hooks,
+        settings=tuple(merged_settings),
+        warnings=tuple(
+            dict.fromkeys(
+                (
+                    *(warning for item in items for warning in item.warnings),
+                    *conflict_notes,
+                )
+            )
+        ),
+        tier=min(item.tier for item in items),
+    )
+
+
 def apply_competitor_import(
     config: Any,
     plan: CompetitorImportPlan,
