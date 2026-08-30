@@ -389,8 +389,9 @@ class WelcomePage(QWizardPage):
         layout.setSpacing(12)
 
         # This starts hidden, so a computer with no supported neighbor app
-        # never sees or has to understand this feature. initializePage() fills
-        # and reveals it before the page is painted only when detection wins.
+        # never sees or has to understand this feature. The autodetect
+        # button's click fills and reveals it — only after the user asked,
+        # and only when detection wins.
         self.competitor_offer = QFrame()
         offer_layout = QVBoxLayout(self.competitor_offer)
         offer_layout.setContentsMargins(0, 0, 0, 0)
@@ -418,15 +419,59 @@ class WelcomePage(QWizardPage):
         self.competitor_offer.hide()
         layout.addWidget(self.competitor_offer)
 
+        # Ask-first autodetect (operator law): SparkyBot never hunts this
+        # computer for settings or tools until the user says so — the CLICK
+        # on this button is the permission. It runs the discovery this page
+        # used to run unprompted and then hands off to the existing named
+        # one-click offer (consent preview -> apply), unchanged. The manual
+        # path sits right underneath; no dialogs, no checkboxes, no nag.
+        self.autodetect_lead = QFrame()
+        lead_layout = QVBoxLayout(self.autodetect_lead)
+        lead_layout.setContentsMargins(0, 0, 0, 0)
+        lead_layout.setSpacing(6)
+        self.autodetect_button = QPushButton("Set me up automatically")
+        self.autodetect_button.setMinimumHeight(46)
+        theme.set_widget_class(self.autodetect_button, "primary")
+        self.autodetect_button.setToolTip(
+            "Let SparkyBot search this computer for Guild Wars 2, ArcDPS, "
+            "and known fight-log tools so it can copy their settings. "
+            "Nothing is applied until you approve it."
+        )
+        self.autodetect_button.clicked.connect(self._start_autodetect)
+        lead_layout.addWidget(self.autodetect_button)
+        self.autodetect_subtext = QLabel(
+            "SparkyBot will look for Guild Wars 2, ArcDPS, and your "
+            "fight-log tools on this computer."
+        )
+        self.autodetect_subtext.setWordWrap(True)
+        theme.mark_hint(self.autodetect_subtext)
+        lead_layout.addWidget(self.autodetect_subtext)
+        self.autodetect_manual_hint = QLabel(
+            "…or click Next to set up by hand."
+        )
+        self.autodetect_manual_hint.setWordWrap(True)
+        theme.mark_hint(self.autodetect_manual_hint)
+        lead_layout.addWidget(self.autodetect_manual_hint)
+        self.autodetect_none_hint = QLabel(
+            "No fight-log setups to import were found on this computer. "
+            "Click Next to set up by hand — SparkyBot walks you through "
+            "each step."
+        )
+        self.autodetect_none_hint.setWordWrap(True)
+        theme.mark_hint(self.autodetect_none_hint)
+        self.autodetect_none_hint.hide()
+        lead_layout.addWidget(self.autodetect_none_hint)
+        layout.addWidget(self.autodetect_lead)
+
         self._detected_findings = ()
         self._competitor_scan_done = False
+        self._autodetect_done = False
 
-        # The easy path leads: most people have nothing to import, so the
-        # default screen is just "click Next and we'll walk you through it."
+        # The easy path stays second: most people who skip the autodetect
+        # button just walk through the pages.
         self.easy_path_intro = QLabel(
             "SparkyBot will walk you through setup step by step — where your "
-            "fight logs live and which Discord channels get your reports.\n\n"
-            "Click Next to begin."
+            "fight logs live and which Discord channels get your reports."
         )
         self.easy_path_intro.setWordWrap(True)
         layout.addWidget(self.easy_path_intro)
@@ -505,12 +550,45 @@ class WelcomePage(QWizardPage):
         self.advanced_options.hide()
         layout.addWidget(self.advanced_options)
 
-    def initializePage(self):
-        super().initializePage()
+    def _start_autodetect(self):
+        """The click is the permission (operator law: ask-first, no nag).
+
+        This page used to run the whole discovery unprompted in
+        initializePage(); now nothing is probed until the user presses the
+        lead button. The click runs the same detection and hands off to the
+        existing named one-click offer — consent preview, apply — entirely
+        unchanged. When nothing turns up, the lead quietly retires and the
+        manual path (Next) takes over."""
+        if self._autodetect_done:
+            return
+        self._autodetect_done = True
+        wizard = self.wizard()
+        if wizard is not None:
+            if wizard.has_basic_import():
+                # A guild file was already loaded — the import story is
+                # spoken for; retire the lead without probing anything.
+                self.autodetect_lead.hide()
+                return
+            log_folder_page = getattr(wizard, "log_folder_page", None)
+            ensure_scanned = getattr(
+                log_folder_page, "ensure_scanned", None
+            ) if log_folder_page is not None else None
+            if ensure_scanned is not None:
+                # The user's click covers the GW2/ArcDPS hunt too, so the
+                # log-folder page never has to ask again (idempotent).
+                ensure_scanned()
         self._offer_detected_setups()
+        if self._detected_findings:
+            self.autodetect_lead.hide()
+            return
+        self.autodetect_button.hide()
+        self.autodetect_subtext.hide()
+        self.autodetect_manual_hint.hide()
+        self.autodetect_none_hint.show()
 
     def _offer_detected_setups(self):
-        """Detect installed log tools and lead with a named one-click offer.
+        """Build the named one-click offer from a scan the user already
+        approved via _start_autodetect (never called unprompted).
 
         EZ pleb mode: if PlenBot (or friends) is already configured on this
         computer, the user should not have to know or hunt for that — the

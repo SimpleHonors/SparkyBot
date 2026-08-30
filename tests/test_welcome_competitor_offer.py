@@ -1,5 +1,7 @@
-"""EZ pleb mode: the wizard detects installed log tools itself and leads
-with a named one-click offer — the user never hunts for the import."""
+"""Ask-first autodetect: the wizard probes nothing until the user presses
+the lead "Set me up automatically" button — the CLICK is the permission —
+and then the named one-click offer (consent preview, apply) continues
+exactly as before."""
 
 import os
 import sys
@@ -32,13 +34,54 @@ def make_wizard(tmp_path, monkeypatch, findings):
     return wizard, wizard.page(sw.PAGE_WELCOME)
 
 
+def test_lead_button_leads_and_nothing_is_probed_before_the_click(
+    app, tmp_path, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        sw,
+        "discover_competitor_configs",
+        lambda **kwargs: calls.append(kwargs) or (),
+    )
+    wizard = sw.SetupWizard(Config(tmp_path / "config.properties"))
+    welcome = wizard.page(sw.PAGE_WELCOME)
+
+    # Page entry (initializePage) must stay silent — no unprompted hunt.
+    welcome.initializePage()
+
+    assert calls == []
+    assert welcome.competitor_offer.isHidden()
+    assert not welcome.autodetect_button.isHidden()
+    assert welcome.autodetect_button.text() == "Set me up automatically"
+    assert "fight-log tools" in welcome.autodetect_subtext.text()
+    assert "or click Next to set up by hand" in welcome.autodetect_manual_hint.text()
+    assert welcome.autodetect_none_hint.isHidden()
+
+
+def test_clicking_the_lead_button_is_what_starts_the_scan(
+    app, tmp_path, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        sw,
+        "discover_competitor_configs",
+        lambda **kwargs: calls.append(kwargs) or (),
+    )
+    wizard = sw.SetupWizard(Config(tmp_path / "config.properties"))
+    welcome = wizard.page(sw.PAGE_WELCOME)
+
+    welcome.autodetect_button.click()
+
+    assert len(calls) == 1
+
+
 def test_single_detected_tool_becomes_named_one_click_offer(
     app, tmp_path, monkeypatch
 ):
     finding = SimpleNamespace(app="PlenBot Log Uploader")
     wizard, welcome = make_wizard(tmp_path, monkeypatch, [finding])
 
-    welcome.initializePage()
+    welcome.autodetect_button.click()
 
     assert welcome.competitor_import_button.text() == (
         "Found PlenBot Log Uploader — set me up from it"
@@ -48,6 +91,8 @@ def test_single_detected_tool_becomes_named_one_click_offer(
     assert welcome.import_button.text() == "I Also Have a Guild File"
     assert "Start with PlenBot Log Uploader above" in welcome.guild_file_intro.text()
     assert welcome._detected_findings == (finding,)
+    # The offer is the lead now — the permission button retires.
+    assert welcome.autodetect_lead.isHidden()
 
 
 def test_multiple_detected_tools_offer_to_combine_not_pick_one(
@@ -59,7 +104,7 @@ def test_multiple_detected_tools_offer_to_combine_not_pick_one(
     ]
     wizard, welcome = make_wizard(tmp_path, monkeypatch, findings)
 
-    welcome.initializePage()
+    welcome.autodetect_button.click()
 
     # No tool is buried behind "and N more" — the offer combines them all.
     assert welcome.competitor_import_button.text() == "Set me up from my log tools"
@@ -77,7 +122,7 @@ def test_multiple_detected_merges_via_picker_then_shared_consent(
         SimpleNamespace(app="PlenBot Log Uploader"),
     ]
     wizard, welcome = make_wizard(tmp_path, monkeypatch, findings)
-    welcome.initializePage()
+    welcome.autodetect_button.click()
 
     merged = SimpleNamespace(app="MzFightReporter + PlenBot Log Uploader")
     plan = SimpleNamespace(finding=merged)
@@ -114,15 +159,19 @@ def test_no_detected_tools_show_no_neighbor_feature_at_all(
 ):
     wizard, welcome = make_wizard(tmp_path, monkeypatch, [])
 
-    welcome.initializePage()
+    welcome.autodetect_button.click()
 
     assert welcome.competitor_offer.isHidden()
     assert welcome.competitor_import_button.text() == ""
     assert welcome.competitor_import_status.text() == ""
-    # Default screen leads with the walk-through; the guild file offer is a
-    # quiet flat button at the bottom, since most people never receive one.
+    # A dry search retires the lead quietly — no error, no nag, just the
+    # honest hint that Next sets things up by hand.
+    assert welcome.autodetect_button.isHidden()
+    assert welcome.autodetect_subtext.isHidden()
+    assert not welcome.autodetect_none_hint.isHidden()
+    # The guild file offer stays a quiet flat button at the bottom, since
+    # most people never receive one.
     assert not welcome.easy_path_intro.isHidden()
-    assert "Click Next to begin" in welcome.easy_path_intro.text()
     assert welcome.import_button.text() == "Use a Guild Setup File..."
     assert welcome.import_button.isFlat()
     assert welcome.guild_file_help.isHidden()
@@ -144,12 +193,16 @@ def test_scan_runs_once_and_discovery_errors_stay_quiet(
     wizard = sw.SetupWizard(Config(tmp_path / "config.properties"))
     welcome = wizard.page(sw.PAGE_WELCOME)
 
-    welcome.initializePage()
-    welcome.initializePage()
+    assert calls == []  # nothing hunted before the click
+
+    welcome.autodetect_button.click()
+    welcome.autodetect_button.click()
 
     assert calls == [1]  # once, and the failure never reached the user
     assert welcome.competitor_offer.isHidden()
     assert welcome.competitor_import_button.text() == ""
+    assert welcome.autodetect_button.isHidden()
+    assert not welcome.autodetect_none_hint.isHidden()
 
 
 def test_primary_offer_always_previews_named_tool_and_then_gently_asks_for_guild(
@@ -161,7 +214,7 @@ def test_primary_offer_always_previews_named_tool_and_then_gently_asks_for_guild
         SimpleNamespace(app="MzFightReporter"),
     ]
     wizard, welcome = make_wizard(tmp_path, monkeypatch, findings)
-    welcome.initializePage()
+    welcome.autodetect_button.click()
     previewed = []
     applied = []
     next_calls = []
@@ -195,7 +248,6 @@ def test_advanced_manual_path_stays_buried_until_user_opens_it(
     app, tmp_path, monkeypatch
 ):
     wizard, welcome = make_wizard(tmp_path, monkeypatch, [])
-    welcome.initializePage()
     calls = []
     monkeypatch.setattr(
         sw,
