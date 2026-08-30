@@ -490,7 +490,9 @@ class SettingsDialog(QDialog):
         # engine's _on_theme_changed; the engine's save path persists it.
         layout.addWidget(e.theme_group_box)
 
-        startup = QGroupBox("Startup & tray")
+        # && renders a literal ampersand; a bare & becomes a Qt mnemonic
+        # underscore ("Startup _tray") in the group title.
+        startup = QGroupBox("Startup && tray")
         sform = QVBoxLayout(startup)
         for attr in ("start_with_windows", "start_minimized",
                      "start_watcher_on_startup", "minimize_to_tray",
