@@ -44,6 +44,16 @@ THEMES = {
         "warn": "#D9A23C", "error": "#D9534F",
         "selection": "#2F4A33", "link": "#6CA9D8",
     },
+    "jade": {
+        # Matched to the JADE guild logo: flame-green lettering on pure black.
+        "label": "JADE", "dark": True,
+        "window": "#070B07", "sunken": "#040604", "raised": "#142014",
+        "border_strong": "#020302", "border": "#2A402A",
+        "text": "#EFF7EC", "dim": "#9CB59A",
+        "accent": "#3CC916", "accent_press": "#2B9A12",
+        "warn": "#D9A23C", "error": "#E05A55",
+        "selection": "#164016", "link": "#6CC7D8",
+    },
     "obsidian": {
         "label": "Obsidian (AMOLED)", "dark": True,
         "window": "#000000", "sunken": "#0C0C0C", "raised": "#181818",

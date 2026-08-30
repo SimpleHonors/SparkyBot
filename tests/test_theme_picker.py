@@ -1,7 +1,7 @@
 """Settings theme picker + per-theme token/contrast guarantees.
 
 (a) Every THEMES entry derives a complete token set (base + derived shades).
-(b) Text/window contrast stays strong for all 10 themes.
+(b) Text/window contrast stays strong for every theme.
 (c) The Settings Display-tab combo lists all themes and applying one changes
     the QApplication palette (and persists via the normal save path).
 """
@@ -44,7 +44,7 @@ _POSSIBLE_KEYS = frozenset(theme._BASE_KEYS) | {
 
 
 def test_every_theme_derives_a_complete_token_set():
-    assert len(theme.THEMES) == 10
+    assert len(theme.THEMES) >= 10  # full roster; additions welcome, removals suspicious
     for theme_id, spec in theme.THEMES.items():
         tokens = theme._tokens(spec)
         missing = _POSSIBLE_KEYS - set(tokens)
