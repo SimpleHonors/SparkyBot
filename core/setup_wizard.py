@@ -15,6 +15,9 @@ from pathlib import Path
 
 from core import theme
 from core.discord_bot import normalize_webhook_url
+from core.shareable_config import (
+    GuildConfigError, apply_guild_config, load_guild_config,
+)
 
 # Explicit page IDs. The default flow is ID order; declining AI on the
 # opt-in page removes the AI setup and voice pages from the flow entirely
@@ -42,7 +45,7 @@ class SetupWizard(QWizard):
         # No private palette or stylesheet here — the wizard inherits the
         # app-wide Workbench Dark theme applied in main.py (before this
         # wizard ever constructs).
-        self.setPage(PAGE_WELCOME, WelcomePage())
+        self.setPage(PAGE_WELCOME, WelcomePage(config))
         # LAW #2a: the AI question comes right after Welcome, before any
         # plumbing — a "No thanks" user never sees an AI setup page.
         self.ai_optin_page = AIOptInPage()
@@ -58,7 +61,8 @@ class SetupWizard(QWizard):
             self.setPage(PAGE_DEPENDENCIES, DependenciesPage())
         self.setPage(PAGE_GW2EI, GW2EIPage(config))
         self.setPage(PAGE_LOG_FOLDER, LogFolderPage(config))
-        self.setPage(PAGE_DISCORD, DiscordPage(config))
+        self.discord_page = DiscordPage(config)
+        self.setPage(PAGE_DISCORD, self.discord_page)
         self.twitch_page = TwitchPage(config)
         self.ai_page = AIAnalysisPage(config)
         self.tts_page = TTSVoicePage(config)
@@ -297,8 +301,9 @@ class DependenciesPage(QWizardPage):
 
 
 class WelcomePage(QWizardPage):
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
+        self.config = config
         self.setTitle("Welcome to SparkyBot")
         layout = QVBoxLayout(self)
         label = QLabel(
@@ -319,7 +324,58 @@ class WelcomePage(QWizardPage):
         label.setWordWrap(True)
         label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(label)
+        self.import_button = QPushButton("Import a guild config...")
+        self.import_button.setToolTip(
+            "Load Discord webhooks and limited guild defaults from a file."
+        )
+        self.import_button.clicked.connect(self._import_guild_config)
+        layout.addWidget(self.import_button)
+        self.import_status = QLabel("")
+        self.import_status.setWordWrap(True)
+        layout.addWidget(self.import_status)
         layout.addStretch()
+
+    def _import_guild_config(self):
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import SparkyBot Guild Config",
+            "",
+            "SparkyBot Guild Config (*.json);;JSON files (*.json)",
+        )
+        if not path:
+            return
+        try:
+            bundle = load_guild_config(path)
+        except GuildConfigError as exc:
+            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            return
+
+        count = bundle.configured_destination_count
+        answer = QMessageBox.question(
+            self,
+            "Import Guild Config?",
+            f"Load {count} Discord destination(s) from this file?\n\n"
+            "AI providers, API keys, Twitch, voice, file paths, and all "
+            "other settings are not part of guild config files.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            apply_guild_config(self.config, bundle, persist=False)
+        except GuildConfigError as exc:
+            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            return
+
+        wizard = self.wizard()
+        if wizard is not None and hasattr(wizard, "discord_page"):
+            wizard.discord_page.load_from_config()
+        theme.set_state(self.import_status, "success")
+        self.import_status.setText(
+            f"Imported {count} Discord destination(s). Continue through the "
+            "wizard for this computer's folders and optional integrations."
+        )
 
 
 class AIOptInPage(QWizardPage):
@@ -805,8 +861,6 @@ class DiscordPage(QWizardPage):
 
         self.webhook_edit = QLineEdit()
         self.webhook_edit.setPlaceholderText("https://discord.com/api/webhooks/...")
-        if config.discord_webhook:
-            self.webhook_edit.setText(config.discord_webhook)
         layout.addWidget(QLabel("Webhook URL:"))
         layout.addWidget(self.webhook_edit)
 
@@ -814,6 +868,12 @@ class DiscordPage(QWizardPage):
         layout.addWidget(self.skip_check)
 
         self.registerField("webhook", self.webhook_edit)
+        self.load_from_config()
+
+    def load_from_config(self):
+        """Refresh the visible first slot after a Welcome-page import."""
+        self.webhook_edit.setText(self.config.discord_webhook or "")
+        self.skip_check.setChecked(not self.config.enable_discord_bot)
 
     def validatePage(self):
         if self.skip_check.isChecked():

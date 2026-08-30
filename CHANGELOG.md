@@ -2,6 +2,20 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Import/export for portable guild config files containing Discord webhooks and
+  a small Discord-only settings allowlist. First-run setup can import the file
+  from the Welcome screen; existing installs use the File menu.
+
+### Security
+
+- Guild config export excludes AI, Twitch, voice, filesystem, and other app
+  secrets. Imports are size-bounded, versioned, fully validated before apply,
+  and reject every field outside the explicit allowlist.
+
 ## [2.0.2] — 2026-08-10
 
 ### Changed

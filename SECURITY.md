@@ -54,6 +54,20 @@ SparkyBot stores the following sensitive data in `config.properties` (plaintext)
 
 Users should protect this file with appropriate filesystem permissions. SparkyBot does not transmit these credentials to any server other than their intended destination (Discord API, Twitch IRC, configured AI provider).
 
+### Shareable Guild Config Files
+
+**File → Export Guild Config...** creates a portable JSON file containing
+Discord webhook URLs and a strict allowlist of Discord-only presentation and
+routing settings. The exporter never reads or writes AI provider keys, Twitch
+tokens, ElevenLabs keys, or filesystem paths. Import rejects unknown fields,
+unsupported versions, oversized files, and invalid webhook URLs before changing
+the live configuration.
+
+These files are intentionally portable, so their webhook credentials are not
+machine-encrypted. Keep them private. Export uses owner-only POSIX permissions
+where supported, but Discord webhook revocation is the reliable response to a
+lost or exposed file.
+
 ### Network Communication
 
 SparkyBot communicates with the following external services:

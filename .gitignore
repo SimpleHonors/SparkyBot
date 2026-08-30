@@ -5,6 +5,7 @@ config.properties
 config.*.properties
 *.properties
 config.ini
+sparkybot-guild-config*.json
 
 # --- runtime data, history & logs (NEVER commit) ---
 ai_prompt_*.json

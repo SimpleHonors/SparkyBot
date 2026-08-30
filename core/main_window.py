@@ -31,8 +31,8 @@ from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QGroupBox, QHBoxLayout,
-    QLabel, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QProgressBar, QPushButton, QStackedWidget, QVBoxLayout,
+    QFileDialog, QLabel, QListView, QListWidget, QListWidgetItem, QMainWindow,
+    QMenu, QMessageBox, QProgressBar, QPushButton, QStackedWidget, QVBoxLayout,
     QWidget,
 )
 from PySide6.QtGui import QIcon, QKeySequence
@@ -49,6 +49,10 @@ from core.raid_report_tab import _STAGE_BASE, _STAGE_SPAN
 from core.run_session import (
     RESUME_WINDOW_HOURS, STALE_HINT_HOURS, RunSession, collect_run_logs,
     format_elapsed,
+)
+from core.shareable_config import (
+    DEFAULT_FILENAME, GuildConfigError, apply_guild_config,
+    load_guild_config, write_guild_config,
 )
 from core.version import VERSION
 
@@ -200,6 +204,19 @@ class MainWindow(QMainWindow):
         self.action_watcher = file_menu.addAction("Start &Watcher")
         self.action_watcher.triggered.connect(self._on_start_clicked)
         file_menu.addSeparator()
+        self.action_import_guild_config = file_menu.addAction(
+            "&Import Guild Config..."
+        )
+        self.action_import_guild_config.triggered.connect(
+            self._import_guild_config
+        )
+        self.action_export_guild_config = file_menu.addAction(
+            "&Export Guild Config..."
+        )
+        self.action_export_guild_config.triggered.connect(
+            self._export_guild_config
+        )
+        file_menu.addSeparator()
         self.action_settings_dialog = file_menu.addAction("&Settings...")
         self.action_settings_dialog.setShortcut(QKeySequence("Ctrl+,"))
         self.action_settings_dialog.triggered.connect(
@@ -233,6 +250,89 @@ class MainWindow(QMainWindow):
         help_menu = bar.addMenu("&Help")
         self.action_about = help_menu.addAction("&About SparkyBot")
         self.action_about.triggered.connect(self._show_about)
+
+    def _import_guild_config(self, checked=False):
+        """Validate and apply a deliberately limited guild config bundle."""
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import SparkyBot Guild Config",
+            "",
+            "SparkyBot Guild Config (*.json);;JSON files (*.json)",
+        )
+        if not path:
+            return
+        try:
+            bundle = load_guild_config(path)
+        except GuildConfigError as exc:
+            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            return
+
+        count = bundle.configured_destination_count
+        answer = QMessageBox.question(
+            self,
+            "Import Guild Config?",
+            f"Replace this installation's Discord settings with {count} "
+            "configured destination(s)?\n\n"
+            "AI providers, API keys, Twitch, voice, file paths, and all "
+            "other settings will remain unchanged.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            apply_guild_config(self.config, bundle)
+        except GuildConfigError as exc:
+            QMessageBox.warning(self, "Guild Config Not Imported", str(exc))
+            return
+
+        if self._settings is not None:
+            self._settings._load_settings(prompt_updates=False)
+        self.settings_changed.emit()
+        QMessageBox.information(
+            self,
+            "Guild Config Imported",
+            f"Imported {count} Discord destination(s). No AI or provider "
+            "credentials were read from the file.",
+        )
+
+    def _export_guild_config(self, checked=False):
+        """Export only allowlisted Discord settings, never provider secrets."""
+        answer = QMessageBox.warning(
+            self,
+            "Discord Webhooks Are Credentials",
+            "This file will contain working Discord webhook URLs. Share it "
+            "privately. If it is exposed, revoke those webhooks in Discord.\n\n"
+            "AI provider tokens, Twitch tokens, voice keys, and local paths "
+            "will not be included.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export SparkyBot Guild Config",
+            str(Path.home() / DEFAULT_FILENAME),
+            "SparkyBot Guild Config (*.json)",
+        )
+        if not path:
+            return
+        target = Path(path)
+        if target.suffix.lower() != ".json":
+            target = target.with_name(target.name + ".json")
+        try:
+            bundle = write_guild_config(self.config, target)
+        except GuildConfigError as exc:
+            QMessageBox.warning(self, "Guild Config Not Exported", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Guild Config Exported",
+            f"Saved {bundle.configured_destination_count} Discord "
+            f"destination(s) to:\n{target}\n\nKeep this file private.",
+        )
 
     def _build_central(self):
         """Sidebar (QListWidget) + page stack (QStackedWidget)."""

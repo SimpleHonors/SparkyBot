@@ -106,6 +106,17 @@ enjoy owning more screwdrivers than furniture.
 
 Channel → gear icon (Edit Channel) → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**. Paste it into the setup wizard or Settings → Messaging.
 
+Guild admins can configure the Discord destinations once and choose **File →
+Export Guild Config...**. A guildie can load that file from the first-run
+Welcome screen or **File → Import Guild Config...**. The file contains only the
+three Discord webhook slots, destination names/routing, enabled state, bot name,
+and embed color. It never contains AI provider keys, Twitch tokens, voice keys,
+or local paths.
+
+> **Treat an exported guild config like a password.** Its Discord webhook URLs
+> can post to your channels. Share it privately and revoke the webhooks in
+> Discord if the file is exposed.
+
 ### Twitch
 
 1. Use (or make) a Twitch account for the bot
