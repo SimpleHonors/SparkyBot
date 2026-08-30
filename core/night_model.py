@@ -43,6 +43,21 @@ Schema of ``build_night_model(tiddlers) -> dict``::
                    "profession": str|None, "value": float|None,
                    "cells": [int|float]}]}
       ],
+      "highlights": {                  # headline support boards (operator
+                                       # ruling); top-10 per board, sorted
+                                       # by value desc, rank 1..N; row
+                                       # shape as leaderboards. Keys and
+                                       # their source table / metric:
+        "cleanses": [rows],            #   Support-Summary  condiCleanse
+        "strips": [rows],              #   Support-Summary  boonStrips
+        "healing": [rows],             #   Heal-Stats       Healing
+        "revives": [rows],             #   Support-Summary  resurrects
+        "downs": [rows],               #   Offensive-Summary downed
+        "down_contribution": [rows],   #   Offensive-Summary downContribution
+        "kills": [rows],               #   Offensive-Summary killed
+        "stability_uptime": [rows],    #   Uptimes  Stability (0-100 pct)
+      },                               # empty-with-warning only when the
+                                       # source table/column is absent
       "high_scores": {"blocks": [      # High-Scores flex-col blocks
          {"caption": str|None,
           "rows": [{"cells": [str], "score": float|None}]}
@@ -99,6 +114,38 @@ _STAT_TABLE_SUFFIXES = [
     "Attendance",
     "Combat-Resurrect",
 ]
+
+# Headline support boards (operator ruling). Values are top-10 per board,
+# sorted by the metric desc; row shape is identical to leaderboards rows.
+# Key spellings match the operator ruling verbatim.
+HIGHLIGHT_TOP_N = 10
+_HIGHLIGHTS_SPEC = (
+    ("cleanses",          "-Support-Summary",   "condicleanse"),
+    ("strips",            "-Support-Summary",   "boonstrips"),
+    ("healing",           "-Heal-Stats",        "healing"),
+    ("revives",           "-Support-Summary",   "resurrects"),
+    ("downs",             "-Offensive-Summary", "downed"),
+    ("down_contribution", "-Offensive-Summary", "downcontribution"),
+    ("kills",             "-Offensive-Summary", "killed"),
+    ("stability_uptime",  "-Uptimes",           "stability"),
+)
+_HL_IMG_ALT_RE = re.compile(r"\[img[^\]]*?\[([^|\]]+)\|")
+
+
+def _norm_header(cell):
+    """Normalize a header cell for metric-column matching (img alts
+    included): '!{{boonStrips}} %' / '![img ..[Stability|url]..]' ->
+    'boonstrips' / 'stability'."""
+    m = _HL_IMG_ALT_RE.search(cell)
+    name = m.group(1) if m else cell
+    return re.sub(r"[^A-Za-z0-9]", "", name).lower()
+
+
+def _metric_col(header_cells, token):
+    for i, c in enumerate(header_cells):
+        if _norm_header(c) == token:
+            return i
+    return None
 
 
 def _plain(cell):
@@ -351,7 +398,14 @@ def _parse_fights(tiddlers):
 # ------------------------------------------------------------ boards
 
 
-def _parse_board_rows(line_iter, ranked=False):
+def _parse_board_rows(line_iter, ranked=False, value_col=None,
+                      require_value=False):
+    """Parse wikitext table lines into board rows.
+
+    value_col: take "value" from this split-cell index instead of the
+    first numeric cell after the name (used by the highlights boards).
+    require_value: drop rows whose value is None.
+    """
     rows = []
     for line in line_iter:
         if not _is_data_row(line):
@@ -379,14 +433,22 @@ def _parse_board_rows(line_iter, ranked=False):
             continue
         value = None
         nums = []
-        for i, c in enumerate(raw_cells):
-            if i <= (name_i or 0):
-                continue
-            v = _num(c)
-            if v is not None:
-                nums.append(v)
-                if value is None:
-                    value = v
+        if value_col is not None:
+            if value_col < len(raw_cells):
+                value = _num(raw_cells[value_col])
+            if value is not None:
+                nums = [value]
+        else:
+            for i, c in enumerate(raw_cells):
+                if i <= (name_i or 0):
+                    continue
+                v = _num(c)
+                if v is not None:
+                    nums.append(v)
+                    if value is None:
+                        value = v
+        if require_value and value is None:
+            continue
         rows.append({"rank": int(rank) if rank is not None else None,
                      "name": name, "account": account,
                      "profession": profession, "value": value,
@@ -438,6 +500,51 @@ def _parse_stat_tables(tiddlers):
             stat = (t.get("caption") or suffix.replace("-", " ")).strip()
             tables.append({"stat": stat, "rows": rows})
     return tables
+
+
+# ------------------------------------------------------------ highlights
+
+
+def _parse_highlights(tiddlers):
+    """Build the eight headline support boards.
+
+    Returns ``(boards, warnings)``. A board is empty WITH a warning only
+    when its source table (or metric column) is genuinely absent from the
+    store; present-but-blank tables come back empty without a warning.
+    """
+    boards = {}
+    warnings = []
+    tag = _session_tag(tiddlers)
+    for key, suffix, token in _HIGHLIGHTS_SPEC:
+        t = None
+        if tag:
+            t = next((x for x in tiddlers
+                      if x.get("title", "") == tag + suffix), None)
+        if not t or not t.get("text"):
+            boards[key] = []
+            warnings.append(
+                f"highlights.{key}: source {suffix.lstrip('-')} tiddler "
+                "missing")
+            continue
+        lines = t["text"].split("\n")
+        header = next((l for l in lines if _is_header_row(l)), None)
+        col = _metric_col(_cells(header), token) if header else None
+        if col is None:
+            boards[key] = []
+            warnings.append(
+                f"highlights.{key}: column '{token}' not found in "
+                f"{suffix.lstrip('-')}")
+            continue
+        rows = _parse_board_rows(lines, value_col=col, require_value=True)
+        rows = [r for r in rows
+                if not re.search(r"\b(average|totals)\b", r["name"],
+                                 re.IGNORECASE)]
+        rows.sort(key=lambda r: r["value"], reverse=True)
+        top = rows[:HIGHLIGHT_TOP_N]
+        for i, r in enumerate(top, 1):
+            r["rank"] = i
+        boards[key] = top
+    return boards, warnings
 
 
 # ------------------------------------------------------- high scores
@@ -535,6 +642,7 @@ def build_night_model(tiddlers):
         "fights": [],
         "leaderboards": [],
         "stat_tables": [],
+        "highlights": {},
         "high_scores": None,
         "squad_composition": None,
         "poison": [],
@@ -556,6 +664,14 @@ def build_night_model(tiddlers):
         except Exception as exc:  # noqa: no bad sections, just warnings
             warnings.append(f"{name}: {type(exc).__name__}: {exc}")
             model[name] = default
+
+    try:
+        boards, hl_warns = _parse_highlights(copy.deepcopy(tiddlers))
+        model["highlights"] = boards
+        warnings.extend(hl_warns)
+    except Exception as exc:  # noqa
+        warnings.append(f"highlights: {type(exc).__name__}: {exc}")
+        model["highlights"] = {k: [] for k, _, _ in _HIGHLIGHTS_SPEC}
 
     try:
         model["poison"] = [
