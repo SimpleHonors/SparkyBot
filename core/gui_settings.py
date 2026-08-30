@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QFormLayout, QScrollArea, QSizePolicy,
     QComboBox, QFileDialog, QMessageBox, QProgressBar, QColorDialog,
     QTextEdit, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
-    QInputDialog, QRadioButton, QButtonGroup
+    QInputDialog, QRadioButton, QButtonGroup, QApplication
 )
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
@@ -713,11 +713,46 @@ class SettingsWindow(QWidget):
             grid.addWidget(cb, row, col)
 
         layout.addWidget(group)
+
+        # Interface Theme — applies LIVE on change so the user sees the new
+        # look immediately; persisted through the normal save path.
+        theme_group = QGroupBox("Interface Theme")
+        theme_form = QFormLayout(theme_group)
+        self.theme_combo = QComboBox()
+        for theme_id, label in theme.available_themes():
+            self.theme_combo.addItem(label, theme_id)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+        theme_form.addRow("Theme:", self.theme_combo)
+        theme_hint = QLabel(
+            "Color scheme for SparkyBot's windows. Changes apply instantly; "
+            "press Save Settings to keep your choice."
+        )
+        theme_hint.setWordWrap(True)
+        theme.mark_hint(theme_hint)
+        theme_form.addRow("", theme_hint)
+        layout.addWidget(theme_group)
+
         layout.addStretch()
 
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         return scroll
+
+    def _on_theme_changed(self, index: int):
+        """Live-apply the chosen theme: in-memory config + theme engine + palette.
+
+        The combo's USER role holds the theme id; config is updated immediately
+        so the normal save path (Save Settings) persists exactly what was
+        picked. apply_theme() restyles the running app (QSS, palette, font).
+        """
+        theme_id = self.theme_combo.itemData(index)
+        if not theme_id:
+            return
+        self.config.update('UI', 'theme', theme_id)
+        theme.set_theme(theme_id)
+        app = QApplication.instance()
+        if app is not None:
+            theme.apply_theme(app)
 
     def _create_behavior_tab(self) -> QWidget:
         """Create behavior configuration tab"""
@@ -2689,6 +2724,13 @@ class SettingsWindow(QWidget):
         self.show_defensive_boons.setChecked(self.config.show_defensive_boons)
         self.show_enemy_breakdown.setChecked(self.config.show_enemy_breakdown)
 
+        # Interface Theme (blocked: the change handler live-applies, but
+        # loading should never yank the running app's theme by itself)
+        self.theme_combo.blockSignals(True)
+        theme_index = self.theme_combo.findData(self.config.ui_theme)
+        self.theme_combo.setCurrentIndex(max(0, theme_index))
+        self.theme_combo.blockSignals(False)
+
         # Behavior
         self.close_to_tray.setChecked(self.config.close_to_tray)
         self.minimize_to_tray.setChecked(self.config.minimize_to_tray)
@@ -2883,6 +2925,7 @@ class SettingsWindow(QWidget):
         cfg('UI', 'showOffensiveBoons', str(self.show_offensive_boons.isChecked()))
         cfg('UI', 'showDefensiveBoons', str(self.show_defensive_boons.isChecked()))
         cfg('UI', 'showEnemyBreakdown', str(self.show_enemy_breakdown.isChecked()))
+        cfg('UI', 'theme', self.theme_combo.currentData() or theme.DEFAULT_THEME)
 
         # Behavior
         cfg('Behavior', 'closeToTray', str(self.close_to_tray.isChecked()))

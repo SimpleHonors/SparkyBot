@@ -209,6 +209,10 @@ def _spec():
 _ASSET_DIR = Path(__file__).parent.parent / "assets"
 _QSS_PATH = _ASSET_DIR / "theme_dark.qss"
 _TOKEN_RE = re.compile(r"@([a-z_]+)")
+# //@token placeholders must never be mistaken for substitution targets — the
+# stylesheet's own header comment documents the token contract, so comments
+# are stripped before substitution runs.
+_STYLE_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 # The template SVGs are authored in Workbench Dark colors; these literals are
 # rewritten to the active theme's tokens when the indicators are rendered.
@@ -249,7 +253,7 @@ def load_stylesheet() -> str:
             raise KeyError(f"theme_dark.qss references unknown token {name!r}")
         return tokens[name]
 
-    rendered = _TOKEN_RE.sub(_sub, raw)
+    rendered = _TOKEN_RE.sub(_sub, _STYLE_COMMENT_RE.sub("", raw))
     # QSS image URLs otherwise resolve against whatever folder launched the
     # app. Point them at the per-theme rendered indicator assets.
     try:
