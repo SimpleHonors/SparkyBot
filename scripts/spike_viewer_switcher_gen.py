@@ -62,9 +62,15 @@ def fight_tiddlers(n):
     return tids
 
 
+REAL_NIGHT = Path(__file__).parent / "real_night.json"
+
+
 def main():
     viewer = VIEWER.read_text(encoding="utf-8", errors="replace")
-    tids = fight_tiddlers(N_FIGHTS)
+    tids = json.loads(REAL_NIGHT.read_text(encoding="utf-8"))
+    # Open the night summary immediately instead of TW's default landing page.
+    summary = next(t["title"] for t in tids if t["title"].endswith("-Log-Summary"))
+    tids = tids + [{"title": "$:/DefaultTiddlers", "text": f"[[{summary}]]"}]
     tid_json = json.dumps(tids)
     report_html = _append_tiddler_block(viewer, tids)
 
@@ -76,32 +82,54 @@ function extractStore(html){
   var opener='<script class="tiddlywiki-tiddler-store" type="application/json">';
   var i=html.lastIndexOf(opener); if(i<0) return null;
   var j=html.indexOf('<\/script>', i);
-  var txt=html.slice(i+opener.length, j);
-  return JSON.parse(txt);
+  return JSON.parse(html.slice(i+opener.length, j));
 }
 function esc(s){var d=document.createElement('i');d.textContent=s;return d.innerHTML;}
+function clean(cell){
+  return cell.replace(/\[img[^\]]*\[[^\]]*\]\]/g,'')
+             .replace(/\{\{([^}]*)\}\}/g,'$1')
+             .replace(/<[^>]+>/g,'')
+             .replace(/^[!\s]+|[\s]+$/g,'');
+}
+function wikitextTables(text, maxRows){
+  var out=[], rows=[], count=0;
+  text.split('\n').forEach(function(line){
+    if(line.charAt(0)!=='|'){ if(rows.length){out.push(rows);rows=[];} return; }
+    if(/\|[kc]$/.test(line)) return;                  // class/caption rows
+    if(count>=maxRows) return;
+    var body=line.replace(/\|[hf]$/,'');
+    var cells=body.split('|').slice(1,-1).map(clean).filter(function(c,i,a){return !(c===''&&a.length<2);});
+    if(cells.join('')==='') return;
+    rows.push(cells); count++;
+  });
+  if(rows.length)out.push(rows);
+  return out;
+}
+function tableHtml(rows){
+  var h=['<table>'];
+  rows.forEach(function(r,i){
+    var tag=i===0?'th':'td';
+    h.push('<tr>'+r.map(function(c){return '<'+tag+'>'+esc(c)+'</'+tag+'>';}).join('')+'</tr>');});
+  h.push('</table>'); return h.join('');
+}
 function renderSimple(html){
   var tids=extractStore(html)||[];
-  var fights=tids.filter(function(t){return /_Overview$/.test(t.title);});
-  var boards=tids.filter(function(t){return /_Top_/.test(t.title);});
+  function find(sfx){return tids.filter(function(t){return t.title&&t.title.indexOf(sfx)>=0;})[0];}
+  var summary=find('-Log-Summary'), tag=find('-Tag_Stats'), ov=find('-Overview');
   var h=['<!doctype html><meta charset=utf-8><title>Simple skin</title>',
-    '<style>body{font-family:system-ui;background:#101720;color:#e8eef4;margin:16px}',
-    'h1{color:#4c8ed9}table{border-collapse:collapse;margin:8px 0}',
-    'td,th{border:1px solid #2a3a4c;padding:2px 8px;font-size:13px}',
-    'th{background:#1a2430;position:sticky;top:0}</style>',
-    '<h1>Combined Fight Log Summary — Simple skin (SYNTHETIC spike data)</h1>',
-    '<p>', fights.length, ' fights. Same payload as Classic, different everything.</p>'];
-  h.push('<h2>Fights</h2><table><tr><th>#</th><th>First line</th></tr>');
-  fights.forEach(function(f,i){
-    h.push('<tr><td>'+(i+1)+'</td><td>'+esc(f.text.split('\n')[1]||'')+'</td></tr>');});
-  h.push('</table>');
-  boards.slice(0,2).forEach(function(b){
-    h.push('<h2>'+esc(b.title.replace(/^\d+_/,'').replace(/_/g,' '))+'</h2><table>');
-    b.text.split('\n').slice(0,11).forEach(function(r){
-      if(r.charAt(0)!=='|')return;
-      var cells=r.replace(/\|h$/,'').split('|').filter(Boolean);
-      h.push('<tr>'+cells.map(function(c){return '<td>'+esc(c.replace(/^!/,''))+'</td>';}).join('')+'</tr>');});
-    h.push('</table>');});
+    '<style>body{font-family:system-ui;background:#101720;color:#e8eef4;margin:16px;max-width:1100px}',
+    'h1{color:#4c8ed9;font-size:22px}h2{color:#7fb3e8;font-size:16px;margin-top:24px}',
+    'table{border-collapse:collapse;margin:8px 0;width:100%}',
+    'td,th{border:1px solid #2a3a4c;padding:3px 10px;font-size:13px;text-align:left}',
+    'th{background:#1a2430;position:sticky;top:0}tr:nth-child(even) td{background:#0d1319}</style>',
+    '<h1>Combined Fight Log Summary — Simple skin</h1>'];
+  if(summary)h.push('<p>'+esc(summary.caption||summary.title)+'</p>');
+  if(tag){h.push('<h2>Command Tag Summary</h2>');
+    wikitextTables(tag.text,40).forEach(function(t){h.push(tableHtml(t));});}
+  if(ov){h.push('<h2>Overview</h2>');
+    wikitextTables(ov.text,60).forEach(function(t){h.push(tableHtml(t));});}
+  h.push('<h2>Everything else</h2><p>This skin shows the headline slice; the '+
+         'Classic tab has all '+tids.length+' sections. Same file, same data.</p>');
   return h.join('');
 }
 """
@@ -122,7 +150,7 @@ function renderSimple(html){
  <strong>Report style:</strong>
  <button id=b_classic>Classic</button>
  <button id=b_simple>Simple</button>
- <span id=meta>SYNTHETIC spike · payload %PAYLOAD_MB%MB packed</span>
+ <span id=meta>real night 2026-07-08 · payload %PAYLOAD_MB%MB packed</span>
 </div>
 <div id=load>Unpacking report data…</div>
 <iframe id=frame hidden></iframe>
@@ -157,7 +185,7 @@ function renderSimple(html){
    document.getElementById('b_simple').className=skin==='simple'?'on':'';
    try{localStorage.setItem('sb-report-skin',skin);}catch(e){}
    document.getElementById('meta').textContent=
-     'SYNTHETIC spike · decompress '+times.decompress+'ms · skin build '+(times[skin]||0)+'ms';
+     'real night 2026-07-08 · decompress '+times.decompress+'ms · skin build '+(times[skin]||0)+'ms';
  }
  document.getElementById('b_classic').onclick=function(){show('classic');};
  document.getElementById('b_simple').onclick=function(){show('simple');};
@@ -182,12 +210,12 @@ function renderSimple(html){
 
     stats = {
         "viewer_bytes": VIEWER.stat().st_size,
-        "synthetic_tiddler_json_bytes": len(tid_json),
+        "real_tiddler_json_bytes": len(tid_json),
         "report_html_bytes": len(raw),
         "gzip_payload_b64_bytes": len(payload),
         "shell_chrome_bytes": len(shell) - len(payload),
         "total_shell_bytes": len(shell),
-        "fights": N_FIGHTS,
+        
         "tiddlers": len(tids),
     }
     for k, v in stats.items():
