@@ -42,6 +42,10 @@ pip install -r requirements.txt pyinstaller
 pyinstaller --clean --noconfirm build\sparkybot.spec
 ```
 
+**Installer diet / spec changes:** before rebuilding after any spec edit,
+read `build/WINDOWS_REBUILD_NOTES.md` for the expected before/after sizes
+and the DLL presence checks.
+
 ## Output layout
 
 ```

@@ -43,19 +43,47 @@ a = Analysis(
         'tests',
         'unittest',
         'test',
+        # SparkyBot is a Widgets-only app: QML/Quick and Pdf are never
+        # imported, but PySide6 hooks pull Qt6Quick/Qt6Qml/Qt6Pdf DLLs in
+        # if the modules stay analyzable.  Exclude them explicitly.
+        # Keep PySide6.QtMultimedia/QtMultimediaWidgets/QtTextToSpeech:
+        # core/tts.py and core/setup_wizard.py play TTS audio via
+        # QMediaPlayer/QAudioOutput (which also keeps the FFmpeg
+        # avcodec/avformat/avutil DLLs legitimately required).
+        'PySide6.QtQuick',
+        'PySide6.QtQml',
+        'PySide6.QtQmlModels',
+        'PySide6.QtPdf',
     ],
     noarchive=False,
     optimize=0,
 )
 
+# Drop binaries that Qt's PySide6 binary hooks collect but that this app
+# can never use.  Module excludes above remove the Qt modules; these two are
+# loose DLLs (software-OpenGL fallback + Direct2D platform plugin) that are
+# collected unconditionally, so strip them from the collected binary list.
+# COLLECT reads a.binaries, so filtering here removes them from the bundle.
+_DEAD_BINARIES = (
+    'opengl32sw.dll',   # 20.6 MB software GL fallback; ANGLE/DX path is used
+    'qdirect2d',        # Direct2D platform plugin; 'windows' platform plugin used
+)
+a.binaries = [
+    b for b in a.binaries
+    if not any(d in str(part).lower() for part in b[:2] for d in _DEAD_BINARIES)
+]
+
 pyz = PYZ(a.pure)
 
+# Onedir build: the EXE must be a thin bootloader only.  Passing a.binaries
+# / a.datas positionally to EXE embeds a second copy of every DLL (full Qt
+# set included) inside SparkyBot.exe while COLLECT ships them again in
+# _internal/.  exclude_binaries=True keeps binaries solely in COLLECT's
+# _internal/ output.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
-    [],
+    exclude_binaries=True,
     name='SparkyBot',
     debug=False,
     bootloader_ignore_signals=False,
