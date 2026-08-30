@@ -140,9 +140,10 @@ changes the source tool.
 
 Choose **File → Create Setup for Another Log Tool...** to go the other way.
 SparkyBot can create real settings for AxiBridge, TopStatsAIO, PlenBot,
-MzFightReporter, WvW Insights, and EVTC_parser. Unknown settings are preserved,
-existing files are backed up, and the app clearly names anything that cannot
-transfer. This is a one-time, user-approved move—not a background sync process.
+MzFightReporter, WvW Insights, EVTC_parser, and GW2 EI Log Combiner. Unknown
+settings are preserved, existing files are backed up, and the app clearly
+names anything that cannot transfer. This is a one-time, user-approved
+move—not a background sync process.
 
 We use, credit, and were influenced by this ecosystem. The linked
 [interoperability guide](docs/WVW_LOG_TOOL_INTEROPERABILITY.md) says where each

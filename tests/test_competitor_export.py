@@ -238,6 +238,76 @@ def test_evtc_export_refuses_gw2_wvw_teams_roster_config(tmp_path):
     assert roster.read_text(encoding="utf-8") == original
 
 
+def test_evtc_export_preserves_comments_and_unrelated_ini_sections(tmp_path):
+    config, _logs = configured_sparky(tmp_path)
+    destination = tmp_path / "EVTC_parser"
+    destination.mkdir()
+    target = destination / "config.ini"
+    target.write_text(
+        "# neighbor comment\n"
+        "[Settings]\n"
+        "ARCDPS_LOG_DIR = old\n"
+        "WEBHOOK_URL = old-hook\n"
+        "KEEP_ME = yes\n\n"
+        "[Colors]\n"
+        "theme = purple\n",
+        encoding="utf-8",
+    )
+
+    export_competitor_config(config, "evtc-parser", destination)
+    rendered = target.read_text(encoding="utf-8")
+
+    assert "# neighbor comment" in rendered
+    assert "KEEP_ME = yes" in rendered
+    assert "[Colors]\ntheme = purple" in rendered
+    assert f"ARCDPS_LOG_DIR = {config.log_folder}" in rendered
+    assert webhook(1, "fight-secret") in rendered
+
+
+def test_combiner_export_changes_only_the_nightly_webhook(tmp_path):
+    config, _logs = configured_sparky(tmp_path)
+    destination = tmp_path / "GW2_EI_log_combiner"
+    destination.mkdir()
+    target = destination / "top_stats_config.ini"
+    original_input = r"D:\generated-elite-insights-json"
+    target.write_text(
+        "# keep this comment\n"
+        "[TopStatsCfg]\n"
+        f"input_directory = {original_input}\n"
+        "compress_standalone_html = false\n\n"
+        "[DiscordCfg]\n"
+        "webhook_url = false\n"
+        "discord_additional_notes = Keep this too\n",
+        encoding="utf-8",
+    )
+
+    result = export_competitor_config(config, "gw2-ei-combiner", destination)
+    rendered = target.read_text(encoding="utf-8")
+    finding = parse_competitor_config(target)
+
+    assert result.target.name == "GW2 EI Log Combiner"
+    assert finding.app == "TopStats / GW2 EI Log Combiner"
+    assert finding.log_folders == ()
+    assert finding.webhooks[0].url == webhook(2, "nightly-secret")
+    assert "# keep this comment" in rendered
+    assert f"input_directory = {original_input}" in rendered
+    assert "compress_standalone_html = false" in rendered
+    assert "discord_additional_notes = Keep this too" in rendered
+    assert result.backup_files
+
+
+def test_combiner_export_can_create_a_minimal_discord_handoff(tmp_path):
+    config, _logs = configured_sparky(tmp_path)
+    destination = tmp_path / "new-combiner"
+
+    export_competitor_config(config, "gw2-ei-combiner", destination)
+
+    rendered = (destination / "top_stats_config.ini").read_text(encoding="utf-8")
+    assert "[DiscordCfg]" in rendered
+    assert f"webhook_url = {webhook(2, 'nightly-secret')}" in rendered
+    assert "input_directory" not in rendered
+
+
 def test_mz_properties_preserve_unknown_lines_and_comments(tmp_path):
     config, _logs = configured_sparky(tmp_path)
     destination = tmp_path / "MzFightReporter"

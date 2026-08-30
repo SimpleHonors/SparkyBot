@@ -92,6 +92,13 @@ COMPETITOR_EXPORT_TARGETS = (
         "fight-log folder and individual-fight Discord route",
         "nightly routing and every optional SparkyBot feature",
     ),
+    CompetitorExportTarget(
+        "gw2-ei-combiner",
+        "GW2 EI Log Combiner",
+        ("top_stats_config.ini",),
+        "nightly debrief Discord route",
+        "raw ArcDPS logs, generated-EI input paths, AI, voice, Twitch, and private credentials",
+    ),
 )
 
 _TARGETS = {target.key: target for target in COMPETITOR_EXPORT_TARGETS}
@@ -168,6 +175,12 @@ def export_preview(config: Any, target_key: str) -> str:
             f"Individual fights will post to: {values.fight[0]}"
             if values.fight
             else "Individual fights: no Discord destination configured"
+        )
+    elif target.key == "gw2-ei-combiner":
+        lines.append(
+            f"Nightly debrief will post to: {values.nightly[0]}"
+            if values.nightly
+            else "Nightly debrief: no Discord destination configured"
         )
     elif target.key != "topstatsaio":
         destinations = [name for name, url in values.webhooks if url]
@@ -364,6 +377,72 @@ def _patch_properties_text(text: str, updates: dict[str, str]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _read_existing_text(path: Path, description: str) -> str:
+    if not path.exists():
+        return ""
+    if path.is_symlink() or not path.is_file():
+        raise CompetitorConfigError(f"Refusing to replace non-regular file: {path}")
+    try:
+        if path.stat().st_size > MAX_CONFIG_BYTES:
+            raise CompetitorConfigError(f"{path.name} is too large to patch safely.")
+        return path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        if isinstance(exc, CompetitorConfigError):
+            raise
+        raise CompetitorConfigError(f"Could not read {description} settings.") from exc
+
+
+def _patch_ini_section(text: str, section: str, updates: dict[str, str]) -> str:
+    """Patch one INI section without erasing comments or unrelated settings."""
+    remaining = dict(updates)
+    rendered: list[str] = []
+    in_target = False
+    section_seen = False
+
+    def append_missing() -> None:
+        rendered.extend(f"{key} = {value}" for key, value in remaining.items())
+        remaining.clear()
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        section_match = re.fullmatch(r"\[([^]]+)]", stripped)
+        if section_match:
+            if in_target:
+                append_missing()
+            in_target = section_match.group(1).strip().casefold() == section.casefold()
+            section_seen = section_seen or in_target
+            rendered.append(line)
+            continue
+        if in_target and stripped and not stripped.startswith(("#", ";")):
+            key_match = re.match(r"(\s*)([^:=\s]+)(\s*[:=]\s*)(.*)$", line)
+            if key_match:
+                existing_key = key_match.group(2)
+                wanted = next(
+                    (
+                        candidate
+                        for candidate in remaining
+                        if candidate.casefold() == existing_key.casefold()
+                    ),
+                    None,
+                )
+                if wanted is not None:
+                    rendered.append(
+                        f"{key_match.group(1)}{existing_key}"
+                        f"{key_match.group(3)}{remaining.pop(wanted)}"
+                    )
+                    continue
+        rendered.append(line)
+
+    if in_target:
+        append_missing()
+    if remaining and not section_seen:
+        if rendered and rendered[-1].strip():
+            rendered.append("")
+        rendered.append(f"[{section}]")
+        append_missing()
+    return "\n".join(rendered).rstrip("\n") + "\n"
+
+
 def _patch_mz(directory: Path, values: _SparkyValues) -> dict[Path, str]:
     path = directory / "config.properties"
     if path.exists():
@@ -462,12 +541,11 @@ def _patch_evtc(directory: Path, values: _SparkyValues) -> dict[Path, str]:
     path = directory / "config.ini"
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
+    text = _read_existing_text(path, "EVTC_parser")
     if path.exists():
-        if path.is_symlink() or not path.is_file():
-            raise CompetitorConfigError(f"Refusing to replace non-regular file: {path}")
         try:
-            parser.read(path, encoding="utf-8-sig")
-        except (OSError, UnicodeError, configparser.Error) as exc:
+            parser.read_string(text)
+        except configparser.Error as exc:
             raise CompetitorConfigError("Could not read EVTC_parser settings.") from exc
         settings_keys = (
             {key.casefold() for key, _value in parser.items("Settings")}
@@ -479,15 +557,53 @@ def _patch_evtc(directory: Path, values: _SparkyValues) -> dict[Path, str]:
                 "That config.ini is not an existing EVTC_parser setup. Choose "
                 "a separate export folder so another tool's INI is not changed."
             )
-    if not parser.has_section("Settings"):
-        parser.add_section("Settings")
-    parser.set("Settings", "ARCDPS_LOG_DIR", values.log_folder)
-    parser.set("Settings", "WEBHOOK_URL", values.fight[1] if values.fight else "")
-    from io import StringIO
+    return {
+        path: _patch_ini_section(
+            text,
+            "Settings",
+            {
+                "ARCDPS_LOG_DIR": values.log_folder,
+                "WEBHOOK_URL": values.fight[1] if values.fight else "",
+            },
+        )
+    }
 
-    buffer = StringIO()
-    parser.write(buffer)
-    return {path: buffer.getvalue()}
+
+def _patch_gw2_ei_combiner(
+    directory: Path, values: _SparkyValues
+) -> dict[Path, str]:
+    """Hand off only the Combiner's confirmed nightly Discord setting.
+
+    ``input_directory`` contains generated Elite Insights JSON, not ArcDPS
+    encounter logs, so it is deliberately left alone.
+    """
+    path = directory / "top_stats_config.ini"
+    text = _read_existing_text(path, "GW2 EI Log Combiner")
+    if path.exists():
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read_string(text)
+        except configparser.Error as exc:
+            raise CompetitorConfigError(
+                "Could not read GW2 EI Log Combiner settings."
+            ) from exc
+        if not (parser.has_section("TopStatsCfg") or parser.has_section("DiscordCfg")):
+            raise CompetitorConfigError(
+                "That top_stats_config.ini is not a recognized GW2 EI Log "
+                "Combiner setup. Choose a separate export folder."
+            )
+    nightly = values.nightly
+    if not nightly:
+        raise CompetitorConfigError(
+            "Set a nightly Discord destination before exporting to the Combiner."
+        )
+    return {
+        path: _patch_ini_section(
+            text,
+            "DiscordCfg",
+            {"webhook_url": nightly[1]},
+        )
+    }
 
 
 _BUILDERS: dict[str, Callable[[Path, _SparkyValues], dict[Path, str]]] = {
@@ -497,6 +613,7 @@ _BUILDERS: dict[str, Callable[[Path, _SparkyValues], dict[Path, str]]] = {
     "mzfightreporter": _patch_mz,
     "wvw-insights": _patch_wvw_insights,
     "evtc-parser": _patch_evtc,
+    "gw2-ei-combiner": _patch_gw2_ei_combiner,
 }
 
 

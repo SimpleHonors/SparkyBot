@@ -56,7 +56,7 @@ setting to write.
 | [MzFightReporter](https://github.com/Swedemon/MzFightReporter) | Yes | Yes | Raw logs, three named webhooks, active route, adjacent EI executable |
 | [WvW Insights](https://github.com/Retherichus/wvw-insights) | Yes | Yes | Raw logs and saved webhooks |
 | [EVTC_parser](https://github.com/Drevarr/EVTC_parser) | Yes | Yes | Raw logs and fight webhook |
-| [GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner) | Yes | — | Nightly webhook only; `input_directory` is generated EI JSON and is never imported as raw logs |
+| [GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner) | Yes | Yes | Nightly webhook only; `input_directory` is generated EI JSON and is never treated as raw logs |
 | [GW2 Manny Uploader](https://github.com/LoganWal/GW2-MannyUploader) | Yes | — | Raw logs; separate credentials intentionally ignored |
 | [GW2Scratch Log Manager](https://github.com/gw2scratch/evtc) | Yes | — | One or more raw-log roots |
 | [Nexus Wingman Uploader](https://github.com/belst/nexus-wingman-uploader) | Yes | — | Raw-log folder |
