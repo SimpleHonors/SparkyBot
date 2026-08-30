@@ -94,6 +94,8 @@ def test_imported_setup_has_two_required_steps_then_ready(
     assert "Logspam" in wizard.complete_page.summary_label.text()
     assert "Nightly Debrief & Logs" in wizard.complete_page.summary_label.text()
     assert "AI, voice, and Twitch are off" in wizard.complete_page.summary_label.text()
+    assert "click Start Run" in wizard.complete_page.summary_label.text()
+    assert "Start Watcher" not in wizard.complete_page.summary_label.text()
     assert config.enable_discord_bot is True
     assert config.enable_ai_analysis is False
     assert config.tts_enabled is False

@@ -2306,7 +2306,7 @@ class CompletePage(QWizardPage):
         layout = QVBoxLayout(self)
         self.summary_label = QLabel(
             "SparkyBot is configured and ready.\n\n"
-            "Click Finish and Open SparkyBot, then click Start Watcher."
+            "Click Finish and Open SparkyBot, then click Start Run."
         )
         self.summary_label.setWordWrap(True)
         self.summary_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -2322,12 +2322,12 @@ class CompletePage(QWizardPage):
                 f"✓ {bundle.routing_summary().replace(chr(10), chr(10) + '✓ ')}\n"
                 "✓ AI, voice, and Twitch are off\n"
                 "✓ This computer's parser and fight-log folder are ready\n\n"
-                "Click Finish and Open SparkyBot, then click Start Watcher."
+                "Click Finish and Open SparkyBot, then click Start Run."
             )
         else:
             self.summary_label.setText(
                 "SparkyBot is configured and ready.\n\n"
-                "Click Finish and Open SparkyBot, then click Start Watcher."
+                "Click Finish and Open SparkyBot, then click Start Run."
             )
         if wizard is not None:
             wizard.setButtonText(
