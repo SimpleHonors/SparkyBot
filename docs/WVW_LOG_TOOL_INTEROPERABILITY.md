@@ -71,6 +71,15 @@ setting to write.
 | [GW2-WVW-Teams](https://github.com/Drevarr/GW2-WVW-Teams) | — | — | Roster/alliance webhook is intentionally not a fight-log destination |
 | [TopStatsDash](https://github.com/Drevarr/TopStatsDash) | — | — | Reads generated SQLite analysis databases; no raw-log settings |
 
+### Adapter confidence
+
+The 7 export targets and the major import paths were checked against their
+reviewed repository schemas and have direct round-trip or collision tests.
+Long-tail import-only adapters are best-effort format integrations backed by
+fixtures and reviewed field names, not proof that every released installer and
+historic config version works. Their preview is therefore a required consent
+step: verify the displayed folder and channel names before applying them.
+
 ## Where SparkyBot differs today
 
 SparkyBot invokes the combiner's `--standalone-html` option and sets
@@ -106,11 +115,14 @@ bundle that project's implementation.
 | MzFightReporter, PlenBot, TopStatsAIO, Elite Insights | MIT | Linked and credited; only Elite Insights is bundled, with its license text. |
 | AxiBridge / AxiPulse | GPL-3.0 | Format-only interoperability; no source or binary reuse. |
 | EVTC_parser, GW2 EI Log Combiner, arcdps_top_stats_parser, GW2-WVW-Teams, TopStatsDash | GPL-3.0 | Original format adapters where compatible; adjacent projects are linked and credited without code, asset, or settings reuse. The combiner remains a separately downloaded/executed program. |
-| WvW Insights | No license file published at the reviewed revision | Format-only interoperability and zero code/asset reuse. |
+| WvW Insights | No license file published at the reviewed revision | No license grant is inferred; format-only interoperability and zero code/asset reuse. |
 | L0G-101086 | BSD-3-Clause | Linked and credited; settings format only. |
 | Wingman uploader, GW2Scratch, Commanders Watch, arclog, LogUploader2, arcdps-uploader | MIT | Linked and credited; settings format only. |
-| Manny Uploader, WvW Log Uploader, toxic-elitist | No license file found at the reviewed revision | Format-only interoperability and zero code/asset reuse. |
+| Manny Uploader, WvW Log Uploader, toxic-elitist | No license file found at the reviewed revision | No license grant is inferred; read-only format imports and zero code/asset reuse. |
 
 License labels should be rechecked when an adapter changes because upstream
 projects can relicense. SparkyBot's definitive bundled-component compliance
 record remains [LICENSES.md](../LICENSES.md).
+
+This is the project's conservative engineering boundary, not a legal opinion.
+Obtain legal review before public distribution if formal assurance is required.
