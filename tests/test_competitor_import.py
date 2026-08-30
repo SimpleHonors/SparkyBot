@@ -138,6 +138,19 @@ def test_mzfightreporter_imports_every_safe_matching_preference(tmp_path):
     assert config.raid_report_discord_webhook == 1
 
 
+def test_sparkybot_does_not_identify_its_own_config_as_mzfightreporter(tmp_path):
+    config_path = tmp_path / "config.properties"
+    config = Config(config_path)
+    config.update("Paths", "logFolder", str(tmp_path / "logs"))
+    assert config.save()
+
+    with pytest.raises(
+        CompetitorConfigError,
+        match="not MzFightReporter's config",
+    ):
+        parse_competitor_config(config_path)
+
+
 def test_plenbot_pairs_app_settings_with_active_discord_webhooks(tmp_path):
     logs = tmp_path / "cbtlogs"
     gw2 = tmp_path / "Guild Wars 2"
