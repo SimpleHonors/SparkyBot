@@ -85,28 +85,69 @@ function extractStores(html){
 }
 function esc(s){var d=document.createElement('i');d.textContent=s;return d.innerHTML;}
 function strip(c){return c.replace(/<[^>]+>/g,'').replace(/\{\{[^}]*\}\}/g,'').replace(/[!\s]+/g,' ').trim();}
-function board(t, valueLabel){
-  if(!t)return '';
-  var rows=[];
-  t.text.split('\n').forEach(function(line){
-    if(line.charAt(0)!=='|'||/\|[hkcf]$/.test(line))return;
-    var cells=line.split('|').slice(1,-1);
-    if(cells.length<8)return;
-    var rank=strip(cells[0]), name=strip(cells[1]), prof=strip(cells[2]), val=strip(cells[7]);
-    if(!/^\d+$/.test(rank)||rows.length>=10)return;
-    rows.push([rank,name,prof,val]);
-  });
-  if(!rows.length)return '';
-  var h=['<div class=board><h2>'+esc((t.caption||valueLabel).replace(/[^\x20-\x7E]/g,'').trim()||valueLabel)+'</h2><table>',
-    '<tr><th>#</th><th>Player</th><th>Class</th><th class=n>'+esc(valueLabel)+'</th></tr>'];
-  rows.forEach(function(r){
-    h.push('<tr><td class=n>'+esc(r[0])+'</td><td>'+esc(r[1])+'</td><td>'+esc(r[2])+'</td><td class=n>'+esc(r[3])+'</td></tr>');});
-  h.push('</table></div>'); return h.join('');
-}
+function fmt(v){return (v%1)?v.toFixed(1):v.toLocaleString();}
 function renderSimple(html){
   var tids=extractStores(html);
   function find(sfx){for(var k=tids.length-1;k>=0;k--){var t=tids[k];
     if(t.title&&t.title.indexOf(sfx)>=0&&t.title.charAt(0)!=='$')return t;}return null;}
+  function wcells(s){return s.replace(/\[img[^\]]*?\[([^\]\[]+)\|[^\]]*?\]\]/g,'{$1}');}
+  function findEnd(sfx){for(var k=tids.length-1;k>=0;k--){var t=tids[k];
+    if(!t.title||t.title.charAt(0)==='$')continue;
+    if(!t.title.endsWith(sfx))continue;
+    if(sfx.charAt(0)==='-'&&!/[0-9]/.test(t.title.charAt(t.title.length-sfx.length-1)))continue;
+    return t;}return null;}
+
+function metricBoard(sfx, token, label){
+  // Headline support board: parse the named source table's metric column
+  // (same normalization as core/night_model._norm_header), sort by value
+  // desc, render top 10 as rank/Player/Class/value.
+  var t=findEnd(sfx);
+  if(!t)return '';
+  var lines=t.text.split('\n'), col=-1;
+  var norm=function(c){var m=/\[img[^\]]*?\[([^|\]]+)\|/.exec(c);
+    return (m?m[1]:c).replace(/[^A-Za-z0-9]/g,'').toLowerCase();};
+  lines.forEach(function(L0){
+    var L=L0.replace(/\s+$/,'');
+    if(col>=0||L.charAt(0)!=='|'||!/\|[hk]$/.test(L))return;
+    var hc=wcells(L.replace(/\|[hk]$/,'')).split('|').slice(1);
+    for(var q=0;q<hc.length;q++){if(norm(hc[q])===token){col=q;break;}}
+  });
+  if(col<0)return '';
+  var rows=[];
+  lines.forEach(function(L0){
+    var L=L0.replace(/\s+$/,'');
+    if(L.charAt(0)!=='|'||/\|[hkcf]$/.test(L))return;
+    var cells=wcells(L).split('|').slice(1,-1);
+    if(cells.length<=col)return;
+    var val=parseFloat(cells[col].replace(/,/g,'').replace(/%$/,''));
+    if(!isFinite(val))return;
+    var nm='',prof='',acc=null,tip=/data-tooltip=['"]([^'"]+)['"]/.exec(L);
+    if(tip)acc=tip[1];
+    for(var q=1;q<cells.length;q++){var s=strip(cells[q]);
+      if(s&&!/^[0-9.,%]+$/.test(s)&&/[A-Za-z]/.test(s)){nm=s;break;}}
+    for(var q=0;q<cells.length;q++){
+      var m2=/\{\{\s*([A-Za-z][A-Za-z0-9 ]*?)\s*\}\}/.exec(cells[q]);
+      if(m2){prof=m2[1].trim();break;}}
+    if(!nm||/\b(average|totals)\b/i.test(nm))return;
+    rows.push([nm,acc,prof,val]);
+  });
+  var best={},order=[];
+  rows.forEach(function(r){var k=r[1]||r[0];
+    if(!(k in best)){best[k]=r;order.push(k);}
+    else if(r[3]>best[k][3])best[k]=r;});
+  rows=order.map(function(k){return best[k];});
+  if(!rows.length)return '';
+  rows.sort(function(a,b){return b[3]-a[3];});
+  rows=rows.slice(0,10);
+  var h=['<div class=board><h2>'+esc(label)+'</h2><table>',
+    '<tr><th>#</th><th>Player</th><th>Class</th><th class=n>'+esc(label)+'</th></tr>'];
+  rows.forEach(function(r,i){
+    h.push('<tr><td class=n>'+(i+1)+'</td><td>'+esc(r[0])+
+      (r[1]?' <i>'+esc(r[1])+'</i>':'')+'</td><td>'+esc(r[2])+
+      '</td><td class=n>'+esc(fmt(r[3]))+'</td></tr>');});
+  h.push('</table></div>'); return h.join('');
+}
+
   var tag=find('-Tag_Stats'), summary=find('-Log-Summary');
   // headline numbers from the Tag_Stats "Totals" row
   var stats=null;
@@ -138,10 +179,14 @@ function renderSimple(html){
     '<div class=card><div class=v>'+esc(stats.kdr)+'</div><div class=l>K/D Ratio</div></div>',
     '</div>');}
   h.push('<div class=boards>');
-  h.push(board(find('-damage-Leaderboard'),'Avg Damage'));
-  h.push(board(find('-kills-Leaderboard'),'Avg Kills'));
-  h.push(board(find('-down_contribution-Leaderboard'),'Down Contrib'));
-  h.push(board(find('-damage_barrier-Leaderboard'),'Barrier'));
+  h.push(metricBoard('-Support-Summary','condicleanse','Cleanses'));
+  h.push(metricBoard('-Support-Summary','boonstrips','Boon Strips'));
+  h.push(metricBoard('-Heal-Stats','healing','Healing'));
+  h.push(metricBoard('-Support-Summary','resurrects','Revives'));
+  h.push(metricBoard('-Offensive-Summary','downed','Enemy Downs'));
+  h.push(metricBoard('-Offensive-Summary','downcontribution','Down Contribution'));
+  h.push(metricBoard('-Offensive-Summary','killed','Enemy Kills'));
+  h.push(metricBoard('-Uptimes','stability','Stability Uptime %'));
   h.push('</div>');
   h.push('<p class=dim>Headline view. Switch to Classic for every table, chart, and the Poison Coverage report.</p>');
   return h.join('');

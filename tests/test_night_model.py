@@ -187,4 +187,7 @@ def test_garbage_input_is_tolerated():
     assert model["poison"] == []
     # unparseable sections are recorded; absent-is-valid sections are not
     failed = {w.split(":")[0] for w in model["warnings"]}
-    assert failed == {"totals", "fights", "high_scores", "squad_composition"}
+    assert {"totals", "fights", "high_scores",
+            "squad_composition"} <= failed
+    assert {f"highlights.{k}" for k in model["highlights"]} <= failed
+    assert "leaderboards" not in failed and "stat_tables" not in failed
