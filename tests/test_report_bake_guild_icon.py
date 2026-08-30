@@ -12,16 +12,28 @@ from core.raid_session import LogInfo
 from core.report_bake import apply_guild_icon
 from core.report_pack import is_packed, pack_html, unpack_html
 
-MARKER = "data-sparkybot-guild-icon"
 TIDDLER_TITLE = "$:/sparkybot/guild-icon"
+SLOT_TITLE = "index.png"
+OVERRIDE_FIELD = "sparkybot-guild-icon"
+OVERRIDE_MARKER = f'"{OVERRIDE_FIELD}":"override"'
 
+# Mirrors the upstream combiner bake: the visible page header is a
+# "Header Image" tiddler (tagged $:/tags/AboveStory) drawing the stock
+# commander-tag logo — the image tiddler named "index.png" — at an 86px
+# box beside the big report title. The guild icon takes over that slot by
+# appending a same-titled image tiddler (last title wins in TiddlyWiki).
+STOCK_LOGO_B64 = "c3RvY2stY29tbWFuZGVyLXRhZw=="
 REPORT_HTML = (
     "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
     "<title>Night Report</title>\n<style>body { background: #323232; }</style>\n"
     "</head>\n<body>\n<div class=\"tc-story-river\"></div>\n"
     '<script class="tiddlywiki-tiddler-store" type="application/json">'
     '[{"title":"Fight","text":"|thead-dark sortable|k\\n'
-    '|!Name | !DPS|h\\n|A | 123|"}]</script>\n'
+    '|!Name | !DPS|h\\n|A | 123|"},'
+    '{"title":"index.png","type":"image/png","text":"' + STOCK_LOGO_B64 + '"},'
+    '{"title":"Header Image","tags":"$:/tags/AboveStory",'
+    '"text":"|table-borderless|k\\n|[img height=86 [index.png]]|   '
+    '\\u003Cfont size=\\"35\\">Top Stats\\u003C/font>|"}]</script>\n'
     "</body>\n</html>"
 )
 
@@ -47,7 +59,8 @@ def _tiny_png_bytes(size=6):
 
 
 PNG_BYTES = _tiny_png_bytes()
-ICON_DATA_URI = "data:image/png;base64," + base64.b64encode(PNG_BYTES).decode("ascii")
+PNG_B64 = base64.b64encode(PNG_BYTES).decode("ascii")
+ICON_DATA_URI = "data:image/png;base64," + PNG_B64
 
 
 def _icon_file(tmp_path, name="guild-icon.png", payload=PNG_BYTES):
@@ -74,7 +87,16 @@ def _store_tiddlers(full_html):
     return tiddlers
 
 
-def test_packed_report_gets_the_icon_style_and_tiddler(tmp_path):
+def _winning_tiddler(full_html, title):
+    """The tiddler TiddlyWiki would render: last store entry with the title."""
+    winner = None
+    for t in _store_tiddlers(full_html):
+        if t.get("title") == title:
+            winner = t
+    return winner
+
+
+def test_packed_report_gets_the_slot_override_and_tiddler(tmp_path):
     icon = _icon_file(tmp_path)
     report = _write_packed_report(tmp_path)
 
@@ -84,15 +106,34 @@ def test_packed_report_gets_the_icon_style_and_tiddler(tmp_path):
     packed = report.read_text(encoding="utf-8")
     assert is_packed(packed)
     full = unpack_html(packed)
-    # The style sits in the head, before the close tag...
-    assert full.count(MARKER) == 1
-    assert full.find(MARKER) < full.find("</head>")
-    assert f'url("data:image/png;base64,{base64.b64encode(PNG_BYTES).decode("ascii")}")' in full
-    # ...and the tiddler rides in a store block of its own.
+    # The header-image slot override rides in an appended store block and
+    # wins the "index.png" title, taking over the logo slot with the icon.
+    assert full.count(OVERRIDE_MARKER) == 1
+    winner = _winning_tiddler(full, SLOT_TITLE)
+    assert winner[OVERRIDE_FIELD] == "override"
+    assert winner["type"] == "image/png"
+    assert winner["text"] == PNG_B64
+    # ...and the readable contract tiddler rides along.
     assert full.count(f'"title":"{TIDDLER_TITLE}"') == 1
-    # The baked report itself is untouched around the injections.
+    # The baked report itself is untouched around the injections: the
+    # original logo tiddler and header stay in place, merely out-voted.
     assert "<title>Night Report</title>" in full
+    assert STOCK_LOGO_B64 in full
     assert any(t.get("title") == "Fight" for t in _store_tiddlers(full))
+    assert any(t.get("title") == "Header Image" for t in _store_tiddlers(full))
+
+
+def test_override_is_appended_after_the_stock_logo(tmp_path):
+    # TiddlyWiki loads store blocks in order and the LAST tiddler with a
+    # title wins, so the override only takes the slot if it comes later.
+    icon = _icon_file(tmp_path)
+    report = _write_packed_report(tmp_path)
+
+    apply_guild_icon(report, str(icon))
+
+    full = unpack_html(report.read_text(encoding="utf-8"))
+    assert full.find(STOCK_LOGO_B64) < full.find(OVERRIDE_MARKER)
+    assert _winning_tiddler(full, SLOT_TITLE)["text"] == PNG_B64
 
 
 def test_guild_icon_tiddler_carries_the_full_data_uri(tmp_path):
@@ -120,7 +161,7 @@ def test_apply_is_idempotent(tmp_path):
 
     assert twice == once
     full = unpack_html(twice)
-    assert full.count(MARKER) == 1
+    assert full.count(OVERRIDE_MARKER) == 1
     assert full.count(f'"title":"{TIDDLER_TITLE}"') == 1
 
 
@@ -133,8 +174,22 @@ def test_uncompressed_report_gets_the_icon_too(tmp_path):
 
     content = report.read_text(encoding="utf-8")
     assert not is_packed(content)
-    assert MARKER in content
+    assert OVERRIDE_MARKER in content
     assert f'"title":"{TIDDLER_TITLE}"' in content
+
+
+def test_svg_icon_lands_as_decoded_svg_source(tmp_path):
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#2F6BC1"/></svg>'
+    icon = _icon_file(tmp_path, name="guild-icon.svg", payload=svg)
+    report = _write_packed_report(tmp_path)
+
+    apply_guild_icon(report, str(icon))
+
+    full = unpack_html(report.read_text(encoding="utf-8"))
+    winner = _winning_tiddler(full, SLOT_TITLE)
+    # TiddlyWiki stores image/svg+xml tiddlers as raw SVG source, not base64.
+    assert winner["type"] == "image/svg+xml"
+    assert winner["text"] == svg.decode("utf-8")
 
 
 def test_relative_icon_path_resolves_against_the_install_root(tmp_path):
@@ -145,8 +200,28 @@ def test_relative_icon_path_resolves_against_the_install_root(tmp_path):
     apply_guild_icon(report, "assets/wvw_icon.png")
 
     full = unpack_html(report.read_text(encoding="utf-8"))
-    assert MARKER in full
+    assert OVERRIDE_MARKER in full
     assert f'"title":"{TIDDLER_TITLE}"' in full
+
+
+def test_report_without_the_header_slot_keeps_the_contract_tiddler(
+    tmp_path, caplog
+):
+    # Upstream drift: no index.png slot to take over. The readable
+    # $:/sparkybot/guild-icon tiddler still lands; no override is appended.
+    slotless = REPORT_HTML.replace("index.png", "banner.png")
+    report = _write_packed_report(tmp_path, name="slotless.html", html=slotless)
+    icon = _icon_file(tmp_path)
+
+    apply_guild_icon(report, str(icon))
+
+    full = unpack_html(report.read_text(encoding="utf-8"))
+    assert f'"title":"{TIDDLER_TITLE}"' in full
+    assert OVERRIDE_MARKER not in full
+    assert any(
+        "header-image slot" in r.getMessage()
+        for r in caplog.get_records("call")
+    )
 
 
 def test_missing_icon_path_degrades_to_a_plain_report(tmp_path, caplog):
@@ -186,7 +261,7 @@ def test_url_icon_is_skipped_with_a_warning(tmp_path, caplog):
     assert any("offline" in r.getMessage() for r in warnings)
 
 
-def test_empty_icon_source_is_a_quiet_no_op(tmp_path, caplog):
+def test_empty_icon_source_keeps_the_stock_logo(tmp_path, caplog):
     report = _write_packed_report(tmp_path)
     before = report.read_text(encoding="utf-8")
 
@@ -194,11 +269,14 @@ def test_empty_icon_source_is_a_quiet_no_op(tmp_path, caplog):
     apply_guild_icon(report, None)
 
     assert report.read_text(encoding="utf-8") == before
+    full = unpack_html(before)
+    # No override appended: the original commander-tag logo still wins.
+    assert _winning_tiddler(full, SLOT_TITLE)["text"] == STOCK_LOGO_B64
     assert caplog.get_records("call") == []
 
 
 def test_report_without_a_store_block_ships_unchanged(tmp_path):
-    headless = "<html><body><p>fight data</p></body></html>"
+    headless = "<html><body><p>fight data index.png</p></body></html>"
     report = _write_packed_report(tmp_path, name="nostore.html", html=headless)
     icon = _icon_file(tmp_path)
 
@@ -268,8 +346,9 @@ def test_runner_stamps_the_guild_icon_on_the_generated_report(tmp_path):
     )
 
     full = unpack_html(result.html_path.read_text(encoding="utf-8"))
-    assert MARKER in full
+    assert OVERRIDE_MARKER in full
     assert f'"title":"{TIDDLER_TITLE}"' in full
+    assert _winning_tiddler(full, SLOT_TITLE)["text"] == PNG_B64
     assert "position: sticky;" in full  # sticky headers still ride along
 
 
@@ -283,5 +362,6 @@ def test_runner_without_a_configured_icon_ships_a_plain_report(tmp_path):
     )
 
     full = unpack_html(result.html_path.read_text(encoding="utf-8"))
-    assert MARKER not in full
+    assert OVERRIDE_MARKER not in full
     assert f'"title":"{TIDDLER_TITLE}"' not in full
+    assert _winning_tiddler(full, SLOT_TITLE)["text"] == STOCK_LOGO_B64

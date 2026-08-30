@@ -38,9 +38,6 @@ table th {
 }
 </style>"""
 
-# Marker so the guild-icon style can be detected and never injected twice.
-_GUILD_ICON_STYLE_MARKER = "data-sparkybot-guild-icon"
-
 # The data-URI tiddler ANY skin can read for the configured guild icon.
 # Deliberately a plain-text tiddler holding a full data: URI so a skin can
 # drop it straight into <img src=...> without knowing about SparkyBot.
@@ -51,25 +48,25 @@ _GUILD_ICON_TIDDLER_TITLE = "$:/sparkybot/guild-icon"
 # single offline file we do not want to bloat with a giant logo.
 _GUILD_ICON_MAX_BYTES = 512 * 1024
 
-# Authored by SparkyBot. Stamps the guild icon into the report header, in the
-# logo slot the viewer's SiteTitle area renders: the live TiddlyWiki viewer
-# transcludes $:/SiteTitle into <h1 class="tc-site-title"> inside
-# <div class="tc-sidebar-header">, so the pseudo-element sits upper-left of
-# the header above the title text. A pure-CSS placement (no script) applies
-# whenever the viewer finishes rendering, whatever order that takes.
-_GUILD_ICON_STYLE_TEMPLATE = """<style data-sparkybot-guild-icon="1">
-.tc-sidebar-header::before {{
-    content: "";
-    display: block;
-    width: 40px;
-    height: 40px;
-    margin-bottom: 8px;
-    background-image: url("{data_uri}");
-    background-repeat: no-repeat;
-    background-position: left center;
-    background-size: contain;
-}}
-</style>"""
+# The upstream combiner's visible page header is a "Header Image" tiddler
+# tagged $:/tags/AboveStory whose wikitext renders the blue commander-tag
+# logo beside the big report title:
+#     |[img height=86 [index.png]]|   <font size="35">Top Stats - ...</font>|
+# so the logo IS the image tiddler named "index.png", drawn at an 86px-high
+# box in the upper-left. Overriding that tiddler by appending a same-titled
+# image tiddler to the store (TiddlyWiki loads stores in order; the last
+# tiddler with a title wins) swaps the configured guild icon straight into
+# that slot at the same size — no CSS pseudo-element games, and when no
+# guild icon is configured nothing is appended so the original commander
+# logo keeps rendering.
+_GUILD_ICON_SLOT_TITLE = "index.png"
+
+# Extra field stamped onto the override tiddler. TiddlyWiki carries unknown
+# fields around untouched, so this is both provenance ("SparkyBot put this
+# here") and the idempotency marker that keeps re-runs from appending the
+# override twice.
+_GUILD_ICON_OVERRIDE_FIELD = "sparkybot-guild-icon"
+_GUILD_ICON_OVERRIDE_MARKER = f'"{_GUILD_ICON_OVERRIDE_FIELD}":"override"'
 
 _CLOSE_HEAD_RE = re.compile(r"</head\s*>", re.IGNORECASE)
 _OPEN_HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
@@ -281,51 +278,82 @@ def _guild_icon_data_uri(icon_source: str) -> str | None:
     return f"data:{mime};base64,{encoded}"
 
 
-def _inject_guild_icon(full_html: str, data_uri: str) -> str:
-    """Add the guild-icon tiddler and the header style to a report document.
+def _guild_icon_override_tiddler(data_uri: str) -> dict:
+    """Build the image tiddler that takes over the header logo slot.
 
-    Two things land in the report, in whichever state it arrives:
-    1. A new tiddler store block with the $:/sparkybot/guild-icon tiddler —
-       a text tiddler whose text is the full data URI, so ANY skin can read
-       it (drop it straight into an <img src>) without knowing SparkyBot
-       authored it.
-    2. The header style pinning the icon into the SiteTitle area's logo slot.
-    Injection is idempotent; a report that already carries either part is
-    left as it is.
+    The tiddler mirrors how the upstream store carries its own images: for
+    raster types the text is the bare base64 payload with the matching image
+    ``type``; for SVG the text is the decoded SVG source, which is how
+    TiddlyWiki stores image/svg+xml tiddlers.
     """
-    if (
-        _GUILD_ICON_STYLE_MARKER in full_html
-        and f'"title":"{_GUILD_ICON_TIDDLER_TITLE}"' in full_html
-    ):
+    header, encoded = data_uri.split(",", 1)
+    mime = header[len("data:"):].split(";", 1)[0] or "image/png"
+    if mime == "image/svg+xml":
+        text = base64.b64decode(encoded).decode("utf-8")
+    else:
+        text = encoded
+    return {
+        "title": _GUILD_ICON_SLOT_TITLE,
+        "type": mime,
+        "text": text,
+        _GUILD_ICON_OVERRIDE_FIELD: "override",
+    }
+
+
+def _inject_guild_icon(full_html: str, data_uri: str) -> str:
+    """Add the guild-icon tiddlers to a report document.
+
+    Two tiddlers land in a fresh store block, in whichever state the report
+    arrives:
+    1. The $:/sparkybot/guild-icon tiddler — a text tiddler whose text is
+       the full data URI, so ANY skin can read it (drop it straight into an
+       <img src>) without knowing SparkyBot authored it.
+    2. An override of the upstream header-image tiddler ("index.png", the
+       blue commander-tag logo beside the big report title). Appended last,
+       it wins the title and the header renders the guild icon in the same
+       86px upper-left slot the original logo occupied.
+    Injection is idempotent; a report that already carries both parts is
+    left as it is. A report whose header no longer references the slot
+    tiddler still gets the readable $:/sparkybot/guild-icon tiddler, with a
+    warning that the icon will not be visible.
+    """
+    has_contract = f'"title":"{_GUILD_ICON_TIDDLER_TITLE}"' in full_html
+    has_override = _GUILD_ICON_OVERRIDE_MARKER in full_html
+    if has_contract and has_override:
         return full_html
 
-    styled = full_html
-    if _GUILD_ICON_STYLE_MARKER not in styled:
-        style_block = _GUILD_ICON_STYLE_TEMPLATE.format(data_uri=data_uri)
-        styled = _inject_style_into_head(
-            styled,
-            style_block,
-            marker=_GUILD_ICON_STYLE_MARKER,
-            what="the guild icon",
+    new_tiddlers = []
+    if not has_contract:
+        new_tiddlers.append(
+            {
+                "title": _GUILD_ICON_TIDDLER_TITLE,
+                "text": data_uri,
+                "type": "text/plain",
+            }
         )
+    if not has_override:
+        if _GUILD_ICON_SLOT_TITLE in full_html:
+            new_tiddlers.append(_guild_icon_override_tiddler(data_uri))
+        else:
+            logger.warning(
+                "report has no %s header-image slot — the guild icon "
+                "tiddler is stored but will not be visible",
+                _GUILD_ICON_SLOT_TITLE,
+            )
 
-    if f'"title":"{_GUILD_ICON_TIDDLER_TITLE}"' not in styled:
-        tiddler = {
-            "title": _GUILD_ICON_TIDDLER_TITLE,
-            "text": data_uri,
-            "type": "text/plain",
-        }
-        styled = _append_tiddler_block(styled, [tiddler])
-
-    return styled
+    if not new_tiddlers:
+        return full_html
+    return _append_tiddler_block(full_html, new_tiddlers)
 
 
 def apply_guild_icon(standalone_html: Path, icon_source: str | None) -> Path:
     """Stamp the configured guild icon onto an upstream standalone report.
 
     Same augmentation path as the sticky table headers: resolve the icon,
-    unpack the compressed report, inject the $:/sparkybot/guild-icon tiddler
-    plus the header style, and repack atomically. Unpacking is skipped for
+    unpack the compressed report, append the $:/sparkybot/guild-icon tiddler
+    plus the header-image slot override, and repack atomically ("takeover":
+    the guild icon replaces the stock commander-tag logo beside the report
+    title at the slot's own ~86px size). Unpacking is skipped for
     reports that were never compressed. Any failure — unreadable or oversized
     icon, URL source, corrupt payload, no store block to append to — is
     logged and swallowed so the report still ships exactly as the combiner
