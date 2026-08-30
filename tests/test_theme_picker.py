@@ -117,3 +117,55 @@ def test_settings_combo_lists_all_themes_and_applying_changes_palette(
     finally:
         config.close_to_tray = False
         window.close()
+
+
+# (d) the REAL Settings UI: the modal SettingsDialog surfaces the engine's
+# Interface Theme group on its Application page, the combo is reachable
+# there, live-applies to the QApplication palette, and marks the dialog
+# dirty so OK/Apply persist the choice.
+def test_settings_dialog_surfaces_theme_picker_on_application_page(
+    qt_app, tmp_path
+):
+    from core.settings_dialog import CAT_APPLICATION, SettingsDialog
+
+    config = Config(tmp_path / "config.properties")
+    engine = SettingsWindow(config)
+    engine.run_update_checks_once = lambda: None
+    dialog = SettingsDialog(engine)
+    saved_id = theme.current_theme_id()
+    try:
+        dialog.open_dialog()
+        qt_app.processEvents()
+
+        dialog._select_category(CAT_APPLICATION)
+        qt_app.processEvents()
+        page = dialog._pages[CAT_APPLICATION]
+
+        # The engine's group moved wholesale onto the Application page.
+        assert page.isAncestorOf(engine.theme_group_box)
+        assert page.isAncestorOf(engine.theme_combo)
+
+        combo = engine.theme_combo
+        ids = [combo.itemData(i) for i in range(combo.count())]
+        assert set(ids) == set(theme.THEMES)
+
+        target_id = next(tid for tid in ids if tid != combo.currentData())
+        assert not dialog.is_dirty()
+        combo.setCurrentIndex(ids.index(target_id))
+        qt_app.processEvents()
+
+        # Live-apply: the running app's palette now matches the new theme.
+        window_color = qt_app.palette().color(QPalette.ColorRole.Window)
+        assert window_color == QColor(theme.THEMES[target_id]["window"])
+        assert theme.current_theme_id() == target_id
+
+        # Dirty tracking: OK/Apply will persist via the engine's save path.
+        assert dialog.is_dirty()
+        assert dialog.apply_button.isEnabled()
+    finally:
+        theme.set_theme(saved_id)
+        theme.apply_theme(QApplication.instance())
+        qt_app.processEvents()
+        dialog.reject()
+        config.close_to_tray = False
+        engine.close()

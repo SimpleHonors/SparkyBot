@@ -715,8 +715,11 @@ class SettingsWindow(QWidget):
         layout.addWidget(group)
 
         # Interface Theme — applies LIVE on change so the user sees the new
-        # look immediately; persisted through the normal save path.
+        # look immediately; persisted through the normal save path. Kept as an
+        # attribute so SettingsDialog can borrow the group wholesale (same
+        # pattern as runmode_group_box).
         theme_group = QGroupBox("Interface Theme")
+        self.theme_group_box = theme_group
         theme_form = QFormLayout(theme_group)
         self.theme_combo = QComboBox()
         for theme_id, label in theme.available_themes():
@@ -724,8 +727,8 @@ class SettingsWindow(QWidget):
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         theme_form.addRow("Theme:", self.theme_combo)
         theme_hint = QLabel(
-            "Color scheme for SparkyBot's windows. Changes apply instantly; "
-            "press Save Settings to keep your choice."
+            "Color scheme for SparkyBot's windows. Changes apply instantly "
+            "and are kept when you save your settings."
         )
         theme_hint.setWordWrap(True)
         theme.mark_hint(theme_hint)

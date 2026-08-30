@@ -95,7 +95,7 @@ _TRACKED_SPINS = (
 )
 _TRACKED_COMBOS = (
     "active_webhook", "raid_report_webhook", "ai_provider", "ai_model",
-    "ai_prompt_mode",
+    "ai_prompt_mode", "theme_combo",
     "tts_provider", "tts_edge_voice", "tts_elevenlabs_model",
     "tts_local_voice",
 )
@@ -484,6 +484,11 @@ class SettingsDialog(QDialog):
     def _build_application_page(self):
         e = self.engine
         page, layout = self._make_page(CAT_APPLICATION)
+
+        # Interface Theme group moves wholesale from the engine (same borrow
+        # pattern as runmode_group_box). Its combo live-applies via the
+        # engine's _on_theme_changed; the engine's save path persists it.
+        layout.addWidget(e.theme_group_box)
 
         startup = QGroupBox("Startup & tray")
         sform = QVBoxLayout(startup)
