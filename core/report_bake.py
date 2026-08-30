@@ -7,13 +7,65 @@ import re
 import tempfile
 from pathlib import Path
 
-from core.report_pack import pack_html, unpack_html
+from core.report_pack import is_packed, pack_html, unpack_html
 
 logger = logging.getLogger(__name__)
 
 _STORE_OPENER = (
     '<script class="tiddlywiki-tiddler-store" type="application/json">'
 )
+
+# Marker so the sticky-header style can be detected and never injected twice.
+_STICKY_STYLE_MARKER = "data-sparkybot-sticky-headers"
+
+# Authored by SparkyBot. Pins report table headers to the top of the viewport
+# while scrolling so long fights keep their column labels visible. Verified
+# against the live combiner DOM: report tables render their header row inside
+# <thead> as <th> cells (Bootstrap "thead-dark" styling), so the fill matches
+# that theme's header color (#343a40 / white text as computed on the real
+# report) and must be solid or scrolling rows bleed through the pinned header.
+# z-index stays below the viewer's sticky tiddler title bar (z-index 500).
+_STICKY_HEADER_STYLE = """<style data-sparkybot-sticky-headers="1">
+table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background-color: #343a40;
+    color: #ffffff;
+    background-clip: padding-box;
+}
+</style>"""
+
+_CLOSE_HEAD_RE = re.compile(r"</head\s*>", re.IGNORECASE)
+_OPEN_HEAD_RE = re.compile(r"<head\b[^>]*>", re.IGNORECASE)
+
+
+def _inject_style_into_head(full_html: str, style_block: str) -> str:
+    """Splice a style block into a report document head, degrading to no-op.
+
+    Insertion points are tried in order: just before ``</head>``, then just
+    after the opening ``<head>`` tag. When neither is found the string comes
+    back unchanged — a report whose structure has drifted upstream still
+    generates, it simply ships without the styling. Injection is idempotent.
+    """
+    if _STICKY_STYLE_MARKER in full_html:
+        return full_html
+
+    match = _CLOSE_HEAD_RE.search(full_html)
+    if match is not None:
+        pos = match.start()
+        return full_html[:pos] + style_block + full_html[pos:]
+
+    match = _OPEN_HEAD_RE.search(full_html)
+    if match is not None:
+        pos = match.end()
+        return full_html[:pos] + "\n" + style_block + full_html[pos:]
+
+    logger.warning(
+        "no <head> insertion point for sticky table headers — "
+        "report will ship unstyled"
+    )
+    return full_html
 
 
 def _append_tiddler_block(content: str, tiddlers: list[dict]) -> str:
@@ -88,6 +140,36 @@ def merge_augmented_tiddlers(
     full_html = unpack_html(packed)
     full_html = _append_tiddler_block(full_html, changed)
     _atomic_write_text(report_path, pack_html(full_html))
+    return report_path
+
+
+def apply_sticky_table_headers(standalone_html: Path) -> Path:
+    """Make an upstream standalone report's table headers sticky on scroll.
+
+    Extends the poison-tiddler augmentation path: unpack the compressed
+    report, splice the sticky-header style into the document head, and repack
+    it atomically. Unpacking is skipped for reports that were never compressed.
+    Any failure (missing insertion point, corrupt payload, unreadable file) is
+    logged and swallowed so the report still ships exactly as the combiner
+    baked it — styling must never fail a report.
+    """
+    report_path = Path(standalone_html)
+    try:
+        packed = report_path.read_text(encoding="utf-8")
+        was_packed = is_packed(packed)
+        full_html = unpack_html(packed) if was_packed else packed
+        styled = _inject_style_into_head(full_html, _STICKY_HEADER_STYLE)
+        if styled == full_html:
+            return report_path
+        _atomic_write_text(
+            report_path, pack_html(styled) if was_packed else styled
+        )
+    except Exception:
+        logger.warning(
+            "Sticky table-header styling failed — "
+            "report will ship unstyled",
+            exc_info=True,
+        )
     return report_path
 
 
