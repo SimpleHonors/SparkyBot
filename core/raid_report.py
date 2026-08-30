@@ -18,7 +18,11 @@ from core.raid_session import (
     plan_report,
     RECENT_WINDOW_HOURS,
 )
-from core.report_bake import merge_augmented_tiddlers, summarize_tiddlers
+from core.report_bake import (
+    apply_sticky_table_headers,
+    merge_augmented_tiddlers,
+    summarize_tiddlers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +239,10 @@ class RaidReportRunner:
                     "report will ship unaugmented",
                     exc_info=True,
                 )
+
+        # Same augmentation path: pin report table headers so scrolling a
+        # long fight keeps the column labels. Never fails the report.
+        apply_sticky_table_headers(standalone_html)
 
         if report_name is not None and report_name.strip():
             name = report_name.strip()
