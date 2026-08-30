@@ -15,7 +15,7 @@ by user pain. FIXED items link to the commit that addresses them.
 | Class | GUI-thread offenders | Already threaded (verified) |
 |---|---|---|
 | 1. Sync network in UI thread | 0 | 14 call sites (see below) |
-| 2. Network-share file I/O in UI thread | 5 (F1-F5) | file_watcher scans (WatcherWorker QThread) |
+| 2. Network-share file I/O in UI thread | 5 (F1-F5, all fixed) | file_watcher scans (WatcherWorker QThread) |
 | 3. subprocess in UI handlers | 1 (F6) | gw2ei/combiner (report + pipeline workers) |
 | 4. Startup / construction work | 2 (F2, F3) + minor import cost | update checks, TTS init |
 
@@ -59,27 +59,28 @@ ran `subprocess.run([pip, install, ...], timeout=120)` on the GUI thread
 Fix: install runs on a daemon thread; result lands via `_sig_install_done`.
 The importlib.metadata check phase stays sync (local, fast).
 
-### F4 — DEFERRED — End Run click paths still scan the share synchronously
+### F4 — FIXED (approved follow-up) — End Run click paths scanned the share synchronously
 `core/main_window.py` — `_request_end_run` (two scans: pre-dialog count +
 post-confirm selection), `_end_stale_run`, `_end_run_and_quit`.
-Trigger: End Run button / stale banner / quit-with-open-run. Worst case: one
-share-stall freeze per click (one-shot, leads into a progress UI — much lower
-pain than F1's every-60s).
-Why deferred: threading these needs the confirm-dialog → scan → report flow
-restructured into async steps, and `tests/test_quit_post_choice.py` exercises
-these as synchronous unbound methods on duck-typed stubs — a design decision.
-Proposal: (a) use the cached `_run_fight_count` (now refreshed async ≤60 s old)
-for the dialog text, deleting the first scan; (b) move the post-confirm
-selection scan into the already-threaded `_start_run_report` worker, emitting
-the existing `sig_run_error` path when selection comes back empty.
+Trigger: End Run button / stale banner / quit-with-open-run. Worst case was
+one share-stall freeze per click.
+Fix (per the approved proposal): the confirm dialog uses the cached
+`_run_fight_count` (refreshed async every 60 s + every processed file) —
+the pre-dialog scan is gone; after confirm, `session.end()` (local state
+file) stays on the GUI thread and the selection scan runs on a worker
+thread (`sig_end_scan_done`), continuing into the existing report worker or
+the no-fights verdict on the GUI thread. The stale-banner flow scans
+off-thread first and keeps all session end/discard decisions on the GUI
+thread (`_finish_stale_run`). Behavior note: the dialog's fight count can
+be up to 60 s stale; the definitive post-confirm selection is unchanged.
 
-### F5 — DEFERRED — single network `stat` in scattered GUI slots
-`core/config.py:433` — `get_log_folders()` does `os.path.exists(log_folder)`
-(one SMB stat). GUI-thread callers: `core/gui_settings.py:194`
+### F5 — FIXED (approved follow-up) — single network `stat` in scattered GUI slots
+`core/config.py` — `get_log_folders()` did `os.path.exists(log_folder)`
+(one SMB stat) on every call. GUI-thread callers: `core/gui_settings.py:194`
 (`_browse_files`), `core/gui_settings.py:3532` (`_calib_import_logs`).
-Worst case: tens of seconds only when the share is actually hung; healthy-share
-cost is one round trip. Proposal: cache the existence check with a short TTL in
-Config, or accept it (the dominant scans are gone).
+Fix: the existence check is TTL-cached (15 s) in Config, keyed by path so a
+config change re-stats immediately. A share that answers slowly can still
+stall the first call in a window; repeated calls no longer multiply it.
 
 ## Minor / no action
 

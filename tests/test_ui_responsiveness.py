@@ -167,6 +167,96 @@ def test_run_counter_refresh_returns_before_slow_folder_scan(qt_app, tmp_path):
         window.deleteLater()
 
 
+class _FakeRunSession:
+    def __init__(self):
+        self.is_open = True
+        self.recorded_logs = []
+        self.started_at = datetime.now()
+        self.last_activity_at = None
+
+    def elapsed(self):
+        return datetime.now() - self.started_at
+
+    def end(self, ended_at=None):
+        self.is_open = False
+        return (self.started_at, ended_at or datetime.now())
+
+
+def test_end_run_click_returns_before_slow_selection_scan(qt_app, tmp_path):
+    """F4: the End Run click path must not scan the share synchronously —
+    the confirm dialog uses the cached count and the selection scan runs on
+    a worker thread after confirm."""
+    from core.config import Config
+    from core.main_window import MainWindow
+
+    config = Config(tmp_path / "config.properties")
+    window = MainWindow(config)
+    release = threading.Event()
+    try:
+        window._run_session = _FakeRunSession()
+        window._exec_end_run_dialog = lambda count, elapsed: (True, True)
+
+        def slow_discover():
+            release.wait(BLOCK_SECS)
+            return []          # nothing in the window -> no-fights verdict
+
+        window._discover_run_logs = slow_discover
+
+        t0 = time.monotonic()
+        window._request_end_run()
+        elapsed = time.monotonic() - t0
+        assert elapsed < FAST_SECS, (
+            f"_request_end_run blocked {elapsed:.2f}s on the scan")
+        # Busy UI engaged immediately; session already ended.
+        assert window._run_report_busy is True
+        assert window._run_session.is_open is False
+
+        release.set()
+        assert _pump_until(
+            qt_app, lambda: window._run_report_busy is False)
+        assert window.run_status_label.text() == "No run in progress."
+    finally:
+        release.set()
+        window.deleteLater()
+
+
+def test_get_log_folders_exists_check_is_ttl_cached(tmp_path, monkeypatch):
+    """F5: repeated get_log_folders calls within the TTL do one stat, not
+    one network round trip per call; a changed path re-stats immediately."""
+    import core.config as config_mod
+    from core.config import Config
+
+    config = Config(tmp_path / "config.properties")
+    config.log_folder = str(tmp_path)
+
+    calls = {"n": 0}
+    real_exists = os.path.exists
+
+    def counting_exists(path):
+        calls["n"] += 1
+        return real_exists(path)
+
+    monkeypatch.setattr(config_mod.os.path, "exists", counting_exists)
+
+    for _ in range(5):
+        assert config.get_log_folders() == [Path(str(tmp_path))]
+    assert calls["n"] == 1, f"expected 1 stat within TTL, got {calls['n']}"
+
+    # TTL expiry -> fresh stat.
+    path, when, exists = config._lf_exists_cache
+    config._lf_exists_cache = (
+        path, when - Config._LOG_FOLDER_EXISTS_TTL - 1, exists)
+    config.get_log_folders()
+    assert calls["n"] == 2
+
+    # Path change self-invalidates (cache is keyed by path).
+    other = tmp_path / "other"
+    other.mkdir()
+    config.log_folder = str(other)
+    assert config.get_log_folders() == [Path(str(other))]
+    assert calls["n"] == 3
+
+
 def test_wizard_pip_install_runs_off_gui_thread(qt_app, monkeypatch):
     import core.setup_wizard as setup_wizard
     from core.setup_wizard import DependenciesPage
