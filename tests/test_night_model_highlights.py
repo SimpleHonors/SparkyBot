@@ -91,6 +91,31 @@ def test_garbage_store_warns_for_every_board():
     assert all(model["highlights"][k] == [] for k in KEYS)
 
 
+@pytest.mark.parametrize('fixture', ['aug10', 'jul18'])
+def test_boards_have_unique_players(fixture, request):
+    """Stat-tier rows (total / per-sec / per-engaged-sec) must collapse to
+    one entry per account - visual defect found in review."""
+    model = request.getfixturevalue(fixture)
+    for key, rows in model["highlights"].items():
+        keys = [r["account"] or r["name"] for r in rows]
+        assert len(keys) == len(set(keys)), f"{fixture}:{key} dup players"
+
+
+def test_jul18_classic_anchors(jul18):
+    # Classic report headline values for the 2026-07-18 night (gule's
+    # visual-review anchors).
+    top = jul18["highlights"]["healing"][0]
+    assert (top["account"], top["value"]) == ("sera.7859", 10407038)
+    dc = jul18["highlights"]["down_contribution"]
+    assert dc[0]["value"] == 2307384
+    # raw damage-scale column, never the 22.99%-style pct column: every
+    # down-contribution row is damage-scale big.
+    assert all(r["value"] >= 100_000 for r in dc)
+    dupes = [r["account"] for r in dc
+             if r["account"] in ("ezekiel.7034", "Hendrix.9605")]
+    assert dupes == [] or all(dc.count(r) == 1 for r in dupes)
+
+
 def test_simple_skin_targets_the_eight_boards():
     src = (Path(__file__).parents[1] / "scripts"
            / "spike_viewer_switcher_gen.py").read_text(encoding="utf-8")

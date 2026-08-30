@@ -110,7 +110,7 @@ function metricBoard(sfx, token, label){
     var L=L0.replace(/\s+$/,'');
     if(col>=0||L.charAt(0)!=='|'||!/\|[hk]$/.test(L))return;
     var hc=wcells(L.replace(/\|[hk]$/,'')).split('|').slice(1);
-    for(var q=0;q<hc.length;q++){if(norm(hc[q])===token){col=q;}}
+    for(var q=0;q<hc.length;q++){if(norm(hc[q])===token){col=q;break;}}
   });
   if(col<0)return '';
   var rows=[];
