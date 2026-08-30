@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import threading
 import importlib.metadata
 from PySide6.QtWidgets import (
     QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
@@ -240,9 +241,13 @@ class SetupWizard(QWizard):
 
 
 class DependenciesPage(QWizardPage):
+    # pip-install worker thread -> GUI thread (success, status_text, detail)
+    _sig_install_done = Signal(bool, str, str)
+
     def __init__(self):
         super().__init__()
         self.setTitle("Python Dependencies")
+        self._sig_install_done.connect(self._on_install_done)
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -340,43 +345,51 @@ class DependenciesPage(QWizardPage):
             self.details_label.setText("\n".join(details))
             return
 
-        # Actually install missing packages
+        # Actually install missing packages — pip runs up to 120s, so it
+        # lives on a worker thread; the GUI stays responsive and the result
+        # lands back here via _sig_install_done (ticket 6c8e08f9).
         theme.set_state(self.status_label, "busy")
         self.status_label.setText(f"Installing {len(missing)} package(s)...")
         self.install_btn.setEnabled(False)
-        self.repaint()
 
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install"] + missing,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
+        def _install():
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install"] + missing,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                detail = (result.stderr[:500] if result.stderr
+                          else result.stdout[:500])
+                self._sig_install_done.emit(
+                    result.returncode == 0, "Installation failed", detail)
+            except subprocess.TimeoutExpired:
+                self._sig_install_done.emit(
+                    False, "Installation timed out after 120 seconds", "")
+            except Exception as e:
+                self._sig_install_done.emit(False, f"Error: {str(e)}", "")
 
-            if result.returncode == 0:
-                theme.set_state(self.status_label, "ok")
-                self.status_label.setText("All dependencies installed successfully")
-                # Re-check to update the details
-                installed, still_missing = self._check_installed(requirements)
-                details = [f"  Installed: {p}" for p in installed]
-                if still_missing:
-                    details += [f"  Failed: {p}" for p in still_missing]
-                self.details_label.setText("\n".join(details))
-                self.install_btn.setText("All Dependencies Installed")
-            else:
-                theme.set_state(self.status_label, "error")
-                self.status_label.setText("Installation failed")
-                self.details_label.setText(result.stderr[:500] if result.stderr else result.stdout[:500])
-                self.install_btn.setEnabled(True)
+        threading.Thread(target=_install, daemon=True).start()
 
-        except subprocess.TimeoutExpired:
+    def _on_install_done(self, success: bool, status_text: str, detail: str):
+        """Slot: pip install finished (main thread)."""
+        if success:
+            theme.set_state(self.status_label, "ok")
+            self.status_label.setText("All dependencies installed successfully")
+            # Re-check to update the details (importlib.metadata — local, fast)
+            requirements = self._get_requirements()
+            installed, still_missing = self._check_installed(requirements)
+            details = [f"  Installed: {p}" for p in installed]
+            if still_missing:
+                details += [f"  Failed: {p}" for p in still_missing]
+            self.details_label.setText("\n".join(details))
+            self.install_btn.setText("All Dependencies Installed")
+        else:
             theme.set_state(self.status_label, "error")
-            self.status_label.setText("Installation timed out after 120 seconds")
-            self.install_btn.setEnabled(True)
-        except Exception as e:
-            theme.set_state(self.status_label, "error")
-            self.status_label.setText(f"Error: {str(e)}")
+            self.status_label.setText(status_text)
+            if detail:
+                self.details_label.setText(detail)
             self.install_btn.setEnabled(True)
 
 
