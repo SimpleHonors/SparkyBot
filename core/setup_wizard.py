@@ -389,8 +389,9 @@ class WelcomePage(QWizardPage):
         layout.setSpacing(12)
 
         # This starts hidden, so a computer with no supported neighbor app
-        # never sees or has to understand this feature. initializePage() fills
-        # and reveals it before the page is painted only when detection wins.
+        # never sees or has to understand this feature. The autodetect
+        # button's click fills and reveals it — only after the user asked,
+        # and only when detection wins.
         self.competitor_offer = QFrame()
         offer_layout = QVBoxLayout(self.competitor_offer)
         offer_layout.setContentsMargins(0, 0, 0, 0)
@@ -418,15 +419,59 @@ class WelcomePage(QWizardPage):
         self.competitor_offer.hide()
         layout.addWidget(self.competitor_offer)
 
+        # Ask-first autodetect (operator law): SparkyBot never hunts this
+        # computer for settings or tools until the user says so — the CLICK
+        # on this button is the permission. It runs the discovery this page
+        # used to run unprompted and then hands off to the existing named
+        # one-click offer (consent preview -> apply), unchanged. The manual
+        # path sits right underneath; no dialogs, no checkboxes, no nag.
+        self.autodetect_lead = QFrame()
+        lead_layout = QVBoxLayout(self.autodetect_lead)
+        lead_layout.setContentsMargins(0, 0, 0, 0)
+        lead_layout.setSpacing(6)
+        self.autodetect_button = QPushButton("Set me up automatically")
+        self.autodetect_button.setMinimumHeight(46)
+        theme.set_widget_class(self.autodetect_button, "primary")
+        self.autodetect_button.setToolTip(
+            "Let SparkyBot search this computer for Guild Wars 2, ArcDPS, "
+            "and known fight-log tools so it can copy their settings. "
+            "Nothing is applied until you approve it."
+        )
+        self.autodetect_button.clicked.connect(self._start_autodetect)
+        lead_layout.addWidget(self.autodetect_button)
+        self.autodetect_subtext = QLabel(
+            "SparkyBot will look for Guild Wars 2, ArcDPS, and your "
+            "fight-log tools on this computer."
+        )
+        self.autodetect_subtext.setWordWrap(True)
+        theme.mark_hint(self.autodetect_subtext)
+        lead_layout.addWidget(self.autodetect_subtext)
+        self.autodetect_manual_hint = QLabel(
+            "…or click Next to set up by hand."
+        )
+        self.autodetect_manual_hint.setWordWrap(True)
+        theme.mark_hint(self.autodetect_manual_hint)
+        lead_layout.addWidget(self.autodetect_manual_hint)
+        self.autodetect_none_hint = QLabel(
+            "No fight-log setups to import were found on this computer. "
+            "Click Next to set up by hand — SparkyBot walks you through "
+            "each step."
+        )
+        self.autodetect_none_hint.setWordWrap(True)
+        theme.mark_hint(self.autodetect_none_hint)
+        self.autodetect_none_hint.hide()
+        lead_layout.addWidget(self.autodetect_none_hint)
+        layout.addWidget(self.autodetect_lead)
+
         self._detected_findings = ()
         self._competitor_scan_done = False
+        self._autodetect_done = False
 
-        # The easy path leads: most people have nothing to import, so the
-        # default screen is just "click Next and we'll walk you through it."
+        # The easy path stays second: most people who skip the autodetect
+        # button just walk through the pages.
         self.easy_path_intro = QLabel(
             "SparkyBot will walk you through setup step by step — where your "
-            "fight logs live and which Discord channels get your reports.\n\n"
-            "Click Next to begin."
+            "fight logs live and which Discord channels get your reports."
         )
         self.easy_path_intro.setWordWrap(True)
         layout.addWidget(self.easy_path_intro)
@@ -505,12 +550,45 @@ class WelcomePage(QWizardPage):
         self.advanced_options.hide()
         layout.addWidget(self.advanced_options)
 
-    def initializePage(self):
-        super().initializePage()
+    def _start_autodetect(self):
+        """The click is the permission (operator law: ask-first, no nag).
+
+        This page used to run the whole discovery unprompted in
+        initializePage(); now nothing is probed until the user presses the
+        lead button. The click runs the same detection and hands off to the
+        existing named one-click offer — consent preview, apply — entirely
+        unchanged. When nothing turns up, the lead quietly retires and the
+        manual path (Next) takes over."""
+        if self._autodetect_done:
+            return
+        self._autodetect_done = True
+        wizard = self.wizard()
+        if wizard is not None:
+            if wizard.has_basic_import():
+                # A guild file was already loaded — the import story is
+                # spoken for; retire the lead without probing anything.
+                self.autodetect_lead.hide()
+                return
+            log_folder_page = getattr(wizard, "log_folder_page", None)
+            ensure_scanned = getattr(
+                log_folder_page, "ensure_scanned", None
+            ) if log_folder_page is not None else None
+            if ensure_scanned is not None:
+                # The user's click covers the GW2/ArcDPS hunt too, so the
+                # log-folder page never has to ask again (idempotent).
+                ensure_scanned()
         self._offer_detected_setups()
+        if self._detected_findings:
+            self.autodetect_lead.hide()
+            return
+        self.autodetect_button.hide()
+        self.autodetect_subtext.hide()
+        self.autodetect_manual_hint.hide()
+        self.autodetect_none_hint.show()
 
     def _offer_detected_setups(self):
-        """Detect installed log tools and lead with a named one-click offer.
+        """Build the named one-click offer from a scan the user already
+        approved via _start_autodetect (never called unprompted).
 
         EZ pleb mode: if PlenBot (or friends) is already configured on this
         computer, the user should not have to know or hunt for that — the
@@ -1214,67 +1292,76 @@ class LogFolderPage(QWizardPage):
         layout.setSpacing(8)
         layout.setContentsMargins(12, 8, 12, 8)
 
-        # Prefer ArcDPS's own explicit setting. The conventional Documents
-        # location remains a fallback when ArcDPS has no custom path set.
-        self._gw2_installations = self._detect_gw2_installations()
-        self._arcdps_setups = self._detect_arcdps_setups()
-        self._arcdps_setup = self._arcdps_setups[0] if self._arcdps_setups else None
-        self._default_path = self._detect_default_log_path()
+        # Ask-first (operator law): the GW2/ArcDPS hunt is NOT run here —
+        # the wizard constructs every page up front, long before the user
+        # reaches this one. Discovery runs only on the user's scan-button
+        # click (or is pre-answered by the Welcome autodetect click; see
+        # ensure_scanned). Prefer ArcDPS's own explicit setting; the
+        # conventional Documents location remains the fallback.
+        self._scanned = False
+        self._gw2_installations = ()
+        self._arcdps_setups = ()
+        self._arcdps_setup = None
+        self._default_path = None
 
-        if self._arcdps_setup is not None:
-            self.detected_label = QLabel(self._detected_setup_text(self._arcdps_setup))
-        else:
-            gw2_note = ""
-            if self._gw2_installations:
-                first = self._gw2_installations[0].directory
-                more = len(self._gw2_installations) - 1
-                gw2_note = (
-                    f"Guild Wars 2 found: <code>{first}</code><br>"
-                    + (f"<small>Also found {more} other GW2 install(s).</small><br>" if more else "")
-                    + "<small>ArcDPS settings were not found beside it.</small><br><br>"
-                )
-            self.detected_label = QLabel(
-                gw2_note
-                +
-                f"Default ArcDPS log location detected:<br>"
-                f"<code>{self._default_path}</code><br>"
-                f"<small>SparkyBot selects the WvW subfolder automatically. "
-                f"Change it below only if this location is wrong.</small>"
-            )
+        self.ask_intro_label = QLabel(
+            "SparkyBot can look for Guild Wars 2 and ArcDPS on this "
+            "computer and suggest where your fight logs live. Nothing is "
+            "changed until you accept it."
+        )
+        self.ask_intro_label.setWordWrap(True)
+        layout.addWidget(self.ask_intro_label)
+
+        self.scan_btn = QPushButton("Look for ArcDPS and GW2 automatically")
+        self.scan_btn.setMinimumHeight(36)
+        theme.set_widget_class(self.scan_btn, "primary")
+        self.scan_btn.setToolTip(
+            "Search this computer for Guild Wars 2 and ArcDPS and its "
+            "settings so SparkyBot can suggest your fight-log folder — "
+            "you still confirm the folder it suggests."
+        )
+        self.scan_btn.clicked.connect(self.run_auto_scan)
+        layout.addWidget(self.scan_btn)
+
+        # Detection surface — built now, filled and revealed by the scan.
+        self.detected_label = QLabel("")
         self.detected_label.setWordWrap(True)
         self.detected_label.setTextFormat(Qt.TextFormat.RichText)
+        self.detected_label.hide()
         layout.addWidget(self.detected_label)
 
-        self.setup_combo = None
-        if len(self._arcdps_setups) > 1:
-            choose_label = QLabel("More than one ArcDPS setup was found:")
-            layout.addWidget(choose_label)
-            self.setup_combo = QComboBox()
-            self.setup_combo.setToolTip(
-                "More than one ArcDPS install was found — pick the one for "
-                "the game copy you actually play. The locations above update "
-                "as you switch."
-            )
-            for setup in self._arcdps_setups:
-                self.setup_combo.addItem(str(setup.arcdps_directory), setup)
-            self.setup_combo.currentIndexChanged.connect(self._select_detected_setup)
-            layout.addWidget(self.setup_combo)
+        self.setup_choose_label = QLabel("More than one ArcDPS setup was found:")
+        self.setup_choose_label.hide()
+        layout.addWidget(self.setup_choose_label)
+        self.setup_combo = QComboBox()
+        self.setup_combo.setToolTip(
+            "More than one ArcDPS install was found — pick the one for "
+            "the game copy you actually play. The locations above update "
+            "as you switch."
+        )
+        self.setup_combo.currentIndexChanged.connect(self._select_detected_setup)
+        self.setup_combo.hide()
+        layout.addWidget(self.setup_combo)
 
         self.use_arcdps_btn = QPushButton("Yes — Use This ArcDPS Setup")
         self.use_arcdps_btn.setMinimumHeight(36)
         theme.set_widget_class(self.use_arcdps_btn, "primary")
         self.use_arcdps_btn.clicked.connect(self._use_arcdps_location)
-        self.use_arcdps_btn.setVisible(self._arcdps_setup is not None)
+        self.use_arcdps_btn.setVisible(False)
         layout.addWidget(self.use_arcdps_btn)
 
         self.use_default_btn = QPushButton("Yes — Use This Folder")
         self.use_default_btn.setMinimumHeight(36)
         theme.set_widget_class(self.use_default_btn, "primary")
         self.use_default_btn.clicked.connect(self._use_default)
-        self.use_default_btn.setVisible(self._arcdps_setup is None)
+        self.use_default_btn.setVisible(False)
         layout.addWidget(self.use_default_btn)
 
         self.find_arcdps_btn = QPushButton("ArcDPS Is Somewhere Else...")
+        self.find_arcdps_btn.setToolTip(
+            "Pick the arcdps.ini of an ArcDPS install SparkyBot did not "
+            "find, so it can read the log folder straight from it."
+        )
         self.find_arcdps_btn.clicked.connect(self._browse_arcdps_settings)
         layout.addWidget(self.find_arcdps_btn)
 
@@ -1285,6 +1372,10 @@ class LogFolderPage(QWizardPage):
 
         self.manual_toggle = QPushButton("Choose a Different Folder (advanced)")
         self.manual_toggle.setCheckable(True)
+        self.manual_toggle.setToolTip(
+            "Ignore anything found or assumed and type or browse to the "
+            "fight-log folder yourself."
+        )
         self.manual_toggle.toggled.connect(self._toggle_manual_folder)
         layout.addWidget(self.manual_toggle)
 
@@ -1320,13 +1411,75 @@ class LogFolderPage(QWizardPage):
         layout.addStretch()
         self.registerField("log_folder", self.folder_edit)
         self._toggle_manual_folder(False)
+
+    def run_auto_scan(self):
+        """Hunt for GW2 + ArcDPS — only ever behind a user-initiated action.
+
+        Reached by the scan button's click on this page, or pre-answered by
+        the Welcome autodetect click through ensure_scanned. The conventional
+        Documents location stays the visible fallback when ArcDPS has no
+        custom path set."""
+        if self._scanned:
+            return
+        self._scanned = True
+        try:
+            self._gw2_installations = self._detect_gw2_installations()
+        except Exception:
+            self._gw2_installations = ()
+        try:
+            self._arcdps_setups = self._detect_arcdps_setups()
+        except Exception:
+            self._arcdps_setups = ()
+        self._arcdps_setup = self._arcdps_setups[0] if self._arcdps_setups else None
+        self._default_path = self._detect_default_log_path()
+        self._show_scan_results()
+
+    def ensure_scanned(self) -> tuple:
+        """The Welcome autodetect click covers this page's hunt too — the
+        user already granted that permission there. Idempotent; returns the
+        found GW2 directories so the caller can steer competitor discovery."""
+        self.run_auto_scan()
+        return tuple(inst.directory for inst in self._gw2_installations)
+
+    def _show_scan_results(self):
+        self.ask_intro_label.hide()
+        self.scan_btn.hide()
         if self._arcdps_setup is not None:
-            theme.set_state(self.status_label, "warn")
+            self.detected_label.setText(
+                self._detected_setup_text(self._arcdps_setup)
+            )
+        else:
+            gw2_note = ""
+            if self._gw2_installations:
+                first = self._gw2_installations[0].directory
+                more = len(self._gw2_installations) - 1
+                gw2_note = (
+                    f"Guild Wars 2 found: <code>{first}</code><br>"
+                    + (f"<small>Also found {more} other GW2 install(s).</small><br>" if more else "")
+                    + "<small>ArcDPS settings were not found beside it.</small><br><br>"
+                )
+            self.detected_label.setText(
+                gw2_note
+                +
+                f"Default ArcDPS log location detected:<br>"
+                f"<code>{self._default_path}</code><br>"
+                f"<small>SparkyBot selects the WvW subfolder automatically. "
+                f"Change it below only if this location is wrong.</small>"
+            )
+        self.detected_label.show()
+        if len(self._arcdps_setups) > 1:
+            for setup in self._arcdps_setups:
+                self.setup_combo.addItem(str(setup.arcdps_directory), setup)
+            self.setup_choose_label.show()
+            self.setup_combo.show()
+        self.use_arcdps_btn.setVisible(self._arcdps_setup is not None)
+        self.use_default_btn.setVisible(self._arcdps_setup is None)
+        theme.set_state(self.status_label, "warn")
+        if self._arcdps_setup is not None:
             self.status_label.setText(
                 "Check the locations above, then accept them or choose another setup."
             )
         else:
-            theme.set_state(self.status_label, "warn")
             self.status_label.setText(
                 "Use the folder above if it is right, or choose a different folder."
             )
@@ -1419,6 +1572,11 @@ class LogFolderPage(QWizardPage):
             )
             return
         selected = setups[0]
+        # Pointing at the settings file IS the user-initiated action — the
+        # detection surface earns its space now, without a separate scan.
+        self._scanned = True
+        self.ask_intro_label.hide()
+        self.scan_btn.hide()
         if self.setup_combo is not None:
             selected_index = -1
             for index in range(self.setup_combo.count()):
@@ -1437,6 +1595,7 @@ class LogFolderPage(QWizardPage):
             self.setup_combo.setCurrentIndex(selected_index)
         self._arcdps_setup = selected
         self.detected_label.setText(self._detected_setup_text(self._arcdps_setup))
+        self.detected_label.show()
         self.use_default_btn.setVisible(False)
         self.use_arcdps_btn.setVisible(True)
         self.folder_edit.clear()
@@ -1514,6 +1673,12 @@ class LogFolderPage(QWizardPage):
 
     def use_imported_folder(self, folder: str | Path) -> None:
         """Use a path the user explicitly approved in the import preview."""
+        # The import came through a user-initiated flow (the Welcome
+        # autodetect click or a manually chosen settings file), so this
+        # page never has to ask its own scan question.
+        self._scanned = True
+        self.ask_intro_label.hide()
+        self.scan_btn.hide()
         target = Path(folder)
         self.folder_edit.setText(str(target))
         if target.is_dir():

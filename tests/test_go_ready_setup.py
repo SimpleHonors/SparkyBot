@@ -89,6 +89,7 @@ def test_imported_setup_has_two_required_steps_then_ready(
     assert wizard.welcome_page.nextId() == PAGE_GW2EI
     assert wizard.log_folder_page.nextId() == PAGE_COMPLETE
     assert wizard.log_folder_page.folder_edit.text() == ""
+    wizard.log_folder_page.run_auto_scan()
     wizard.log_folder_page._use_default()
     assert wizard.log_folder_page.folder_edit.text() == str(wvw_logs)
     assert "Logspam" in wizard.complete_page.summary_label.text()
@@ -113,6 +114,7 @@ def test_fully_detected_computer_still_asks_before_using_log_folder(
 
     assert wizard.welcome_page.nextId() == PAGE_LOG_FOLDER
     assert wizard.log_folder_page.folder_edit.text() == ""
+    wizard.log_folder_page.run_auto_scan()
     wizard.log_folder_page._use_default()
     assert wizard.log_folder_page.is_ready()
 
@@ -149,6 +151,37 @@ def test_first_run_rejects_a_setup_file_with_posting_disabled(
     assert not config.config_path.exists()
 
 
+def test_log_folder_page_probes_nothing_until_its_scan_is_run(
+    tmp_path, monkeypatch, qt_app
+):
+    gw2_calls = []
+    arcdps_calls = []
+    monkeypatch.setattr(
+        LogFolderPage,
+        "_detect_gw2_installations",
+        lambda _self: gw2_calls.append(1) or (),
+    )
+    monkeypatch.setattr(
+        LogFolderPage,
+        "_detect_arcdps_setups",
+        lambda _self: arcdps_calls.append(1) or (),
+    )
+    wizard, _config, _wvw_logs = build_wizard(tmp_path, monkeypatch)
+
+    # The wizard constructs every page up front — that must never hunt.
+    assert gw2_calls == []
+    assert arcdps_calls == []
+    page = wizard.log_folder_page
+    assert not page.scan_btn.isHidden()
+
+    page.run_auto_scan()
+    page.run_auto_scan()  # idempotent — the hunt runs at most once
+
+    assert len(gw2_calls) == 1
+    assert len(arcdps_calls) == 1
+    assert page.scan_btn.isHidden()
+
+
 def test_machine_local_pages_block_a_fake_ready_state(
     tmp_path, monkeypatch, qt_app
 ):
@@ -156,6 +189,7 @@ def test_machine_local_pages_block_a_fake_ready_state(
 
     assert wizard.gw2ei_page.validatePage() is False
     assert wizard.log_folder_page.validatePage() is False
+    wizard.log_folder_page.run_auto_scan()
     wizard.log_folder_page._use_default()
     assert wizard.log_folder_page.validatePage() is True
 
@@ -191,6 +225,17 @@ def test_arcdps_configured_folder_is_shown_and_requires_consent(
     )
 
     page = wizard.log_folder_page
+    # Ask-first: the page sits in its question state until its own scan
+    # (or the Welcome click) has run — nothing is probed at build time.
+    assert not page.scan_btn.isHidden()
+    assert page.detected_label.isHidden()
+    assert page.use_arcdps_btn.isHidden()
+
+    page.run_auto_scan()
+
+    assert page.scan_btn.isHidden()
+    assert not page.detected_label.isHidden()
+    assert not page.use_arcdps_btn.isHidden()
     assert str(wvw_logs) in page.detected_label.text()
     assert page.folder_edit.text() == ""
     assert not page.is_ready()
@@ -227,6 +272,7 @@ def test_choose_file_to_ready_is_one_bounded_flow(
     wizard.gw2ei_page._install_success = True
     wizard.next()
     assert wizard.currentPage() is wizard.log_folder_page
+    wizard.log_folder_page.run_auto_scan()
     wizard.log_folder_page._use_default()
     wizard.next()
     assert wizard.currentId() == PAGE_COMPLETE
