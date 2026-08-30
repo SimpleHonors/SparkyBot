@@ -69,16 +69,18 @@ class _EndRunWindow:
     def _discover_run_logs(self):
         return []
 
-    def _start_run_report(self, selected, name, auto_post, quit_after=False):
+    def _finish_end_run_async(self, started, ended, recorded_paths,
+                              auto_post, quit_after):
         self.calls.append((auto_post, quit_after))
 
 
 @pytest.mark.parametrize("explicit_choice", [False, True])
 def test_end_run_uses_explicit_choice_not_remembered_setting(
-        monkeypatch, explicit_choice):
+        explicit_choice):
+    """Quit-with-run must hand the user's explicit post choice (never the
+    remembered setting) into the async end-run pipeline, with
+    quit_after=True."""
     window = _EndRunWindow()
-    selected = [SimpleNamespace(timestamp=datetime(2026, 8, 10, 19, 7))]
-    monkeypatch.setattr(main_window, "collect_run_logs", lambda *args: selected)
 
     MainWindow._end_run_and_quit(window, auto_post=explicit_choice)
 

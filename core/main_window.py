@@ -142,6 +142,8 @@ class MainWindow(QMainWindow):
     # Background log-folder scan -> GUI thread. The log folder is often a
     # network share; a hiccup there must never freeze the UI (ticket 6c8e08f9).
     sig_run_logs_scanned = Signal(str, object)   # (purpose, logs)
+    # End-run selection scan -> GUI thread (F4): flow is "end" or "stale".
+    sig_end_scan_done = Signal(str, object)      # (flow, logs)
 
     def __init__(self, config, parent=None, update_flow=None, clock=None):
         super().__init__(parent)
@@ -173,6 +175,10 @@ class MainWindow(QMainWindow):
         # Cross-thread (worker emits, GUI consumes) -> auto-queued connection.
         self._run_scan_inflight = False
         self.sig_run_logs_scanned.connect(self._on_run_logs_scanned)
+        # Context for a confirmed End Run awaiting its selection scan (F4):
+        # (started, ended, recorded_paths, auto_post)
+        self._pending_end_run = None
+        self.sig_end_scan_done.connect(self._on_end_scan_done)
 
         self.setWindowTitle("SparkyBot")
         # Shell target size — replaces the old 13-tab-label width computation.
@@ -800,10 +806,14 @@ class MainWindow(QMainWindow):
         self._show_run_open()
 
     def _request_end_run(self):
-        """End Run: exactly ONE confirm dialog, remembered auto-post."""
+        """End Run: exactly ONE confirm dialog, remembered auto-post.
+
+        No synchronous share scan on the click path (F4): the dialog shows
+        the cached fights-so-far count (refreshed every 60s plus on every
+        processed file); the definitive selection scan runs on a worker
+        thread after the user confirms."""
         session = self._run_session
-        logs = self._discover_run_logs()
-        count = len(self._collect_run_logs(logs=logs))
+        count = self._run_fight_count
         elapsed_text = format_elapsed(session.elapsed())
         confirmed, auto_post = self._exec_end_run_dialog(count, elapsed_text)
         if not confirmed:
@@ -817,9 +827,38 @@ class MainWindow(QMainWindow):
 
         recorded_paths = session.recorded_logs
         started, ended = session.end()
-        selected = collect_run_logs(
-            self._discover_run_logs(), started, ended, recorded_paths)
+        self._finish_end_run_async(started, ended, recorded_paths, auto_post,
+                                   quit_after=False)
+
+    def _finish_end_run_async(self, started, ended, recorded_paths,
+                              auto_post: bool, quit_after: bool):
+        """Confirmed End Run: busy UI now, selection scan off-thread; the
+        report (or the no-fights verdict) continues in _on_end_scan_done."""
+        self._pending_end_run = (started, ended, recorded_paths, auto_post)
+        self._begin_run_report_ui(auto_post, quit_after)
+
+        def _work():
+            try:
+                logs = self._discover_run_logs()
+            except Exception:
+                logger.warning("End-run log scan failed", exc_info=True)
+                logs = []
+            self.sig_end_scan_done.emit("end", logs)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_end_scan_done(self, flow: str, logs):
+        """GUI-thread landing slot for an end-run/stale-run selection scan."""
+        if flow == "stale":
+            self._finish_stale_run(logs)
+            return
+        if self._pending_end_run is None:
+            return
+        started, ended, recorded_paths, auto_post = self._pending_end_run
+        self._pending_end_run = None
+        selected = collect_run_logs(logs, started, ended, recorded_paths)
         if not selected:
+            self._run_report_busy = False
             self.feed_event(
                 "run",
                 "Run ended — no fights were recorded, nothing was posted.")
@@ -829,7 +868,7 @@ class MainWindow(QMainWindow):
             return
         name = (f"Combined Fight Log Summary {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
-        self._start_run_report(selected, name, auto_post)
+        self._launch_run_report_worker(selected, name, auto_post)
 
     def _exec_end_run_dialog(self, fight_count: int, elapsed_text: str):
         """The one End Run confirm. Returns (confirmed, auto_post)."""
@@ -973,13 +1012,33 @@ class MainWindow(QMainWindow):
 
     def _end_stale_run(self):
         """Banner action: end at the LAST fight's timestamp (not now), so
-        ending the next morning never sweeps in newer logs."""
-        logs = self._discover_run_logs()
-        started = self._run_session.started_at
-        in_window = self._collect_run_logs(logs=logs, started_at=started)
+        ending the next morning never sweeps in newer logs. The share scan
+        runs off-thread (F4); session end/discard and the selection decision
+        stay on the GUI thread in _finish_stale_run."""
         self._hide_stale_banner()
+        self._begin_run_report_ui(bool(self.config.run_auto_post),
+                                  quit_after=False)
+
+        def _work():
+            try:
+                logs = self._discover_run_logs()
+            except Exception:
+                logger.warning("Stale-run log scan failed", exc_info=True)
+                logs = []
+            self.sig_end_scan_done.emit("stale", logs)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _finish_stale_run(self, logs):
+        """GUI-thread continuation of _end_stale_run once the scan lands."""
+        session = self._run_session
+        if session is None or not session.is_open:
+            return
+        started = session.started_at
+        in_window = self._collect_run_logs(logs=logs, started_at=started)
         if not in_window:
-            self._run_session.discard()
+            session.discard()
+            self._run_report_busy = False
             self.feed_event(
                 "run",
                 "Run ended — no fights were recorded, nothing was posted.")
@@ -987,16 +1046,15 @@ class MainWindow(QMainWindow):
             return
         ended_at = max(
             in_window[-1].timestamp,
-            self._run_session.last_activity_at or started,
+            session.last_activity_at or started,
             started,
         )
-        recorded_paths = self._run_session.recorded_logs
-        started, ended = self._run_session.end(ended_at=ended_at)
+        recorded_paths = session.recorded_logs
+        started, ended = session.end(ended_at=ended_at)
         selected = collect_run_logs(logs, started, ended, recorded_paths)
         name = (f"Combined Fight Log Summary {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
-        self._start_run_report(selected, name,
-                               bool(self.config.run_auto_post))
+        self._launch_run_report_worker(selected, name, self._run_auto_posted)
 
     def _discard_stale_run(self):
         self._run_session.discard()
@@ -1008,10 +1066,8 @@ class MainWindow(QMainWindow):
     # End Run report (existing discover_logs -> runner -> publish path)
     # ------------------------------------------------------------------
 
-    def _start_run_report(self, selected: list, name: str, auto_post: bool,
-                          quit_after: bool = False):
-        """Generate (and optionally post) the run's report on a worker
-        thread with the inline stage-weighted progress bar."""
+    def _begin_run_report_ui(self, auto_post: bool, quit_after: bool):
+        """Flip the run panel into busy/progress mode (GUI thread only)."""
         self._run_report_busy = True
         self._run_auto_posted = auto_post
         self._quit_after_run = self._quit_after_run or quit_after
@@ -1028,6 +1084,16 @@ class MainWindow(QMainWindow):
             self.run_progress.setValue(0)
             self.run_progress.setVisible(True)
 
+    def _start_run_report(self, selected: list, name: str, auto_post: bool,
+                          quit_after: bool = False):
+        """Generate (and optionally post) the run's report on a worker
+        thread with the inline stage-weighted progress bar."""
+        self._begin_run_report_ui(auto_post, quit_after)
+        self._launch_run_report_worker(selected, name, auto_post)
+
+    def _launch_run_report_worker(self, selected: list, name: str,
+                                  auto_post: bool):
+        """Worker half of _start_run_report — busy UI must already be up."""
         config = self.config
 
         def _work():
@@ -1489,22 +1555,13 @@ class MainWindow(QMainWindow):
         return "cancel"
 
     def _end_run_and_quit(self, auto_post: bool):
-        """End the run, honor the explicit post choice, then quit."""
+        """End the run, honor the explicit post choice, then quit. The
+        selection scan runs off-thread (F4); quit_after=True makes both the
+        no-fights verdict and the finished report exit the app."""
         recorded_paths = self._run_session.recorded_logs
         started, ended = self._run_session.end()
-        selected = collect_run_logs(
-            self._discover_run_logs(), started, ended, recorded_paths)
-        if not selected:
-            self.feed_event(
-                "run",
-                "Run ended — no fights were recorded, nothing was posted.")
-            self._show_run_idle()
-            self._quit_app_now()
-            return
-        name = (f"Combined Fight Log Summary {selected[-1].timestamp:%Y-%m-%d} "
-                f"({len(selected)} fights)")
-        self._start_run_report(
-            selected, name, auto_post=auto_post, quit_after=True)
+        self._finish_end_run_async(started, ended, recorded_paths, auto_post,
+                                   quit_after=True)
 
     def _show_about(self):
         """Small About box; linked credits live on Settings > About."""
