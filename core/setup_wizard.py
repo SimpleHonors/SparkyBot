@@ -406,6 +406,10 @@ class WelcomePage(QWizardPage):
         )
         offer_layout.addWidget(self.competitor_import_button)
         self.competitor_choose_different_button = QPushButton("Choose a settings file instead")
+        self.competitor_choose_different_button.setToolTip(
+            "Ignore what was found and point SparkyBot at a specific log "
+            "tool's settings file yourself."
+        )
         self.competitor_choose_different_button.setFlat(True)
         self.competitor_choose_different_button.clicked.connect(
             self._choose_different_competitor_config
@@ -488,6 +492,10 @@ class WelcomePage(QWizardPage):
         advanced_layout.addWidget(advanced_help)
         self.advanced_competitor_button = QPushButton(
             "Choose an App and Its File"
+        )
+        self.advanced_competitor_button.setToolTip(
+            "Pick another fight-report app and its settings file by hand so "
+            "SparkyBot can reuse its choices."
         )
         self.advanced_competitor_button.setFlat(True)
         self.advanced_competitor_button.clicked.connect(
@@ -839,11 +847,20 @@ class AIOptInPage(QWizardPage):
         layout.addSpacing(8)
 
         self.decline_radio = QRadioButton("No thanks — keep it simple")
+        self.decline_radio.setToolTip(
+            "Skips every AI step. Fight reports and Discord posting all "
+            "work exactly the same without it."
+        )
         theme.mark_option(self.decline_radio)
         self.decline_radio.setChecked(True)   # opt-IN: off is the default
         layout.addWidget(self.decline_radio)
 
         self.accept_radio = QRadioButton("Yes — set up AI commentary")
+        self.accept_radio.setToolTip(
+            "Adds two short setup steps: picking an AI service (free local "
+            "options work) and, if you like, a voice to read the commentary "
+            "aloud."
+        )
         theme.mark_option(self.accept_radio)
         layout.addWidget(self.accept_radio)
 
@@ -877,6 +894,10 @@ class UsageModePage(QWizardPage):
             "One-button runs — press Start Run when the raid starts; "
             "End Run builds the report and posts it. (recommended)"
         )
+        self.run_button_radio.setToolTip(
+            "Easiest for regular sessions: two clicks bracket the evening "
+            "and the summary handles itself."
+        )
         theme.mark_option(self.run_button_radio)
         self.run_button_radio.setChecked(True)   # the recommended default
         layout.addWidget(self.run_button_radio)
@@ -884,6 +905,10 @@ class UsageModePage(QWizardPage):
         self.manual_radio = QRadioButton(
             "I'll pick fights myself — build reports on the Raid Report "
             "page whenever you want."
+        )
+        self.manual_radio.setToolTip(
+            "For full control: you tick exactly the fights you want in a "
+            "summary and build it whenever it suits you."
         )
         theme.mark_option(self.manual_radio)
         layout.addWidget(self.manual_radio)
@@ -988,8 +1013,17 @@ class GW2EIPage(QWizardPage):
         self.path_edit.setPlaceholderText(
             "Optional existing GuildWars2EliteInsights-CLI.exe"
         )
+        self.path_edit.setToolTip(
+            "Only for people who already installed Elite Insights "
+            "themselves: the full path to its CLI .exe. Leave blank if you "
+            "used the automatic install above."
+        )
         # No prefill - do not expose user's personal folder structure
         self.browse_btn = QPushButton("Browse...")
+        self.browse_btn.setToolTip(
+            "Find your existing GuildWars2EliteInsights-CLI.exe on this "
+            "computer."
+        )
         self.browse_btn.clicked.connect(self._browse)
         row.addWidget(self.path_edit)
         row.addWidget(self.browse_btn)
@@ -1216,6 +1250,11 @@ class LogFolderPage(QWizardPage):
             choose_label = QLabel("More than one ArcDPS setup was found:")
             layout.addWidget(choose_label)
             self.setup_combo = QComboBox()
+            self.setup_combo.setToolTip(
+                "More than one ArcDPS install was found — pick the one for "
+                "the game copy you actually play. The locations above update "
+                "as you switch."
+            )
             for setup in self._arcdps_setups:
                 self.setup_combo.addItem(str(setup.arcdps_directory), setup)
             self.setup_combo.currentIndexChanged.connect(self._select_detected_setup)
@@ -1258,8 +1297,17 @@ class LogFolderPage(QWizardPage):
         self.folder_edit.setPlaceholderText(
             "Path to your ArcDPS WvW log folder"
         )
+        self.folder_edit.setToolTip(
+            "The folder SparkyBot will watch for new fight recordings — "
+            "usually the WvW subfolder inside arcdps.cbtlogs. The detected "
+            "location above fills this in for you."
+        )
         # No prefill - do not expose user's personal folder structure
         self.browse_btn = QPushButton("Browse...")
+        self.browse_btn.setToolTip(
+            "Pick the fight-log folder yourself if the detected one is "
+            "wrong."
+        )
         self.browse_btn.clicked.connect(self._browse)
         row.addWidget(self.folder_edit)
         row.addWidget(self.browse_btn)
@@ -1526,10 +1574,19 @@ class DiscordPage(QWizardPage):
 
         self.webhook_edit = QLineEdit()
         self.webhook_edit.setPlaceholderText("https://discord.com/api/webhooks/...")
+        self.webhook_edit.setToolTip(
+            "The link that lets SparkyBot post into one Discord channel. "
+            "In Discord: Server Settings > Integrations > Webhooks > Copy "
+            "Webhook URL, then paste it here."
+        )
         layout.addWidget(QLabel("Webhook URL:"))
         layout.addWidget(self.webhook_edit)
 
         self.skip_check = QCheckBox("Skip Discord setup for now")
+        self.skip_check.setToolTip(
+            "Finish setup without Discord — fights are still analyzed, just "
+            "not posted anywhere. Add a webhook later in Settings > Discord."
+        )
         layout.addWidget(self.skip_check)
 
         self.registerField("webhook", self.webhook_edit)
@@ -1611,6 +1668,10 @@ class TwitchPage(QWizardPage):
         layout.addSpacing(6)
 
         self.enable_twitch = QCheckBox("Enable Twitch Bot")
+        self.enable_twitch.setToolTip(
+            "Posts fight summaries to a Twitch chat channel while you "
+            "stream. Needs the channel name and bot token below."
+        )
         layout.addWidget(self.enable_twitch)
 
         layout.addSpacing(8)
@@ -1629,15 +1690,28 @@ class TwitchPage(QWizardPage):
 
         self.twitch_channel = QLineEdit()
         self.twitch_channel.setPlaceholderText("your_channel_name")
+        self.twitch_channel.setToolTip(
+            "The Twitch channel whose chat gets the messages — usually your "
+            "own channel name, lowercase, no # in front."
+        )
         layout.addLayout(_make_row("Channel Name:", self.twitch_channel))
 
         # Bot token
         self.twitch_token = QLineEdit()
         self.twitch_token.setPlaceholderText("oauth:...")
         self.twitch_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.twitch_token.setToolTip(
+            "The oauth:... token that lets the bot send chat messages. Get "
+            "a free one at twitchtokengenerator.com — choose the Bot Chat "
+            "Token option."
+        )
         layout.addLayout(_make_row("Bot Token:", self.twitch_token))
 
         self.twitch_use_tls = QCheckBox("Use secure connection (TLS)")
+        self.twitch_use_tls.setToolTip(
+            "Encrypts your token on its way to Twitch. Leave on unless a "
+            "firewall blocks the secure connection."
+        )
         self.twitch_use_tls.setChecked(True)
         tls_row = QHBoxLayout()
         tls_label = QLabel("")
@@ -1669,6 +1743,10 @@ class TwitchPage(QWizardPage):
         layout.addSpacing(12)
 
         self.skip_check = QCheckBox("Skip Twitch setup for now")
+        self.skip_check.setToolTip(
+            "Move on without Twitch. You can set it up later in Settings > "
+            "Twitch."
+        )
         layout.addWidget(self.skip_check)
 
         self.registerField("twitch_channel", self.twitch_channel)
@@ -1768,6 +1846,11 @@ class AIAnalysisPage(QWizardPage):
             return row
 
         self.ai_provider = QComboBox()
+        self.ai_provider.setToolTip(
+            "The AI service that writes the commentary. Picking one fills "
+            "in the address and a sensible model — Gemini's free tier and "
+            "local Ollama both work."
+        )
         self.ai_provider.blockSignals(True)
         self.ai_provider.addItems(list(PRESETS.keys()))
         self.ai_provider.blockSignals(False)
@@ -1776,11 +1859,20 @@ class AIAnalysisPage(QWizardPage):
 
         self.ai_base_url = QLineEdit()
         self.ai_base_url.setPlaceholderText("https://api.example.com/v1")
+        self.ai_base_url.setToolTip(
+            "The web address of the AI service. Filled in automatically "
+            "when you pick a provider — only change it for your own local "
+            "server."
+        )
         layout.addLayout(_make_row("Base URL:", self.ai_base_url))
 
         self.ai_api_key = QLineEdit()
         self.ai_api_key.setPlaceholderText("sk-... (leave blank for local models)")
         self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_api_key.setToolTip(
+            "The secret key from your AI service account — the links below "
+            "take you to each provider's key page. Local models need none."
+        )
         layout.addLayout(_make_row("API Key:", self.ai_api_key))
 
         # Model row: combo + a Refresh button that pulls the live model list
@@ -1789,6 +1881,11 @@ class AIAnalysisPage(QWizardPage):
         self.ai_model = QComboBox()
         self.ai_model.setEditable(True)
         self.ai_model.setPlaceholderText("model name")
+        self.ai_model.setToolTip(
+            "The exact model the service should use, for example "
+            "gpt-4o-mini. The provider's usual choice is pre-filled; "
+            "Refresh lists everything your service offers."
+        )
         self.ai_refresh_btn = QPushButton("Refresh")
         self.ai_refresh_btn.setToolTip(
             "Fetch the live model list from this provider (needs Base URL, and an API Key for hosted providers)"
@@ -1808,9 +1905,19 @@ class AIAnalysisPage(QWizardPage):
         self.ai_max_tokens = QSpinBox()
         self.ai_max_tokens.setRange(100, 8000)
         self.ai_max_tokens.setValue(self.config.ai_max_tokens or 450)
+        self.ai_max_tokens.setToolTip(
+            "Caps how long each piece of commentary can get. The default "
+            "450 fits a punchy paragraph; Test Connection adjusts this "
+            "automatically if the model needs more."
+        )
         layout.addLayout(_make_row("Max Tokens:", self.ai_max_tokens))
 
         self.ai_disable_thinking = QCheckBox("Disable Thinking / Reasoning Mode")
+        self.ai_disable_thinking.setToolTip(
+            "Some models silently burn their whole word budget thinking "
+            "before answering. Tick this if commentary comes back cut off "
+            "or empty — Test Connection sets it for you when needed."
+        )
         self.ai_disable_thinking.setChecked(bool(getattr(self.config, "ai_disable_thinking", False)))
         layout.addLayout(_make_row("", self.ai_disable_thinking))
 
@@ -1856,6 +1963,10 @@ class AIAnalysisPage(QWizardPage):
         layout.addSpacing(12)
 
         self.skip_check = QCheckBox("Skip AI setup for now")
+        self.skip_check.setToolTip(
+            "Move on without connecting an AI service. You can finish this "
+            "any time in Settings > AI Commentary."
+        )
         layout.addWidget(self.skip_check)
 
         scroll.setWidget(widget)
@@ -2176,11 +2287,20 @@ class TTSVoicePage(QWizardPage):
         layout.addSpacing(6)
 
         self.enable_tts = QCheckBox("Play AI commentary through speakers")
+        self.enable_tts.setToolTip(
+            "After each fight, the commentary is spoken out loud on this "
+            "computer in the voice you pick below."
+        )
         layout.addWidget(self.enable_tts)
 
         layout.addSpacing(6)
 
         self.tts_discord_attach = QCheckBox("Attach audio to Discord post")
+        self.tts_discord_attach.setToolTip(
+            "Uploads the spoken commentary with the Discord post so your "
+            "guild can play it — an inline player on desktop, a download on "
+            "mobile."
+        )
         layout.addWidget(self.tts_discord_attach)
 
         layout.addSpacing(8)
@@ -2198,6 +2318,11 @@ class TTSVoicePage(QWizardPage):
             return row
 
         self.tts_provider = QComboBox()
+        self.tts_provider.setToolTip(
+            "Where the speech comes from: edge is free and needs no "
+            "account, elevenlabs is paid premium quality, local is your own "
+            "speech server with voice cloning."
+        )
         self.tts_provider.addItems(["edge", "elevenlabs", "local"])
         self.tts_provider.currentTextChanged.connect(self._on_provider_changed)
         layout.addLayout(_make_row("Provider:", self.tts_provider))
@@ -2224,6 +2349,11 @@ class TTSVoicePage(QWizardPage):
         self.tts_edge_voice = QComboBox()
         self.tts_edge_voice.setEditable(True)
         self.tts_edge_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.tts_edge_voice.setToolTip(
+            "Which Microsoft voice reads the commentary — en-GB-RyanNeural "
+            "is a solid default. Refresh Voices loads the full list, and "
+            "Test Voice lets you hear your pick."
+        )
         self.tts_edge_voice.addItem("en-GB-RyanNeural")
         edge_layout.addWidget(self.tts_edge_voice, 1)
         self.tts_edge_refresh_btn = QPushButton("Refresh Voices")
@@ -2243,6 +2373,10 @@ class TTSVoicePage(QWizardPage):
         url_row.addWidget(url_label)
         self.tts_local_url = QLineEdit()
         self.tts_local_url.setPlaceholderText("http://127.0.0.1:5820")
+        self.tts_local_url.setToolTip(
+            "The address of your own speech server on this machine or your "
+            "network, for example http://127.0.0.1:5820."
+        )
         url_row.addWidget(self.tts_local_url, 1)
         local_layout.addLayout(url_row)
         voice_row = QHBoxLayout()
@@ -2253,6 +2387,11 @@ class TTSVoicePage(QWizardPage):
         self.tts_local_voice = QComboBox()
         self.tts_local_voice.setEditable(True)
         self.tts_local_voice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.tts_local_voice.setToolTip(
+            "The voice on your speech server that reads the commentary. "
+            "Refresh lists what the server offers; Add Voice clones a new "
+            "one from a recording."
+        )
         voice_row.addWidget(self.tts_local_voice, 1)
         self.tts_local_refresh_btn = QPushButton("Refresh")
         self.tts_local_refresh_btn.clicked.connect(self._refresh_local_voices)
@@ -2292,10 +2431,18 @@ class TTSVoicePage(QWizardPage):
         self.tts_el_api_key = QLineEdit()
         self.tts_el_api_key.setPlaceholderText("sk_...")
         self.tts_el_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tts_el_api_key.setToolTip(
+            "The secret key from your ElevenLabs account — the Get API Key "
+            "link below takes you straight to it."
+        )
         el_layout.addLayout(_make_el_row("API Key:", self.tts_el_api_key))
 
         self.tts_el_voice_id = QLineEdit()
         self.tts_el_voice_id.setPlaceholderText("JBFqnCBsd6RMkjVDRZzb (George)")
+        self.tts_el_voice_id.setToolTip(
+            "The ID of the ElevenLabs voice to use — copy it from the "
+            "Browse Voices library linked below."
+        )
         el_layout.addLayout(_make_el_row("Voice ID:", self.tts_el_voice_id))
 
         layout.addWidget(self.el_fields_widget)
@@ -2344,6 +2491,10 @@ class TTSVoicePage(QWizardPage):
         layout.addSpacing(12)
 
         self.skip_check = QCheckBox("Skip voice setup for now")
+        self.skip_check.setToolTip(
+            "Move on without a voice — commentary stays text-only. Set it "
+            "up any time in Settings > Voice."
+        )
         layout.addWidget(self.skip_check)
 
         scroll.setWidget(widget)
@@ -2615,6 +2766,10 @@ class BehaviorPage(QWizardPage):
 
         # Start watcher on startup
         self.start_watcher_on_startup = QCheckBox("Start watching for logs automatically on launch")
+        self.start_watcher_on_startup.setToolTip(
+            "Fights get picked up from the moment SparkyBot opens — good if "
+            "you sometimes forget to press Start Watcher."
+        )
         self.start_watcher_on_startup.setChecked(config.start_watcher_on_startup)
         start_watcher_note = QLabel(
             "When enabled, SparkyBot begins monitoring your log folder immediately "
@@ -2628,6 +2783,10 @@ class BehaviorPage(QWizardPage):
 
         # Start minimized
         self.start_minimized = QCheckBox("Start minimized to system tray")
+        self.start_minimized.setToolTip(
+            "SparkyBot opens out of sight, down by the clock. Pairs well "
+            "with starting the watcher automatically."
+        )
         self.start_minimized.setChecked(config.start_minimized)
         start_minimized_note = QLabel(
             "SparkyBot launches silently in the background. Access it from the system tray icon."
@@ -2640,6 +2799,10 @@ class BehaviorPage(QWizardPage):
 
         # Close to tray
         self.close_to_tray = QCheckBox("Close to system tray instead of quitting")
+        self.close_to_tray.setToolTip(
+            "The X button tucks SparkyBot away instead of quitting, so "
+            "fights keep getting posted while the window is closed."
+        )
         self.close_to_tray.setChecked(config.close_to_tray)
         close_note = QLabel(
             "Clicking the X button hides SparkyBot to the tray instead of exiting the application."
@@ -2652,6 +2815,10 @@ class BehaviorPage(QWizardPage):
 
         # Minimize to tray
         self.minimize_to_tray = QCheckBox("Minimize to system tray")
+        self.minimize_to_tray.setToolTip(
+            "Minimizing hides the window by the clock instead of leaving a "
+            "taskbar button."
+        )
         self.minimize_to_tray.setChecked(config.minimize_to_tray)
         minimize_to_tray_note = QLabel(
             "When you click the minimize button, SparkyBot goes to the system tray instead of the taskbar."
@@ -2665,6 +2832,10 @@ class BehaviorPage(QWizardPage):
 
         # Check updates on launch
         self.check_updates_on_launch = QCheckBox("Check for updates on launch")
+        self.check_updates_on_launch.setToolTip(
+            "Quietly looks for newer SparkyBot and Elite Insights releases "
+            "at startup. Nothing installs without your say-so."
+        )
         self.check_updates_on_launch.setChecked(config.check_updates_on_launch)
         check_updates_note = QLabel(
             "Automatically checks GitHub for new SparkyBot and Elite Insights versions at startup."
