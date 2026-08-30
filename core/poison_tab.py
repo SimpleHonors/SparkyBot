@@ -126,14 +126,36 @@ def parse_poison_output(tiddlers):
 
 
 CLASS_COLORS = {
-    "Scourge": "#52A76F", "Reaper": "#3E7D54", "Harbinger": "#6FB58A",
+    # One shade family per core profession; the core name shares the family
+    # base (same convention as Necromancer/Scourge below). Every name in
+    # fight_report.PROFESSION_NAMES must have an entry — guarded by
+    # tests/test_poison_class_colors.py so new elite specs can't fall
+    # through to the grey _default again.
     "Necromancer": "#52A76F",
+    "Scourge": "#52A76F", "Reaper": "#3E7D54", "Harbinger": "#6FB58A",
+    "Guardian": "#72C1D9",
     "Firebrand": "#72C1D9", "Dragonhunter": "#5A9FB5", "Luminary": "#8FD3E8",
+    "Willbender": "#3F7E94",
+    "Elementalist": "#F68A87",
     "Tempest": "#F68A87", "Catalyst": "#D96E6B", "Evoker": "#FBAAA7",
+    "Weaver": "#B85451",
+    "Mesmer": "#B679D5",
     "Chronomancer": "#B679D5", "Mirage": "#9A5CB8", "Troubadour": "#CE9BE6",
+    "Virtuoso": "#7E44A0",
+    "Warrior": "#E5B84B",
     "Spellbreaker": "#E5B84B", "Berserker": "#C79A2E", "Paragon": "#F0D477",
+    "Bladesworn": "#A87F22",
+    "Revenant": "#D16E5A",
     "Herald": "#D16E5A", "Renegade": "#B45540", "Ritualist": "#E0917C",
+    "Vindicator": "#96422F",
+    "Ranger": "#8CDC82",
     "Druid": "#8CDC82", "Amalgam": "#6FB56A", "Conduit": "#A7E89E",
+    "Soulbeast": "#4E9A48", "Untamed": "#C8F2C0", "Galeshot": "#B9E463",
+    "Engineer": "#D09C59",
+    "Scrapper": "#B07E3E", "Holosmith": "#E8B678", "Mechanist": "#F2CE9B",
+    "Thief": "#C08F95",
+    "Daredevil": "#A6707A", "Deadeye": "#8E5A64", "Specter": "#D5A8B0",
+    "Antiquary": "#E2BFC7",
     "_default": "#9AA0A6",
 }
 
