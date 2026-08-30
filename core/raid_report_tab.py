@@ -112,21 +112,34 @@ class RaidReportTab(QWidget):
         chip_and_found.addWidget(pick_label)
 
         self._chip_recent = QPushButton("Last 12 hours")
+        self._chip_recent.setToolTip(
+            "Ticks every fight from the last 12 hours and unticks the "
+            "rest. Handy right after a play session."
+        )
         theme.set_widget_class(self._chip_recent, "chip")
         self._chip_recent.clicked.connect(lambda: self._apply_chip("recent"))
         chip_and_found.addWidget(self._chip_recent)
 
         self._chip_today = QPushButton("Today")
+        self._chip_today.setToolTip(
+            "Ticks every fight recorded since midnight and unticks the rest."
+        )
         theme.set_widget_class(self._chip_today, "chip")
         self._chip_today.clicked.connect(lambda: self._apply_chip("today"))
         chip_and_found.addWidget(self._chip_today)
 
         self._chip_all = QPushButton("All")
+        self._chip_all.setToolTip(
+            "Ticks every fight in the list, no matter how old."
+        )
         theme.set_widget_class(self._chip_all, "chip")
         self._chip_all.clicked.connect(lambda: self._apply_chip("all"))
         chip_and_found.addWidget(self._chip_all)
 
         self._chip_none = QPushButton("None")
+        self._chip_none.setToolTip(
+            "Unticks everything so you can start your pick from scratch."
+        )
         theme.set_widget_class(self._chip_none, "chip")
         self._chip_none.clicked.connect(lambda: self._apply_chip("none"))
         chip_and_found.addWidget(self._chip_none)
@@ -152,6 +165,11 @@ class RaidReportTab(QWidget):
         empty_copy.setWordWrap(True)
         empty_layout.addWidget(empty_copy, 1)
         self.add_fights_btn = QPushButton("Add fight files...")
+        self.add_fights_btn.setToolTip(
+            "Takes you to the Process Files screen where you add your "
+            ".evtc or .zevtc fight recordings. Once processed, they show "
+            "up in this list."
+        )
         theme.set_widget_class(self.add_fights_btn, "primary")
         self.add_fights_btn.clicked.connect(
             self.sig_process_files_requested.emit)
@@ -194,6 +212,11 @@ class RaidReportTab(QWidget):
         self.name_edit.setPlaceholderText(
             "Leave blank for: Combined Fight Log Summary <date> (<n> fights)"
         )
+        self.name_edit.setToolTip(
+            "A friendly title shown at the top of the finished summary, "
+            "for example \"Tuesday strike missions\". Leave it blank and "
+            "SparkyBot names it after the date and number of fights."
+        )
         name_row.addWidget(self.name_edit)
         layout.addLayout(name_row)
 
@@ -230,6 +253,11 @@ class RaidReportTab(QWidget):
         post_row.addWidget(self.open_report_btn)
 
         self.post_discord_btn = QPushButton("Post to Discord")
+        self.post_discord_btn.setToolTip(
+            "Uploads the finished summary to your Discord channel using "
+            "the webhook from Settings. Big files are shrunk first to fit "
+            "Discord's free upload limit."
+        )
         self.post_discord_btn.setEnabled(False)
         self.post_discord_btn.clicked.connect(self._on_publish)
         post_row.addWidget(self.post_discord_btn)
