@@ -62,7 +62,7 @@ def fight_tiddlers(n):
     return tids
 
 
-REAL_REPORT = Path(__file__).parent / "real_report_full.html"
+REAL_REPORT = Path(__file__).parent / "real_report_fixed.html"
 
 
 def main():
@@ -83,55 +83,67 @@ function extractStores(html){
     i=j; }
   return all;
 }
-function cellName(c){
-  var m=c.match(/\{\{([^}]*)\}\}/); if(m)return m[1].replace(/_/g,' ');
-  m=c.match(/\[img[^\[]*\[([^|\]]+)/); if(m)return m[1];
-  m=c.match(/\[\[([^|\]]+)/); if(m)return m[1];
-  return c.replace(/<[^>]+>/g,'').replace(/^[!\s]+|\s+$/g,'');
-}
 function esc(s){var d=document.createElement('i');d.textContent=s;return d.innerHTML;}
-function parseTable(text){
-  var rows=[]; 
-  text.split('\n').forEach(function(line){
-    if(line.charAt(0)!=='|')return;
-    if(/\|[kcf]$/.test(line))return;
-    var isHead=/\|h$/.test(line);
-    var cells=line.replace(/\|[hf]$/,'').split('|').slice(1,-1).map(cellName);
-    if(cells.join('')==='')return;
-    if(isHead && cells.filter(Boolean).length<3)return; // spanning pre-header
-    rows.push({head:isHead,cells:cells});
+function strip(c){return c.replace(/<[^>]+>/g,'').replace(/\{\{[^}]*\}\}/g,'').replace(/[!\s]+/g,' ').trim();}
+function board(t, valueLabel){
+  if(!t)return '';
+  var rows=[];
+  t.text.split('\n').forEach(function(line){
+    if(line.charAt(0)!=='|'||/\|[hkcf]$/.test(line))return;
+    var cells=line.split('|').slice(1,-1);
+    if(cells.length<8)return;
+    var rank=strip(cells[0]), name=strip(cells[1]), prof=strip(cells[2]), val=strip(cells[7]);
+    if(!/^\d+$/.test(rank)||rows.length>=10)return;
+    rows.push([rank,name,prof,val]);
   });
-  return rows;
-}
-function tableHtml(rows,dropLast){
-  var h=['<div class=tw><table>'];
+  if(!rows.length)return '';
+  var h=['<div class=board><h2>'+esc((t.caption||valueLabel).replace(/[^\x20-\x7E]/g,'').trim()||valueLabel)+'</h2><table>',
+    '<tr><th>#</th><th>Player</th><th>Class</th><th class=n>'+esc(valueLabel)+'</th></tr>'];
   rows.forEach(function(r){
-    var cs=dropLast?r.cells.slice(0,-1):r.cells;
-    var tag=r.head?'th':'td';
-    h.push('<tr>'+cs.map(function(c){
-      var num=/^[\d,.%]+$/.test(c.trim());
-      return '<'+tag+(num?' class=n':'')+'>'+esc(c)+'</'+tag+'>';}).join('')+'</tr>');});
+    h.push('<tr><td class=n>'+esc(r[0])+'</td><td>'+esc(r[1])+'</td><td>'+esc(r[2])+'</td><td class=n>'+esc(r[3])+'</td></tr>');});
   h.push('</table></div>'); return h.join('');
 }
 function renderSimple(html){
   var tids=extractStores(html);
-  function find(sfx){for(var k=0;k<tids.length;k++){var t=tids[k];
+  function find(sfx){for(var k=tids.length-1;k>=0;k--){var t=tids[k];
     if(t.title&&t.title.indexOf(sfx)>=0&&t.title.charAt(0)!=='$')return t;}return null;}
-  var summary=find('-Log-Summary'), tag=find('-Tag_Stats'), ov=find('-Overview');
-  var h=['<!doctype html><meta charset=utf-8><title>Simple skin</title>',
-    '<style>body{font-family:system-ui;background:#101720;color:#e8eef4;margin:20px auto;max-width:1200px;padding:0 16px}',
-    'h1{color:#4c8ed9;font-size:22px}h2{color:#7fb3e8;font-size:16px;margin:26px 0 6px}',
-    '.tw{overflow-x:auto}table{border-collapse:collapse;white-space:nowrap}',
-    'td,th{border:1px solid #2a3a4c;padding:3px 10px;font-size:13px;text-align:left}',
-    'td.n{text-align:right;font-variant-numeric:tabular-nums}',
-    'th{background:#1a2430;position:sticky;top:0}tr:nth-child(even) td{background:#0d1319}',
-    'p.dim{color:#93a8a3;font-size:13px}</style>',
-    '<h1>Combined Fight Log Summary — Simple skin</h1>'];
-  if(summary)h.push('<p>'+esc((summary.caption||summary.title).replace(/\bNone\b/g,'').replace(/-/g,' ').replace(/\s+/g,' ').trim())+'</p>');
-  if(tag){h.push('<h2>Command Tag Summary</h2>', tableHtml(parseTable(tag.text),false));}
-  if(ov){h.push('<h2>Fights</h2>', tableHtml(parseTable(ov.text),true));}
-  h.push('<p class=dim>Headline slice only — switch to Classic for all '+
-    'sections (buffs, mechanics, dashboards, poison chart). Same file, same data.</p>');
+  var tag=find('-Tag_Stats'), summary=find('-Log-Summary');
+  // headline numbers from the Tag_Stats "Totals" row
+  var stats=null;
+  if(tag)tag.text.split('\n').some(function(line){
+    if(line.indexOf('|Totals')!==0)return false;
+    var c=line.replace(/\|f$/,'|').split('|').slice(1,-1).map(strip).filter(function(x){return x!=='<';});
+    stats={fights:c[1],edowns:c[2],ekills:c[3],adowns:c[4],adeaths:c[5],kdr:c[6]};
+    return true;});
+  var h=['<!doctype html><meta charset=utf-8><title>Fight Log Summary</title>',
+    '<style>body{font-family:system-ui;background:#101720;color:#e8eef4;margin:24px auto;max-width:1150px;padding:0 20px}',
+    'h1{color:#e8eef4;font-size:24px;margin-bottom:2px}p.sub{color:#8ca0b3;margin-top:0}',
+    '.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:20px 0}',
+    '.card{background:#1a2430;border:1px solid #2a3a4c;border-radius:6px;padding:14px 16px}',
+    '.card .v{font-size:26px;font-weight:700;color:#7fb3e8}.card .l{font-size:12px;color:#8ca0b3;margin-top:2px}',
+    '.card.good .v{color:#5fd38f}.card.bad .v{color:#e08585}',
+    '.boards{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}',
+    '.board h2{color:#e8eef4;font-size:15px;margin:0 0 6px}',
+    'table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #22303e;padding:4px 8px;font-size:13px;text-align:left}',
+    'th{color:#8ca0b3;font-weight:600}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}',
+    'p.dim{color:#8ca0b3;font-size:13px;margin-top:26px}</style>'];
+  h.push('<h1>Combined Fight Log Summary</h1>');
+  if(summary)h.push('<p class=sub>'+esc((summary.caption||'').replace(/\bNone\b/g,'').replace(/\s*-\s*-\s*/g,' \u2014 ').replace(/\s+/g,' ').trim())+'</p>');
+  if(stats){h.push('<div class=cards>',
+    '<div class=card><div class=v>'+esc(stats.fights)+'</div><div class=l>Fights</div></div>',
+    '<div class="card good"><div class=v>'+esc(stats.ekills)+'</div><div class=l>Enemies Killed</div></div>',
+    '<div class="card good"><div class=v>'+esc(stats.edowns)+'</div><div class=l>Enemies Downed</div></div>',
+    '<div class="card bad"><div class=v>'+esc(stats.adeaths)+'</div><div class=l>Our Deaths</div></div>',
+    '<div class="card bad"><div class=v>'+esc(stats.adowns)+'</div><div class=l>Our Downs</div></div>',
+    '<div class=card><div class=v>'+esc(stats.kdr)+'</div><div class=l>K/D Ratio</div></div>',
+    '</div>');}
+  h.push('<div class=boards>');
+  h.push(board(find('-damage-Leaderboard'),'Avg Damage'));
+  h.push(board(find('-kills-Leaderboard'),'Avg Kills'));
+  h.push(board(find('-down_contribution-Leaderboard'),'Down Contrib'));
+  h.push(board(find('-damage_barrier-Leaderboard'),'Barrier'));
+  h.push('</div>');
+  h.push('<p class=dim>Headline view. Switch to Classic for every table, chart, and the Poison Coverage report.</p>');
   return h.join('');
 }
 """
