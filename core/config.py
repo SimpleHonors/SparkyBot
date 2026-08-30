@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 import configparser
 import tempfile
 from pathlib import Path
@@ -426,11 +427,29 @@ class Config:
             webhooks.append(self.discord_webhook3)
         return webhooks
 
+    # The log folder usually lives on a network share; get_log_folders is
+    # called from GUI slots, so the existence stat is TTL-cached to avoid a
+    # network round trip (or a multi-second hang on a share hiccup) per call
+    # (ticket 6c8e08f9, finding F5). Keyed by path — a config change to
+    # log_folder self-invalidates.
+    _LOG_FOLDER_EXISTS_TTL = 15.0
+
+    def _log_folder_exists(self, path: str) -> bool:
+        cached = getattr(self, "_lf_exists_cache", None)
+        now = time.monotonic()
+        if cached is not None:
+            c_path, c_when, c_exists = cached
+            if c_path == path and now - c_when < self._LOG_FOLDER_EXISTS_TTL:
+                return c_exists
+        exists = os.path.exists(path)
+        self._lf_exists_cache = (path, now, exists)
+        return exists
+
     def get_log_folders(self) -> List[Path]:
         """Get all configured log folders"""
         folders = []
         if self.log_folder:
-            if os.path.exists(self.log_folder):
+            if self._log_folder_exists(self.log_folder):
                 folders.append(Path(self.log_folder))
             else:
                 logger = logging.getLogger(__name__)
