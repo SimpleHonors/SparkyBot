@@ -14,14 +14,14 @@ only: ZERO config keys change (Thresholds/maxUploadSize still lives in
 [Thresholds] even though the control now sits on the Discord page).
 
 Categories (AI-off): Discord, Fight Reports, Watcher & Parsing,
-Raid Reports, Twitch, Application. With AI enabled, a separator and
+Raid Reports, Twitch, Application, Updates, About. With AI enabled, a separator and
 AI Commentary / Voice / Vocabulary follow. Visibility is decided from
 AI/enableAiAnalysis at every open AND re-evaluated after every successful
 Apply/OK, so flipping the master switch takes effect live (LAW #2) — the
 AI-off dialog's only AI-labeled surface is the switch's own group on the
 Application page.
 
-Pages are composed lazily on first visit; the Application page's first
+Pages are composed lazily on first visit; the Updates page's first
 view triggers the one-time GitHub update checks (never construction).
 """
 
@@ -46,12 +46,15 @@ CAT_WATCHER = "Watcher & Parsing"
 CAT_RAID_REPORTS = "Raid Reports"
 CAT_TWITCH = "Twitch"
 CAT_APPLICATION = "Application"
+CAT_UPDATES = "Updates"
+CAT_ABOUT = "About"
 CAT_AI = "AI Commentary"
 CAT_VOICE = "Voice"
 CAT_VOCABULARY = "Vocabulary"
 
 BASE_CATEGORIES = (CAT_DISCORD, CAT_FIGHT_REPORTS, CAT_WATCHER,
-                   CAT_RAID_REPORTS, CAT_TWITCH, CAT_APPLICATION)
+                   CAT_RAID_REPORTS, CAT_TWITCH, CAT_APPLICATION,
+                   CAT_UPDATES, CAT_ABOUT)
 AI_CATEGORIES = (CAT_AI, CAT_VOICE, CAT_VOCABULARY)
 
 _ROLE_CATEGORY = Qt.ItemDataRole.UserRole
@@ -256,7 +259,7 @@ class SettingsDialog(QDialog):
         if name in self._page_opened:
             return
         self._page_opened.add(name)
-        if name == CAT_APPLICATION:
+        if name == CAT_UPDATES:
             # First view of the update surface fires the one-time GitHub
             # checks (never at construction).
             self.engine.run_update_checks_once()
@@ -293,6 +296,8 @@ class SettingsDialog(QDialog):
             CAT_RAID_REPORTS: self._build_raid_reports_page,
             CAT_TWITCH: self._build_twitch_page,
             CAT_APPLICATION: self._build_application_page,
+            CAT_UPDATES: self._build_updates_page,
+            CAT_ABOUT: self._build_about_page,
             CAT_AI: self._build_ai_page,
             CAT_VOICE: self._build_voice_page,
             CAT_VOCABULARY: self._build_vocabulary_page,
@@ -403,7 +408,7 @@ class SettingsDialog(QDialog):
         pform = QFormLayout(parser)
         pform.addRow("CLI executable", self._pair(e.gw2ei_exe, e.gw2ei_browse_btn))
         pform.addRow("Max parse memory", e.max_parse_memory)
-        ei_hint = QLabel("Elite Insights install and updates live on the Application page.")
+        ei_hint = QLabel("Elite Insights install and updates live on the Updates page.")
         ei_hint.setWordWrap(True)
         theme.mark_hint(ei_hint)
         pform.addRow("", ei_hint)
@@ -502,13 +507,6 @@ class SettingsDialog(QDialog):
         sform.addWidget(self._relaunch_note)
         layout.addWidget(startup)
 
-        updates = QGroupBox("Updates")
-        uform = QVBoxLayout(updates)
-        uform.addWidget(e.check_updates_on_launch)
-        uform.addWidget(e.sparkybot_update_group)
-        uform.addWidget(e.ei_update_group)
-        layout.addWidget(updates)
-
         # The ONE sanctioned AI surface in AI-off mode: the master switch
         # itself (design-A LAW-2b — "the only AI-related pixel"). The
         # gating tests allowlist exactly this group; gating is live now,
@@ -526,12 +524,23 @@ class SettingsDialog(QDialog):
         aform.addWidget(ai_hint)
         layout.addWidget(ai_group)
 
-        about = QGroupBox("About")
-        about_layout = QVBoxLayout(about)
-        about_layout.addWidget(e.about_widget)
-        e.about_widget.show()
-        layout.addWidget(about)
+        layout.addStretch()
+        return page
 
+    def _build_updates_page(self):
+        e = self.engine
+        page, layout = self._make_page(CAT_UPDATES)
+        layout.addWidget(e.check_updates_on_launch)
+        layout.addWidget(e.sparkybot_update_group)
+        layout.addWidget(e.ei_update_group)
+        layout.addStretch()
+        return page
+
+    def _build_about_page(self):
+        e = self.engine
+        page, layout = self._make_page(CAT_ABOUT)
+        layout.addWidget(e.about_widget)
+        e.about_widget.show()
         layout.addStretch()
         return page
 

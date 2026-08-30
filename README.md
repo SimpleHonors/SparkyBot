@@ -152,11 +152,12 @@ settings are preserved, existing files are backed up, and the app clearly
 names anything that cannot transfer. This is a one-time, user-approved
 move—not a background sync process.
 
-We use, credit, and were influenced by this ecosystem. The linked
-[interoperability guide](docs/WVW_LOG_TOOL_INTEROPERABILITY.md) says where each
-tool may be the better fit, lists every adapter, and documents the license
-boundary. No competitor source code or assets are copied by the migration
-feature.
+SparkyBot directly relies on some projects, was genuinely influenced by a few,
+and simply interoperates with or documents others. The linked
+[interoperability guide](docs/WVW_LOG_TOOL_INTEROPERABILITY.md) names the exact
+relationship, says where each tool may be the better fit, lists every adapter,
+and documents the license boundary. No competitor source code or assets are
+copied by the migration feature.
 
 ### Twitch
 
@@ -264,7 +265,7 @@ The **parse cache** (on by default) means the Raid Report doesn't re-run GW2EI o
 
 ### Credits
 
-The stats engine is **GW2 Elite Insights** (baaron4/GW2-Elite-Insights-Parser) paired with the **GW2 EI Log Combiner** (Drevarr/GW2_EI_log_combiner). SparkyBot downloads the combiner at runtime with your consent — it is never vendored, imported, or redistributed. Both projects are linked in [Built on the Shoulders of Giants](#built-on-the-shoulders-of-giants).
+The stats engine is **GW2 Elite Insights** (baaron4/GW2-Elite-Insights-Parser) paired with the **GW2 EI Log Combiner** (Drevarr/GW2_EI_log_combiner). SparkyBot downloads the combiner at runtime with your consent — it is never vendored, imported, or redistributed. Both projects are linked in [Credits and neighboring tools](#credits-and-neighboring-tools).
 
 ---
 
@@ -279,10 +280,13 @@ The stats engine is **GW2 Elite Insights** (baaron4/GW2-Elite-Insights-Parser) p
 
 ---
 
-## Built on the Shoulders of Giants
+## Credits and neighboring tools
 
-SparkyBot exists because this community already did excellent work. We have
-used these tools, learned from them, and celebrate the jobs they may do better:
+SparkyBot directly relies on ArcDPS and GW2 Elite Insights, uses the GW2 EI Log
+Combiner for optional whole-night reports, and was directly inspired by
+MzFightReporter. The other entries below are independent neighboring tools we
+recognize for interoperability and comparison—not a claim that we used them,
+built on them, or copied their work. Here is where each may be the better fit:
 
 - **[MzFightReporter](https://github.com/Swedemon/MzFightReporter)** by Swedemon (MIT) — the original Java WvW reporter that directly inspired us; its compact live battle/Twitch workflow remains excellent.
 - **[GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser)** by baaron4 (MIT) — the authoritative parser powering SparkyBot and much of the ecosystem.

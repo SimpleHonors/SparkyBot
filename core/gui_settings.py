@@ -1,5 +1,6 @@
 """Main Settings Window for SparkyBot"""
 
+import html
 import re
 import sys
 import hashlib
@@ -18,6 +19,7 @@ from PySide6.QtGui import QColor, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from pathlib import Path
 from core import theme
+from core.interop_catalog import INTEROP_PROJECTS
 from core.update_flow import UpdateFlow
 from core.version import VERSION
 from core.discord_bot import normalize_webhook_url
@@ -304,7 +306,7 @@ class SettingsWindow(QWidget):
         tabs.addTab(self.about_widget, "About")
 
         # GitHub status checks run the first time the update surface is
-        # actually shown (the Settings dialog's Application page) — never at
+        # actually shown (the Settings dialog's Updates page) — never at
         # construction. run_update_checks_once() is the single entry point.
         self._updates_checked = False
 
@@ -2330,14 +2332,14 @@ class SettingsWindow(QWidget):
         layout.addStretch()
 
         # Initial status checks are deferred to the first view of the
-        # Settings dialog's Application page — see run_update_checks_once.
+        # Settings dialog's Updates page — see run_update_checks_once.
 
         return widget
 
     def run_update_checks_once(self):
         """Fire the SparkyBot/EI GitHub status checks the first time the
         update surface becomes visible (the Settings dialog calls this when
-        the Application page is first opened). Construction never checks."""
+        the Updates page is first opened). Construction never checks."""
         if self._updates_checked:
             return
         self._updates_checked = True
@@ -3712,95 +3714,66 @@ class SettingsWindow(QWidget):
 
         layout.addSpacing(12)
 
-        # "Built on the shoulders of giants" section
-        credits_header = QLabel("<b>Built on the shoulders of giants:</b>")
+        credits_header = QLabel("<b>Credits &amp; links</b>")
         credits_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         theme.set_variant(credits_header, "heading")
         layout.addWidget(credits_header)
 
-        layout.addSpacing(10)
+        used_names = {"ArcDPS", "GW2 Elite Insights", "GW2 EI Log Combiner"}
 
-        # Helper to add a credit row: name link + optional byline + description
-        def add_credit(name_html, desc, url):
-            name_label = QLabel(name_html)
-            name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            name_label.setTextFormat(Qt.TextFormat.RichText)
-            name_label.setOpenExternalLinks(True)
-            layout.addWidget(name_label)
-            if desc:
-                desc_label = QLabel(desc)
-                desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                theme.mark_hint(desc_label)
-                layout.addWidget(desc_label)
-            layout.addSpacing(5)
+        def add_project_links(heading, projects):
+            section = QLabel(f"<b>{html.escape(heading)}</b>")
+            section.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(section)
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(24)
+            grid.setVerticalSpacing(5)
+            for index, project in enumerate(projects):
+                project_link = QLabel(
+                    f'<a href="{html.escape(project.url, quote=True)}">'
+                    f'{html.escape(project.name)}</a>'
+                )
+                project_link.setTextFormat(Qt.TextFormat.RichText)
+                project_link.setOpenExternalLinks(True)
+                project_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                grid.addWidget(project_link, index // 2, index % 2)
+            layout.addLayout(grid)
 
-        add_credit(
-            '<a href="https://github.com/Swedemon/MzFightReporter">'
-            '<b>MzFightReporter</b></a> by Swedemon',
-            "The original Java WvW fight reporter that inspired this project",
-            "https://github.com/Swedemon/MzFightReporter"
+        used = [project for project in INTEROP_PROJECTS
+                if project.name in used_names]
+        neighbors = [project for project in INTEROP_PROJECTS
+                     if project.name not in used_names]
+
+        add_project_links("Tools SparkyBot uses", used)
+        used_note = QLabel(
+            "ArcDPS creates the logs, Elite Insights parses them, and the "
+            "Log Combiner builds optional whole-night reports."
         )
+        used_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        used_note.setWordWrap(True)
+        theme.mark_hint(used_note)
+        layout.addWidget(used_note)
 
-        add_credit(
-            '<a href="https://github.com/baaron4/GW2-Elite-Insights-Parser">'
-            '<b>GW2 Elite Insights</b></a> by baaron4',
-            "The parser that powers all log analysis",
-            "https://github.com/baaron4/GW2-Elite-Insights-Parser"
+        layout.addSpacing(8)
+        add_project_links("Independent neighboring tools", neighbors)
+        neighbor_note = QLabel(
+            "Listed for credit and interoperability—not as a claim that "
+            "their code is bundled or that SparkyBot was based on them."
         )
+        neighbor_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        neighbor_note.setWordWrap(True)
+        theme.mark_hint(neighbor_note)
+        layout.addWidget(neighbor_note)
 
-        add_credit(
-            '<a href="https://www.deltaconnected.com/arcdps/">'
-            '<b>ArcDPS</b></a> by deltaconnected',
-            "The combat logging addon that makes all of this possible",
-            "https://www.deltaconnected.com/arcdps/"
+        comparison_link = QLabel(
+            '<a href="https://github.com/SimpleHonors/SparkyBot/blob/main/'
+            'docs/WVW_LOG_TOOL_INTEROPERABILITY.md">'
+            '<b>How these tools differ</b></a>'
         )
-
-        add_credit(
-            '<a href="https://github.com/Plenyx/PlenBotLogUploader">'
-            '<b>PlenBot Log Uploader</b></a> by Plenyx',
-            "Mature uploading with excellent team, encounter, and webhook controls",
-            "https://github.com/Plenyx/PlenBotLogUploader"
-        )
-
-        add_credit(
-            '<a href="https://github.com/darkharasho/axibridge">'
-            '<b>AxiBridge</b></a>',
-            "A polished visual WvW experience with strong web publishing",
-            "https://github.com/darkharasho/axibridge"
-        )
-
-        add_credit(
-            '<a href="https://github.com/darkharasho/TopStatsAIO">'
-            '<b>TopStatsAIO</b></a>',
-            "A focused all-in-one interface for deep top-stat workflows",
-            "https://github.com/darkharasho/TopStatsAIO"
-        )
-
-        add_credit(
-            '<a href="https://github.com/Retherichus/wvw-insights">'
-            '<b>WvW Insights</b></a>',
-            "In-game Nexus batch uploading and session management",
-            "https://github.com/Retherichus/wvw-insights"
-        )
-
-        add_credit(
-            '<a href="https://github.com/Drevarr/EVTC_parser">'
-            '<b>EVTC Parser</b></a> by Drevarr',
-            "Python EVTC parser and WvW stats aggregator",
-            "https://github.com/Drevarr/EVTC_parser"
-        )
-
-        layout.addSpacing(15)
-
-        tagline = QLabel(
-            "We used and learned from these tools. SparkyBot should stand on "
-            "its own merits, make switching easy in both directions, and never "
-            "make another community project's work invisible."
-        )
-        tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tagline.setWordWrap(True)
-        theme.mark_hint(tagline)
-        layout.addWidget(tagline)
+        comparison_link.setTextFormat(Qt.TextFormat.RichText)
+        comparison_link.setOpenExternalLinks(True)
+        comparison_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(comparison_link)
 
         # Add the inner widget to the outer layout with stretches on both sides
         outer_layout.addStretch()

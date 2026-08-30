@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
 
         # Quiet status-bar banner for the silent launch check. Subscribes to
         # sig_launch_available ONLY — sig_available is the manual check on
-        # the Settings Application page and hooking a banner to it would
+        # the Settings Updates page and hooking a banner to it would
         # double-surface manual checks.
         if self.update_flow is not None:
             self.update_flow.sig_launch_available.connect(
@@ -1273,7 +1273,7 @@ class MainWindow(QMainWindow):
 
         Lazy so opening the main window constructs none of the legacy
         tabs (and nothing touches GitHub — update checks wait for the
-        Settings dialog's Application page). The action tabs promoted to
+        Settings dialog's Updates page). The action tabs promoted to
         sidebar pages are stripped out of the engine's tab widget and
         re-mounted; the engine keeps its full attribute surface so
         save/load and the thread-signal wiring are untouched. The engine
@@ -1438,12 +1438,12 @@ class MainWindow(QMainWindow):
             selected, name, auto_post=auto_post, quit_after=True)
 
     def _show_about(self):
-        """Small About box; full credits live on Settings > Application."""
+        """Small About box; linked credits live on Settings > About."""
         QMessageBox.about(
             self, "About SparkyBot",
             f"SparkyBot v{VERSION}\n\n"
             "Guild Wars 2 fight log reporter.\n"
-            "Full credits: Settings > Application.")
+            "Credits and tool links: Settings > About.")
 
     def closeEvent(self, event):
         """X button: hide to tray or quit, per config (same semantics the

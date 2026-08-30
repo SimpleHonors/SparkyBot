@@ -31,6 +31,14 @@ All notable changes to SparkyBot will be documented in this file.
   common folders on each drive, finds separate ArcDPS settings, honors
   ArcDPS's configured log path, and asks which detected setup to use.
 
+### Changed
+
+- Settings now gives Updates and About their own entries, so the Application
+  page fits without scrolling. About uses plain, linked credits that separate
+  tools SparkyBot actually uses from independent neighboring projects; the
+  README and interoperability guide state where those tools differ or may be
+  the better fit without implying SparkyBot was built on every listed project.
+
 ### Security
 
 - Guild config export excludes AI, Twitch, voice, filesystem, and other app
