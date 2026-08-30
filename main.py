@@ -518,10 +518,12 @@ class WatcherWorker(QObject):
     # fire while AI analysis is enabled) plus concise processing lifecycle.
     pipeline_event = Signal(str, str, str)
 
-    def __init__(self, config, tts_client=None):
+    def __init__(self, config, tts_client=None, selftest: bool = False):
         super().__init__()
         self.config = config
         self.tts_client = tts_client
+        # Watcher self-test runs only for user-initiated starts
+        self._selftest = selftest
         self.watcher: Optional[FileWatcher] = None
         self._running = False
         self._lock = threading.Lock()
@@ -582,7 +584,7 @@ class WatcherWorker(QObject):
         self.status_changed.emit("Starting watcher...")
 
         try:
-            watcher.start()
+            watcher.start(selftest=self._selftest)
         except Exception as e:
             # Roll back on failure - watcher failed to start
             with self._lock:
@@ -600,7 +602,12 @@ class WatcherWorker(QObject):
             self.watcher = watcher
 
         self.running_state_changed.emit(True)
-        self.status_changed.emit("Watching for logs...")
+        if watcher.status_note:
+            # Plain note after a downgraded self-test (network folder that
+            # the drive-type API reported as local).
+            self.status_changed.emit(watcher.status_note)
+        else:
+            self.status_changed.emit("Watching for logs...")
 
     def stop(self):
         """Stop the watcher"""
@@ -717,7 +724,7 @@ class SparkyBotApp(QApplication):
         if action == "show":
             self.show_settings()
         elif action == "toggle_watcher":
-            self.toggle_watcher()
+            self.toggle_watcher(user_initiated=True)
 
     def _on_file_processed(self, filename: str, result_name: str,
                            detail: str = ""):
@@ -761,10 +768,17 @@ class SparkyBotApp(QApplication):
         if self.settings_window is not None:
             self.settings_window.feed_event(kind, text)
 
-    def start_watcher(self):
-        """Start the file watcher on a new thread."""
+    def start_watcher(self, user_initiated: bool = False):
+        """Start the file watcher on a new thread.
+
+        user_initiated=True (button/tray/settings driven) also runs the
+        watcher self-test; automatic startup passes False.
+        """
         # Always create fresh worker and thread
-        self.watcher_worker = WatcherWorker(self.config, tts_client=self.tts_client)
+        self.watcher_worker = WatcherWorker(
+            self.config, tts_client=self.tts_client,
+            selftest=user_initiated,
+        )
         self.watcher_thread = QThread()
         self.watcher_worker.moveToThread(self.watcher_thread)
         self.watcher_thread.started.connect(self.watcher_worker.start)
@@ -788,12 +802,12 @@ class SparkyBotApp(QApplication):
             self.watcher_thread = None
             self.watcher_worker = None
 
-    def toggle_watcher(self):
+    def toggle_watcher(self, user_initiated: bool = False):
         """Toggle watcher on/off"""
         if self.watcher_worker is not None and self.watcher_worker.is_running():
             self.stop_watcher()
         else:
-            self.start_watcher()
+            self.start_watcher(user_initiated=user_initiated)
 
     def show_settings(self):
         """Show the main window (lazy singleton, hidden — not destroyed —
@@ -802,7 +816,8 @@ class SparkyBotApp(QApplication):
             # Shares the app's UpdateFlow so the Updates tab and the launch
             # check drive (and reflect) the same pipeline.
             self.settings_window = MainWindow(self.config, update_flow=self.update_flow)
-            self.settings_window.watcher_toggled.connect(self.toggle_watcher)
+            self.settings_window.watcher_toggled.connect(
+                lambda: self.toggle_watcher(user_initiated=True))
             self.settings_window.settings_changed.connect(self._on_settings_changed)
             self.settings_window.destroyed.connect(self._on_settings_window_destroyed)
             self.settings_window.process_files_widget.process_requested.connect(self._process_manual_files)

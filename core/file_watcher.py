@@ -2,7 +2,7 @@
    Falls back to polling for network shares since OS events don't work over SMB
 """
 
-import subprocess
+import ctypes
 import time
 import logging
 import threading
@@ -13,40 +13,63 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedE
 
 logger = logging.getLogger(__name__)
 
+# Watcher self-test (user-initiated starts only): after writing a temp
+# probe file into a folder the observer must see an event within this
+# window, otherwise OS events are not arriving (e.g. a network folder the
+# drive-type API reports as LOCAL) and we fall back to compatibility
+# polling.
+NATIVE_WATCH_PROBE_TIMEOUT = 2.0
+NATIVE_PROBE_PREFIX = "SparkyBot-watch-probe"
+COMPAT_STATUS_NOTE = ("Network folder detected — using compatibility "
+                      "watching")
+
 
 def is_network_path(path: Path) -> bool:
-    """Check if a path is a network share (UNC path)"""
-    path_str = str(path)
-    # UNC paths start with \\
-    if path_str.startswith('\\\\'):
-        return True
-    # Check if path contains common network share patterns
-    if 'network' in path_str.lower() or 'smb' in path_str.lower():
-        return True
-    return False
+    """Check if a path is a network share (UNC path).
+
+    Only the real UNC prefix counts. The old 'network'/'smb' substring
+    heuristic false-positived on ordinary folder names and is gone.
+    """
+    return str(path).startswith('\\\\')
+
+
+# GetDriveTypeW return values (winbase.h): 0 UNKNOWN, 1 NO_ROOT_DIR,
+# 2 REMOVABLE, 3 FIXED, 4 REMOTE (mapped network drive), 5 CDROM, 6 RAMDISK.
+DRIVE_UNKNOWN = 0
+DRIVE_NO_ROOT_DIR = 1
+DRIVE_REMOVABLE = 2
+DRIVE_FIXED = 3
+DRIVE_REMOTE = 4
+DRIVE_CDROM = 5
+DRIVE_RAMDISK = 6
+
+
+def _drive_type(drive_root: str) -> Optional[int]:
+    """Return kernel32.GetDriveTypeW(drive_root), or None off-Windows.
+
+    ``drive_root`` must be the 'X:\\' form. Seam for tests to mock ctypes.
+    No argtypes/restype fiddling needed: ctypes maps a Python str to
+    LPCWSTR and the default restype (c_int) compares fine against the
+    DRIVE_* constants.
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32
+        return kernel32.GetDriveTypeW(drive_root)
+    except AttributeError:
+        return None  # non-Windows: no windll / no kernel32
 
 
 def check_remote_drive(path: Path) -> bool:
-    """Check if a path is on a remote/mapped drive"""
+    """Check if a path is on a mapped network drive (Windows API).
+
+    Asks kernel32.GetDriveTypeW directly instead of shelling out to
+    PowerShell (no process spawn, no console flash, no 10s timeout).
+    Off-Windows and drive-less paths keep the UNC-prefix-only behavior.
+    """
     try:
         drive = str(path.drive).upper()
-        if not drive:
-            return is_network_path(path)
-
-        # Use PowerShell to get network drives and check if our drive is one of them
-        from core.apppaths import no_window_kwargs
-        result = subprocess.run(
-            ['powershell', '-c',
-             '[System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq [System.IO.DriveType]::Network } | ForEach-Object { $_.Name }'],
-            capture_output=True, text=True, timeout=10,
-            **no_window_kwargs(),
-        )
-        network_drives = result.stdout.strip().split('\n')
-        # network_drives will be like ['Y:\\', 'Z:\\', '']
-        drive_letter = drive[0] + ':\\'
-        if drive_letter in network_drives:
+        if drive and _drive_type(drive + '\\') == DRIVE_REMOTE:
             return True
-
     except Exception:
         pass
 
@@ -355,6 +378,9 @@ class FileWatcher:
         self._running = False
         self._use_polling = False
         self._is_network: Optional[bool] = None  # Instance-level cache
+        # Set when a self-test downgraded us to compatibility polling, so the
+        # UI can surface a plain status note. None otherwise.
+        self.status_note: Optional[str] = None
 
     def _scan_existing_files(self):
         """Scan for existing files to skip them initially"""
@@ -380,35 +406,99 @@ class FileWatcher:
         self._is_network = False
         return False
 
-    def start(self):
-        """Start watching for new log files"""
+    def _probe_native_events(self, folder: Path,
+                             timeout: float = NATIVE_WATCH_PROBE_TIMEOUT) -> bool:
+        """Return True if the OS really delivers events for this folder.
+
+        Writes a temp probe file and waits ``timeout`` seconds for a
+        watchdog event on a throwaway observer. Used only by the
+        user-initiated start path.
+        """
+        fired = threading.Event()
+
+        class _Probe(FileSystemEventHandler):
+            def on_any_event(self, event):
+                if not event.is_directory:
+                    fired.set()
+
+        probe = folder / f"{NATIVE_PROBE_PREFIX}-" \
+                        f"{int(time.time() * 1000)}.tmp"
+        observer = Observer()
+        try:
+            observer.schedule(_Probe(), str(folder), recursive=True)
+            observer.start()
+            try:
+                probe.write_bytes(b"")
+                return fired.wait(timeout)
+            finally:
+                observer.stop()
+                observer.join(timeout)
+        except Exception as e:
+            logger.debug(f"Native watch probe error in {folder}: {e}")
+            return False
+        finally:
+            try:
+                probe.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _start_polling(self):
+        """Start the compatibility polling watcher (network-safe path)."""
+        logger.info("Network share detected - using polling watcher")
+        self._use_polling = True
+        self._polling_watcher = PollingFileWatcher(
+            self.config,
+            self._on_new_file,
+            self.poll_interval
+        )
+        self._polling_watcher.start(self._initial_files)
+
+    def _start_native(self):
+        """Start the OS-native event watcher."""
+        logger.info("Local folder detected - using OS-native events")
+        self._use_polling = False
+        self._event_handler = LogFileHandler(self._on_new_file)
+        self._observer = Observer()
+
+        for folder in self.config.get_log_folders():
+            if folder.exists():
+                logger.info(f"Watching folder: {folder}")
+                self._observer.schedule(self._event_handler, str(folder), recursive=True)
+            else:
+                logger.warning(f"Folder does not exist, skipping: {folder}")
+
+        self._observer.start()
+
+    def start(self, selftest: bool = False,
+              probe_timeout: float = NATIVE_WATCH_PROBE_TIMEOUT):
+        """Start watching for new log files.
+
+        Args:
+            selftest: verify the OS event watcher actually fires before
+                trusting it, falling back to compatibility polling on
+                silence. Only pass True from user-initiated flows (start
+                button / tray toggle); automatic launches keep the plain
+                startup behavior.
+        """
         self._scan_existing_files()
 
         # Check if we need polling for network shares
         if self._is_network_share():
-            logger.info("Network share detected - using polling watcher")
-            self._use_polling = True
-            self._polling_watcher = PollingFileWatcher(
-                self.config,
-                self._on_new_file,
-                self.poll_interval
-            )
-            self._polling_watcher.start(self._initial_files)
+            self._start_polling()
         else:
-            # Use efficient OS-native events
-            logger.info("Local folder detected - using OS-native events")
-            self._use_polling = False
-            self._event_handler = LogFileHandler(self._on_new_file)
-            self._observer = Observer()
-
-            for folder in self.config.get_log_folders():
-                if folder.exists():
-                    logger.info(f"Watching folder: {folder}")
-                    self._observer.schedule(self._event_handler, str(folder), recursive=True)
+            if selftest:
+                folders = [f for f in self.config.get_log_folders()
+                           if f.exists()]
+                silent = [f for f in folders
+                          if not self._probe_native_events(f, probe_timeout)]
+                if folders and silent:
+                    logger.info(COMPAT_STATUS_NOTE)
+                    self.status_note = COMPAT_STATUS_NOTE
+                    self._start_polling()
                 else:
-                    logger.warning(f"Folder does not exist, skipping: {folder}")
-
-            self._observer.start()
+                    self._start_native()
+            else:
+                self._start_native()
 
         self._running = True
         logger.info("File watcher started")
