@@ -830,7 +830,7 @@ class AIOptInPage(QWizardPage):
             "SparkyBot can add an AI hype-commentator blurb to each fight "
             "report, and can read it aloud in a voice you pick. It needs "
             "an AI provider (free local options work). Everything else — "
-            "fight reports, raid reports, Discord posting — is complete "
+            "fight reports, fight summaries, Discord posting — is complete "
             "without it."
         )
         desc.setWordWrap(True)
@@ -868,7 +868,7 @@ class UsageModePage(QWizardPage):
 
     def __init__(self):
         super().__init__()
-        self.setTitle("How do you want to make end-of-night raid reports?")
+        self.setTitle("How do you want to make your Combined Fight Log Summary?")
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(12, 8, 12, 8)

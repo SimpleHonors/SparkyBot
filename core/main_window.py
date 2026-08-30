@@ -111,7 +111,7 @@ PAGE_SETTINGS = "settings"
 
 NAV_ENTRIES = (
     (PAGE_HOME, "Home"),
-    (PAGE_RAID_REPORT, "Raid Report"),
+    (PAGE_RAID_REPORT, "Fight Summary"),
     (PAGE_PROCESS_FILES, "Process Files"),
     (PAGE_CALIBRATION, "Calibration"),
     (PAGE_SETTINGS, "Settings"),
@@ -684,7 +684,7 @@ class MainWindow(QMainWindow):
 
     _IDLE_HINT = ("Starts watching your log folder and counts every fight "
                   "until you end the run.")
-    _OPEN_HINT = "Skipped fights still count for raid reports."
+    _OPEN_HINT = "Skipped fights still count for fight summaries."
 
     def _init_run_state(self):
         """Load persisted run state when the panel comes up: resume a fresh
@@ -792,7 +792,7 @@ class MainWindow(QMainWindow):
             if self._quit_after_run:
                 self._quit_app_now()
             return
-        name = (f"Raid Report {selected[-1].timestamp:%Y-%m-%d} "
+        name = (f"Combined Fight Log Summary {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
         self._start_run_report(selected, name, auto_post)
 
@@ -812,7 +812,7 @@ class MainWindow(QMainWindow):
 
         fights = f"{fight_count} fight{'s' if fight_count != 1 else ''}"
         box.setText(f"{fights} · {elapsed_text}\n\n"
-                    "A raid report will be made for these fights.")
+                    "A fight summary will be made for these fights.")
         check = QCheckBox("Post it to Discord when done")
         check.setChecked(bool(getattr(self.config, "run_auto_post", True)))
         box.setCheckBox(check)
@@ -924,7 +924,7 @@ class MainWindow(QMainWindow):
         recorded_paths = self._run_session.recorded_logs
         started, ended = self._run_session.end(ended_at=ended_at)
         selected = collect_run_logs(logs, started, ended, recorded_paths)
-        name = (f"Raid Report {selected[-1].timestamp:%Y-%m-%d} "
+        name = (f"Combined Fight Log Summary {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
         self._start_run_report(selected, name,
                                bool(self.config.run_auto_post))
@@ -1000,7 +1000,7 @@ class MainWindow(QMainWindow):
         self._run_report_busy = False
         posted = self._run_auto_posted
         verb = "posted" if posted else "ready"
-        self.feed_event("report", f"Raid report {verb} — {result.name}")
+        self.feed_event("report", f"Fight summary {verb} — {result.name}")
         self._show_run_idle()
         if self.run_panel is not None:
             theme.set_state(self.run_status_label, "ok")
@@ -1024,9 +1024,9 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle("End Run report failed")
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setText("The raid report could not be made or posted.\n"
+        box.setText("The Combined Fight Log Summary could not be made or posted.\n"
                     "Your fights are safe — you can build the report any "
-                    "time on the Raid Report page.")
+                    "time on the Fight Summary page.")
         box.setInformativeText(message)
         box.exec()
 
@@ -1125,7 +1125,7 @@ class MainWindow(QMainWindow):
 
         blurb = QLabel(
             "All SparkyBot options live in the Settings dialog: Discord, "
-            "fight reports, watcher and parsing, raid reports, Twitch, "
+            "fight reports, watcher and parsing, fight summaries, Twitch, "
             "and application behavior."
         )
         blurb.setWordWrap(True)
@@ -1299,7 +1299,7 @@ class MainWindow(QMainWindow):
                     return widget
             return None
 
-        raid_report = _take("Raid Report")
+        raid_report = _take("Fight Summary")
         if raid_report is not None:
             self._raid_report_page = raid_report
             raid_report.sig_process_files_requested.connect(
@@ -1432,7 +1432,7 @@ class MainWindow(QMainWindow):
             self._show_run_idle()
             self._quit_app_now()
             return
-        name = (f"Raid Report {selected[-1].timestamp:%Y-%m-%d} "
+        name = (f"Combined Fight Log Summary {selected[-1].timestamp:%Y-%m-%d} "
                 f"({len(selected)} fights)")
         self._start_run_report(
             selected, name, auto_post=auto_post, quit_after=True)

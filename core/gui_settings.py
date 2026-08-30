@@ -297,11 +297,11 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._create_ai_tab(), "AI")
         tabs.addTab(self._create_tts_tab(), "TTS")
         tabs.addTab(self._create_calibration_tab(), "Calibration")
-        tabs.addTab(self._create_raid_report_settings_tab(), "Raid Report Settings")
+        tabs.addTab(self._create_raid_report_settings_tab(), "Combined Fight Log Summary Settings")
 
         from core.raid_report_wiring import build_raid_report_tab
         about_idx = tabs.count()  # About hasn't been added yet — insert just before it
-        tabs.insertTab(about_idx, build_raid_report_tab(self.config, parent=self), "Raid Report")
+        tabs.insertTab(about_idx, build_raid_report_tab(self.config, parent=self), "Fight Summary")
         self.about_widget = self._create_about_tab()
         tabs.addTab(self.about_widget, "About")
 
@@ -387,7 +387,7 @@ class SettingsWindow(QWidget):
         self.discord_webhook2 = QLineEdit()
         self.discord_webhook2.setPlaceholderText("https://discord.com/api/webhooks/...")
         self.discord_webhook_name2 = QLineEdit()
-        self.discord_webhook_name2.setPlaceholderText("e.g. Raid Reports")
+        self.discord_webhook_name2.setPlaceholderText("e.g. Fight Summaries")
         form.addRow("Destination 2 name:", self.discord_webhook_name2)
         form.addRow("Destination 2 webhook:", self.discord_webhook2)
 
@@ -401,11 +401,11 @@ class SettingsWindow(QWidget):
         self.active_webhook = QComboBox()
         self.raid_report_webhook = QComboBox()
         form.addRow("Fight reports:", self.active_webhook)
-        form.addRow("Raid reports:", self.raid_report_webhook)
+        form.addRow("Fight Summary:", self.raid_report_webhook)
 
         routing_help = QLabel(
-            "Use one destination for everything, or send end-of-run Raid "
-            "Reports somewhere else.")
+            "Use one destination for everything, or send the end-of-run "
+            "Combined Fight Log Summary somewhere else.")
         routing_help.setWordWrap(True)
         form.addRow("", routing_help)
 
@@ -3617,7 +3617,7 @@ class SettingsWindow(QWidget):
         theme.mark_option(self.runmode_run_button)
         runmode_layout.addWidget(self.runmode_run_button)
         run_hint = QLabel(
-            "Press Start Run when the raid starts; End Run builds the "
+            "Press Start Run when the fight log starts; End Run builds the "
             "report and posts it."
         )
         run_hint.setWordWrap(True)
@@ -3628,7 +3628,7 @@ class SettingsWindow(QWidget):
         theme.mark_option(self.runmode_manual)
         runmode_layout.addWidget(self.runmode_manual)
         manual_hint = QLabel(
-            "Build reports on the Raid Report page whenever you want."
+            "Build reports on the Fight Summary page whenever you want."
         )
         manual_hint.setWordWrap(True)
         theme.mark_hint(manual_hint)

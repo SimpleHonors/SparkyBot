@@ -84,7 +84,7 @@ class GuildConfigBundle:
     def routing_summary(self) -> str:
         return (
             f"Individual fight reports → {self.fight_destination_name}\n"
-            f"End-of-night debrief and logs → {self.nightly_destination_name}"
+            f"Fight summary and logs → {self.nightly_destination_name}"
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -231,7 +231,7 @@ def parse_guild_config(data: Any) -> GuildConfigBundle:
         )
     if enabled and raid and not destinations[raid - 1].webhook_url:
         raise GuildConfigError(
-            f"Discord is enabled, but end-of-night destination {raid} has no webhook URL."
+            f"Discord is enabled, but the fight-summary destination {raid} has no webhook URL."
         )
 
     return GuildConfigBundle(

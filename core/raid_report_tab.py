@@ -89,7 +89,7 @@ class RaidReportTab(QWidget):
         layout.setContentsMargins(12, 8, 12, 8)
 
         # 1. Header
-        header = QLabel("<b>Raid Report</b>")
+        header = QLabel("<b>Combined Fight Log Summary</b>")
         header.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(header)
 
@@ -192,13 +192,13 @@ class RaidReportTab(QWidget):
         name_row.addWidget(QLabel("Report name (optional):"))
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText(
-            "Leave blank for: Raid Report <date> (<n> fights)"
+            "Leave blank for: Combined Fight Log Summary <date> (<n> fights)"
         )
         name_row.addWidget(self.name_edit)
         layout.addLayout(name_row)
 
         # 6. Big button
-        self.big_btn = QPushButton("Make raid report")
+        self.big_btn = QPushButton("Make fight summary")
         theme.set_widget_class(self.big_btn, "primary")
         self.big_btn.setSizePolicy(QSizePolicy.Policy.Expanding,
                                    QSizePolicy.Policy.Fixed)
@@ -403,7 +403,7 @@ class RaidReportTab(QWidget):
         name = self.name_edit.text().strip()
         if not name:
             dt = selected[-1].timestamp.strftime("%Y-%m-%d")
-            name = f"Raid Report {dt} ({len(selected)} fights)"
+            name = f"Combined Fight Log Summary {dt} ({len(selected)} fights)"
 
         self._start_generate(selected, name)
 
