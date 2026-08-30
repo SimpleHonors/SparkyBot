@@ -652,6 +652,13 @@ def test_merge_findings_unions_routes_without_losing_nonprimary_nightly(tmp_path
     assert any("can save three" in item for item in merged.warnings)
     assert all("discord.com/api/webhooks" not in item for item in merged.warnings)
 
+    config = Config(tmp_path / "merged.properties")
+    apply_competitor_import(config, plan, persist=False)
+    assert config.discord_webhook == fight_primary.url
+    assert config.discord_webhook2 == nightly.url
+    assert config.discord_webhook3 == fight_old.url
+    assert config.raid_report_discord_webhook == 2
+
 
 @pytest.mark.parametrize("findings, primary_index", [((), 0), ((None,), 1)])
 def test_merge_findings_rejects_missing_or_invalid_primary(findings, primary_index):
