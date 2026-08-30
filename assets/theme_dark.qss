@@ -1,9 +1,11 @@
-/* SparkyBot "Workbench Dark" theme — the ONLY stylesheet in the app.
+/* SparkyBot theme stylesheet — the ONLY stylesheet in the app.
  *
- * The 12 palette tokens are substituted by core/theme.py at load time
- * (window, sunken, raised, border_strong, border, text, dim, accent,
- * accent_press, warn, error, selection). Everything else here is a
- * derived shade documented inline.
+ * Every @token is substituted by core/theme.py at load time from the active
+ * theme: the 13 base tokens (window, sunken, raised, border_strong, border,
+ * text, dim, accent, accent_press, warn, error, selection, link) plus the
+ * derived shades (raised_hover/press, accent_hover, error_hover/press,
+ * on_accent, disabled_text/bg, alt_base, error_tint, warn_tint,
+ * scroll_handle, window_shade) computed per theme.
  *
  * Rules of the house: flat surfaces, 1px borders, 2px max radius, 4px
  * spacing grid, pt font sizes only (px is a DPI hazard), no gradients,
@@ -41,34 +43,34 @@ QPushButton {
     border-radius: 2px;
     padding: 4px 12px;
 }
-QPushButton:hover { background-color: #444444; }        /* raised, one step lighter */
-QPushButton:pressed { background-color: #2E2E2E; }      /* raised, one step darker */
-QPushButton:disabled { background-color: #2F2F2F; color: #666666; }
+QPushButton:hover { background-color: @raised_hover; }
+QPushButton:pressed { background-color: @raised_press; }
+QPushButton:disabled { background-color: @disabled_bg; color: @disabled_text; }
 
 /* Primary CTA — the one green button on a page (Start Watcher, Make my
    raid report, Recalibrate, wizard install/download actions). */
 QPushButton[class="primary"] {
     background-color: @accent;
-    color: #FFFFFF;
+    color: @on_accent;
     font-size: 10pt;
     font-weight: 600;
     border: 1px solid @accent_press;
     padding: 6px 20px;
 }
-QPushButton[class="primary"]:hover { background-color: #57A85E; }  /* accent, lighter */
+QPushButton[class="primary"]:hover { background-color: @accent_hover; }
 QPushButton[class="primary"]:pressed { background-color: @accent_press; }
 QPushButton[class="primary"]:disabled {
     background-color: @raised;
-    color: #666666;
+    color: @disabled_text;
     border-color: @border_strong;
 }
 /* The watcher toggle morphs to a stop action while running. */
 QPushButton[class="primary"][state="running"] {
     background-color: @error;
-    border-color: #B4423E;                               /* error, pressed shade */
+    border-color: @error_press;
 }
-QPushButton[class="primary"][state="running"]:hover { background-color: #DE6663; }
-QPushButton[class="primary"][state="running"]:pressed { background-color: #B4423E; }
+QPushButton[class="primary"][state="running"]:hover { background-color: @error_hover; }
+QPushButton[class="primary"][state="running"]:pressed { background-color: @error_press; }
 
 /* Quiet secondary action used beside status text. */
 QPushButton[class="secondary"] {
@@ -97,7 +99,7 @@ QPushButton[class="chip"] {
     padding: 2px 10px;
 }
 QPushButton[class="chip"]:hover { color: @accent; border-color: @accent; }
-QPushButton[class="chip"]:disabled { color: #666666; border-color: @border_strong; }
+QPushButton[class="chip"]:disabled { color: @disabled_text; border-color: @border_strong; }
 
 /* Quiet error-details reveal button. */
 QPushButton[class="error-outline"] {
@@ -108,7 +110,7 @@ QPushButton[class="error-outline"] {
     border-radius: 2px;
     padding: 2px 8px;
 }
-QPushButton[class="error-outline"]:hover { background-color: #3A2422; } /* error tint on window */
+QPushButton[class="error-outline"]:hover { background-color: @error_tint; }
 
 /* Data-driven color swatch (embed color picker) — background is set by
    theme.set_swatch_color(); the chrome lives here. */
@@ -133,8 +135,8 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
 }
 QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled,
 QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
-    color: #666666;
-    background-color: #262626;
+    color: @disabled_text;
+    background-color: @alt_base;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
@@ -165,7 +167,7 @@ QCheckBox, QRadioButton {
     color: @text;
     spacing: 8px;
 }
-QCheckBox:disabled, QRadioButton:disabled { color: #666666; }
+QCheckBox:disabled, QRadioButton:disabled { color: @disabled_text; }
 QCheckBox::indicator, QRadioButton::indicator {
     width: 18px;
     height: 18px;
@@ -190,7 +192,7 @@ QRadioButton[class="option"]:hover {
 QRadioButton[class="option"]:checked {
     background-color: @selection;
     border-color: @accent;
-    color: #FFFFFF;
+    color: @text;
     font-weight: 600;
 }
 QRadioButton[class="option"]:focus { border: 1px dotted @accent; }
@@ -234,7 +236,7 @@ QTabBar::tab:selected {
 
 QListWidget, QListView, QTableWidget, QTableView, QTreeWidget, QTreeView {
     background-color: @sunken;
-    alternate-background-color: #262626;   /* sunken, half a step up */
+    alternate-background-color: @alt_base;
     color: @text;
     border: 1px solid @border;
     selection-background-color: @selection;
@@ -284,7 +286,7 @@ QScrollBar::handle:horizontal {
     min-width: 24px;
 }
 QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
-    background: #5A5A5A;                    /* border, one step lighter */
+    background: @scroll_handle;
 }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
@@ -354,7 +356,7 @@ QLabel[variant="heading"] { font-size: 10pt; font-weight: 600; }
 
 /* Soft warning banner (recalibration thin-data notice). */
 QLabel[class="warn-banner"] {
-    background-color: #3B331F;              /* warn tinted onto window */
+    background-color: @warn_tint;
     color: @warn;
     border: 1px solid @warn;
     border-radius: 2px;
@@ -379,7 +381,7 @@ QLabel[dropzone="true"][state="drag"] {
 
 /* Sidebar navigation list (MainWindow). */
 QListWidget[class="nav"] {
-    background-color: #242424;              /* window, one step darker */
+    background-color: @window_shade;
     color: @dim;
     font-size: 10pt;
     border: none;

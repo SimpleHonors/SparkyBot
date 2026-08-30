@@ -420,8 +420,8 @@ class WelcomePage(QWizardPage):
         # The easy path leads: most people have nothing to import, so the
         # default screen is just "click Next and we'll walk you through it."
         self.easy_path_intro = QLabel(
-            "SparkyBot will walk you through setup step by step — your fight "
-            "logs, your Discord channels, and your first night watch.\n\n"
+            "SparkyBot will walk you through setup step by step — where your "
+            "fight logs live and which Discord channels get your reports.\n\n"
             "Click Next to begin."
         )
         self.easy_path_intro.setWordWrap(True)

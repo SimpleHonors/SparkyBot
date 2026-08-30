@@ -630,8 +630,11 @@ class SparkyBotApp(QApplication):
     def __init__(self, args, config):
         super().__init__(args)
 
-        # Workbench Dark theme, applied app-wide BEFORE any window (including
-        # the first-run wizard) is constructed — everything inherits it.
+        # Theme applied app-wide BEFORE any window (including the first-run
+        # wizard) is constructed — everything inherits it. The user's choice
+        # lives in config; unknown values fall back to the default theme.
+        from core import theme as _theme
+        _theme.set_theme(getattr(config, "ui_theme", _theme.DEFAULT_THEME))
         apply_theme(self)
 
         # Quitting is always explicit (tray Quit, File > Exit, or the main

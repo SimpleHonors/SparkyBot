@@ -65,6 +65,7 @@ class Config:
             'showDefensiveBoons': 'true',
             'showEnemyBreakdown': 'true',
             'showQuickReport': 'true',
+            'theme': 'workbench-dark',
         },
         'Behavior': {
             'closeToTray': 'false',
@@ -250,6 +251,7 @@ class Config:
         self.show_offensive_boons = self._config.getboolean('UI', 'showOffensiveBoons')
         self.show_defensive_boons = self._config.getboolean('UI', 'showDefensiveBoons')
         self.show_enemy_breakdown = self._config.getboolean('UI', 'showEnemyBreakdown')
+        self.ui_theme = self._config.get('UI', 'theme', fallback='workbench-dark')
 
         # Behavior settings
         self.close_to_tray = self._config.getboolean('Behavior', 'closeToTray')
