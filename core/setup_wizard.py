@@ -405,7 +405,7 @@ class WelcomePage(QWizardPage):
             self._import_competitor_config
         )
         offer_layout.addWidget(self.competitor_import_button)
-        self.competitor_choose_different_button = QPushButton("Use a different one")
+        self.competitor_choose_different_button = QPushButton("Choose a settings file instead")
         self.competitor_choose_different_button.setFlat(True)
         self.competitor_choose_different_button.clicked.connect(
             self._choose_different_competitor_config
@@ -534,17 +534,17 @@ class WelcomePage(QWizardPage):
             # Every found tool is combined in one click — nothing is buried.
             names = ", ".join(item.app for item in findings)
             self.competitor_import_status.setText(
-                f"SparkyBot found {len(findings)} tools you already use "
-                f"({names}) and will combine their settings."
+                f"SparkyBot found {len(findings)} log-tool setups on this PC "
+                f"({names}) and will combine them."
             )
             self.competitor_import_button.setText(
-                "Set me up from the tools you already use"
+                "Set me up from my log tools"
             )
             self.competitor_import_button.setToolTip(
-                "Combine settings from every tool found; you pick which one "
+                "Combine settings from every setup found; you pick which one "
                 "wins if any disagree."
             )
-            tone_app = "your tools"
+            tone_app = "your log tools"
         theme.set_state(self.competitor_import_status, "success")
         theme.set_widget_class(self.competitor_import_button, "primary")
         self.competitor_offer.show()
@@ -624,16 +624,19 @@ class WelcomePage(QWizardPage):
         for index, item in enumerate(findings):
             label = item.app
             if any(other.app == item.app for j, other in enumerate(findings) if j != index):
-                label = f"{item.app} — {item.source_file.parent.name}"
+                # Same app in two places (e.g. AxiBridge in Roaming AND Local):
+                # the parent folder name alone is often just the app name, so
+                # show the full path so the human can tell the installs apart.
+                label = f"{item.app} — {item.source_file.parent}"
             while label in labels:
                 label = f"{label} ({index + 1})"
             labels.append(label)
         choice, ok = QInputDialog.getItem(
             self,
-            "Set Up From Your Tools",
-            f"SparkyBot found {len(findings)} tools you use and will combine "
-            "their settings.\nWhich do you use most? (it wins if any settings "
-            "disagree)",
+            "Combine Your Log-Tool Setups",
+            f"SparkyBot found {len(findings)} log-tool setups on this PC and "
+            "will combine them.\nWhich do you use most? (it wins if any "
+            "settings disagree)",
             labels,
             0,
             False,

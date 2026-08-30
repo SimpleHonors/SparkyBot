@@ -61,7 +61,15 @@ class CompetitorImportDialog(QDialog):
         self.setWindowTitle(f"Set Up from {finding.app}?")
         self.setMinimumWidth(610)
 
-        layout = QVBoxLayout(self)
+        # The whole body scrolls; the action buttons live outside it so they
+        # can never be clipped, no matter how many tools or files are merged
+        # (768p / high-DPI safe).
+        outer_layout = QVBoxLayout(self)
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        body = QWidget()
+        layout = QVBoxLayout(body)
         intro = QLabel(
             f"SparkyBot found what it can reuse from <b>{finding.app}</b>. "
             "Everything below is already selected."
@@ -139,14 +147,8 @@ class CompetitorImportDialog(QDialog):
             preferences_heading.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(preferences_heading)
 
-            settings_scroll = QScrollArea()
-            settings_scroll.setWidgetResizable(True)
-            settings_scroll.setMinimumHeight(150)
-            settings_scroll.setMaximumHeight(260)
-            settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            settings_widget = QWidget()
-            settings_layout = QVBoxLayout(settings_widget)
-            settings_layout.setContentsMargins(0, 0, 0, 0)
+            # Groups go straight into the scrolling body — no nested scroll to
+            # overlap the privacy/warnings text below them.
             sections: dict[str, list] = {}
             for setting in finding.settings:
                 sections.setdefault(setting.section, []).append(setting)
@@ -158,10 +160,7 @@ class CompetitorImportDialog(QDialog):
                     value.setTextFormat(Qt.TextFormat.PlainText)
                     value.setWordWrap(True)
                     group_form.addRow(f"{setting.label}:", value)
-                settings_layout.addWidget(group)
-            settings_layout.addStretch()
-            settings_scroll.setWidget(settings_widget)
-            layout.addWidget(settings_scroll)
+                layout.addWidget(group)
 
         privacy = QLabel(
             "Only the items shown above will be reused. SparkyBot does not "
@@ -179,6 +178,10 @@ class CompetitorImportDialog(QDialog):
             theme.set_state(warnings, "warn")
             layout.addWidget(warnings)
 
+        layout.addStretch()
+        body_scroll.setWidget(body)
+        outer_layout.addWidget(body_scroll)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self.use_button = QPushButton("Use This Setup")
         self.use_button.setMinimumHeight(36)
@@ -186,7 +189,11 @@ class CompetitorImportDialog(QDialog):
         buttons.addButton(self.use_button, QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer_layout.addWidget(buttons)  # fixed outside the scroll — never clipped
+        # Cap height so the body scrolls on 768p / high-DPI instead of the
+        # dialog overflowing the screen and overlapping its own content.
+        self.resize(620, 600)
+        self.setMaximumHeight(720)
 
     @staticmethod
     def _fill_path_combo(

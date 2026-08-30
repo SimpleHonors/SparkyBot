@@ -62,9 +62,7 @@ def test_multiple_detected_tools_offer_to_combine_not_pick_one(
     welcome.initializePage()
 
     # No tool is buried behind "and N more" — the offer combines them all.
-    assert welcome.competitor_import_button.text() == (
-        "Set me up from the tools you already use"
-    )
+    assert welcome.competitor_import_button.text() == "Set me up from my log tools"
     status = welcome.competitor_import_status.text()
     assert "and 1 more" not in status
     assert "MzFightReporter" in status and "PlenBot Log Uploader" in status
