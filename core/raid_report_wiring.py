@@ -104,6 +104,7 @@ def make_runner(config):
         guild_name="",
         guild_id="",
         api_key="",
+        guild_icon=getattr(config, "guild_icon", "") or "",
         augment_json=augment_json,
     )
 
@@ -218,6 +219,7 @@ def run_headless_raid_report(config):
         guild_name="",
         guild_id="",
         api_key="",
+        guild_icon=getattr(config, "guild_icon", "") or "",
         augment_json=augment_json,
     )
 

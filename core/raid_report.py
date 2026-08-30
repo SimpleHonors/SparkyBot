@@ -19,6 +19,7 @@ from core.raid_session import (
     RECENT_WINDOW_HOURS,
 )
 from core.report_bake import (
+    apply_guild_icon,
     apply_sticky_table_headers,
     merge_augmented_tiddlers,
     summarize_tiddlers,
@@ -64,6 +65,7 @@ class RaidReportRunner:
                  guild_name: str = "",
                  guild_id: str = "",
                  api_key: str = "",
+                 guild_icon: str = "",
                  progress=None,               # callable(stage, done, total, msg)
                  cancelled=None,             # callable() -> bool
                  augment_json=None,         # callable(Path) -> dict | None
@@ -79,6 +81,7 @@ class RaidReportRunner:
         self.guild_name = guild_name
         self.guild_id = guild_id
         self.api_key = api_key
+        self.guild_icon = guild_icon
         self._progress = progress
         self._cancelled = cancelled
         self.augment_json = augment_json
@@ -243,6 +246,11 @@ class RaidReportRunner:
         # Same augmentation path: pin report table headers so scrolling a
         # long fight keeps the column labels. Never fails the report.
         apply_sticky_table_headers(standalone_html)
+
+        # Same augmentation path: stamp the configured guild icon into the
+        # report header and as a $:/sparkybot/guild-icon tiddler any skin
+        # can read. Never fails the report.
+        apply_guild_icon(standalone_html, self.guild_icon)
 
         if report_name is not None and report_name.strip():
             name = report_name.strip()
