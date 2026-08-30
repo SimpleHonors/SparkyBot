@@ -7,6 +7,7 @@ from core.arcdps_config import (
     discover_gw2_installations,
     read_configured_log_path,
     resolve_log_directory,
+    select_wvw_log_directory,
 )
 
 
@@ -46,6 +47,14 @@ def test_custom_log_root_resolves_prefix_or_final_folder(tmp_path):
     direct = tmp_path / "direct-existing-folder"
     direct.mkdir()
     assert resolve_log_directory(direct) == direct
+
+
+def test_wvw_selection_uses_encounter_one_and_never_guesses_other_numbers(tmp_path):
+    base = tmp_path / "arcdps.cbtlogs"
+    (base / "2").mkdir(parents=True)
+
+    assert select_wvw_log_directory(base) == base / "1"
+    assert select_wvw_log_directory(base / "2") == base / "2"
 
 
 def test_gw2_discovery_requires_an_executable_and_keeps_multiple_installs(tmp_path):
@@ -93,6 +102,26 @@ def test_steam_library_parser_handles_windows_escaped_paths(tmp_path):
     )
 
     assert Path(r"D:\SteamLibrary") in _steam_library_roots(steam)
+
+
+def test_real_nonstandard_steam_gw2_library_vdf_shape(tmp_path):
+    steam = tmp_path / "Program Files (x86)" / "Steam"
+    (steam / "steamapps").mkdir(parents=True)
+    (steam / "steamapps" / "libraryfolders.vdf").write_text(
+        '"libraryfolders"\n'
+        "{\n"
+        '  "0" { "path" "C:\\\\Program Files (x86)\\\\Steam" '
+        '"apps" { "228980" "226264803" "1808500" "43084240722" } }\n'
+        '  "1" { "path" "D:\\\\Games\\\\Steam" '
+        '"apps" { "29720" "4175753850" "1284210" "0" } }\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    roots = _steam_library_roots(steam)
+
+    assert Path(r"C:\Program Files (x86)\Steam") in roots
+    assert Path(r"D:\Games\Steam") in roots
 
 
 def test_bounded_drive_probes_find_nonstandard_common_folder(tmp_path, monkeypatch):

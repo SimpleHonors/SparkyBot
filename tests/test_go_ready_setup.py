@@ -164,7 +164,8 @@ def test_arcdps_configured_folder_is_shown_and_requires_consent(
     tmp_path, monkeypatch, qt_app
 ):
     custom_logs = tmp_path / "custom ArcDPS logs" / "arcdps.cbtlogs"
-    custom_logs.mkdir(parents=True)
+    wvw_logs = custom_logs / "1"
+    wvw_logs.mkdir(parents=True)
     config_file = tmp_path / "ArcDPS elsewhere" / "arcdps.ini"
     config_file.parent.mkdir()
     config_file.write_text(
@@ -190,13 +191,13 @@ def test_arcdps_configured_folder_is_shown_and_requires_consent(
     )
 
     page = wizard.log_folder_page
-    assert str(custom_logs) in page.detected_label.text()
+    assert str(wvw_logs) in page.detected_label.text()
     assert page.folder_edit.text() == ""
     assert not page.is_ready()
 
     page._use_arcdps_location()
 
-    assert page.folder_edit.text() == str(custom_logs)
+    assert page.folder_edit.text() == str(wvw_logs)
     assert page.is_ready()
     assert "selected" in page.status_label.text()
 

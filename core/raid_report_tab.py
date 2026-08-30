@@ -96,7 +96,9 @@ class RaidReportTab(QWidget):
         # 2. Description
         desc = QLabel(
             "One click turns your latest fights into a stats page "
-            "you can share with your guild. Click a fight to tick it; "
+            "you can share with your guild. Big reports shrink automatically "
+            "to help them fit Discord's free upload limit. "
+            "Click a fight to tick it; "
             "hold Shift and click to tick a whole range. Click a column "
             "heading to sort."
         )

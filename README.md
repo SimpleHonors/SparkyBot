@@ -128,6 +128,28 @@ provider keys, Twitch tokens, voice keys, or local paths.
 > can post to your channels. Share it privately and revoke the webhooks in
 > Discord if the file is exposed.
 
+### Switching to or from another log tool
+
+SparkyBot should earn your use, not trap your setup. Choose **Import from
+Another Log Tool...** on first launch or from the File menu to reuse compatible
+settings from AxiBridge, TopStatsAIO, PlenBot, MzFightReporter, WvW Insights,
+the Drevarr tools, and other ArcDPS upload/report workflows. SparkyBot previews
+the exact log folder and named Discord routes first; it never imports bot
+tokens, API keys, Twitch credentials, account data, or history, and it never
+changes the source tool.
+
+Choose **File → Create Setup for Another Log Tool...** to go the other way.
+SparkyBot can create real settings for AxiBridge, TopStatsAIO, PlenBot,
+MzFightReporter, WvW Insights, and EVTC_parser. Unknown settings are preserved,
+existing files are backed up, and the app clearly names anything that cannot
+transfer. This is a one-time, user-approved move—not a background sync process.
+
+We use, credit, and were influenced by this ecosystem. The linked
+[interoperability guide](docs/WVW_LOG_TOOL_INTEROPERABILITY.md) says where each
+tool may be the better fit, lists every adapter, and documents the license
+boundary. No competitor source code or assets are copied by the migration
+feature.
+
 ### Twitch
 
 1. Use (or make) a Twitch account for the bot
@@ -211,6 +233,15 @@ Other tools make you wait. SparkyBot was already working the whole time you play
 2. **Click the big button** — **"Make my raid report."** SparkyBot reuses everything it already parsed live, downloads the stats builder on first use (one-time), and bakes a single self-contained HTML file. Progress shows inline: reading fights, crunching numbers, building the page. **Raid ends, click, done.**
 3. **Post to Discord** — one more click sends it to your guild's channel. You can also open the report in your browser first. Big reports auto-zip to fit Discord's attachment limit.
 
+SparkyBot enables the combiner's compressed standalone-HTML path by default,
+so a big end-of-night report often shrinks enough to post under Discord's
+standard unpaid attachment limit instead of requiring paid upload headroom.
+It stays one self-contained browser file. This compresses the generated
+report, not your raw `.evtc` logs. The upstream combiner's
+[v1.8.0 release](https://github.com/Drevarr/GW2_EI_log_combiner/releases/tag/v1.8.0)
+credits SimpleHonors for submitting that capability; SparkyBot uses the
+supported upstream option rather than maintaining a private fork.
+
 Need to cherry-pick fights or name your report ("Wolf Wednesday")? The **Advanced** link in the bottom-right expands the full fight list, selection buttons, and an optional name field. Your last 12 hours are pre-selected every time, so you never have to touch Advanced unless you want to.
 
 If anything goes wrong, you see a plain-text error right on the tab — no stack traces, no jargon. A **Show details** button reveals the full copyable message. Everything is also written to `sparkybot.log` next to the app.
@@ -242,11 +273,21 @@ The stats engine is **GW2 Elite Insights** (baaron4/GW2-Elite-Insights-Parser) p
 
 ## Built on the Shoulders of Giants
 
-- **[MzFightReporter](https://github.com/Swedemon/MzFightReporter)** by Swedemon (MIT) — the original Java WvW reporter that inspired this
-- **[GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser)** by baaron4 — the parser powering all log analysis
-- **[GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner)** by Drevarr — the stats dashboard engine used by Raid Report, installed at runtime with consent
-- **[ArcDPS](https://www.deltaconnected.com/arcdps/)** by deltaconnected — the combat logging addon that makes it all possible
-- **[PlenBot Log Uploader](https://github.com/Plenyx/PlenBotLogUploader)** by Plenyx and **[EVTC Parser](https://github.com/Drevarr/EVTC_parser)** by Drevarr
+SparkyBot exists because this community already did excellent work. We have
+used these tools, learned from them, and celebrate the jobs they may do better:
+
+- **[MzFightReporter](https://github.com/Swedemon/MzFightReporter)** by Swedemon (MIT) — the original Java WvW reporter that directly inspired us; its compact live battle/Twitch workflow remains excellent.
+- **[GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser)** by baaron4 (MIT) — the authoritative parser powering SparkyBot and much of the ecosystem.
+- **[AxiBridge](https://github.com/darkharasho/axibridge)** (GPL-3.0) — a polished visual WvW experience with strong web publishing and graphical reports.
+- **[TopStatsAIO](https://github.com/darkharasho/TopStatsAIO)** (MIT) — a focused, hands-on interface for deep top-stat and session-analysis workflows.
+- **[PlenBot Log Uploader](https://github.com/Plenyx/PlenBotLogUploader)** by Plenyx (MIT) — mature uploading with excellent team, encounter, and webhook filtering.
+- **[WvW Insights](https://github.com/Retherichus/wvw-insights)** — convenient in-game Nexus batch uploading and session management.
+- **[GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner)** and **[EVTC_parser](https://github.com/Drevarr/EVTC_parser)** by Drevarr (GPL-3.0) — deep session aggregation and direct, inspectable automation.
+- **[ArcDPS](https://www.deltaconnected.com/arcdps/)** by deltaconnected — the combat logging addon that makes all of this possible.
+
+See **[WvW Log Tool Interoperability](docs/WVW_LOG_TOOL_INTEROPERABILITY.md)**
+for links to every supported neighbor, two-way migration coverage, honest
+differences, and license handling.
 
 ---
 

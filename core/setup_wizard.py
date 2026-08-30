@@ -19,8 +19,15 @@ from core.arcdps_config import (
     GW2Installation,
     discover_arcdps_setups,
     discover_gw2_installations,
+    select_wvw_log_directory,
 )
 from core.discord_bot import normalize_webhook_url
+from core.competitor_import import (
+    CompetitorConfigError,
+    CompetitorImportPlan,
+    apply_competitor_import,
+)
+from core.competitor_migration_ui import choose_competitor_import
 from core.shareable_config import (
     GuildConfigBundle, GuildConfigError, apply_guild_config, load_guild_config,
 )
@@ -38,6 +45,7 @@ class SetupWizard(QWizard):
         super().__init__(parent)
         self.config = config
         self.imported_guild_config: GuildConfigBundle | None = None
+        self.imported_competitor_plan: CompetitorImportPlan | None = None
         self.setWindowTitle("SparkyBot Setup")
         # 760 wide so the usage-mode page's verbatim radio copy (FINAL-
         # DESIGN wording) never clips; was 700 before that page existed.
@@ -101,10 +109,37 @@ class SetupWizard(QWizard):
         self.imported_guild_config = bundle
         self.discord_page.load_from_config()
 
+    def use_competitor_import(self, plan: CompetitorImportPlan) -> None:
+        """Stage a competitor migration without touching the other tool."""
+        # If a guild setup file was already loaded, its Discord routes remain
+        # authoritative; the competitor contributes machine-local paths only.
+        apply_competitor_import(
+            self.config,
+            plan,
+            persist=False,
+            turn_off_optional=True,
+            include_discord=self.imported_guild_config is None,
+        )
+        self.imported_competitor_plan = plan
+        if plan.parser_executable:
+            self.gw2ei_page.path_edit.setText(str(plan.parser_executable))
+        if plan.log_folder:
+            self.log_folder_page.use_imported_folder(plan.log_folder)
+        self.discord_page.load_from_config()
+
+    def has_basic_import(self) -> bool:
+        return bool(self.imported_guild_config or self.imported_competitor_plan)
+
+    def imported_routing_ready(self) -> bool:
+        if self.imported_guild_config is not None:
+            return True
+        plan = self.imported_competitor_plan
+        return bool(plan and plan.has_discord_routing)
+
     def accept(self):
         """Save all wizard values to config on finish"""
         cfg = self.config.update
-        imported_setup = self.imported_guild_config is not None
+        imported_setup = self.has_basic_import()
         ei_path = self.field("gw2ei_path")
         if ei_path:
             cfg('Paths', 'gw2eiExe', ei_path)
@@ -113,7 +148,7 @@ class SetupWizard(QWizard):
             cfg('Paths', 'logFolder', log_folder)
         webhook = self.field("webhook") or ""
         cfg('Discord', 'discordWebhook', webhook)
-        if not imported_setup:
+        if not imported_setup or self.imported_competitor_plan is not None:
             cfg(
                 'Discord', 'enableDiscordBot',
                 str(not self.discord_page.skip_check.isChecked()).lower(),
@@ -379,6 +414,31 @@ class WelcomePage(QWizardPage):
         self.import_status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.import_status)
 
+        neighbor_help = QLabel(
+            "Already use another ArcDPS log tool? SparkyBot can reuse its "
+            "fight-log folder and compatible Discord destinations."
+        )
+        neighbor_help.setWordWrap(True)
+        theme.mark_hint(neighbor_help)
+        layout.addWidget(neighbor_help)
+
+        self.competitor_import_button = QPushButton(
+            "Import from Another Log Tool..."
+        )
+        self.competitor_import_button.setMinimumHeight(38)
+        self.competitor_import_button.setToolTip(
+            "Find AxiBridge, TopStatsAIO, PlenBot, MzFightReporter, and other supported settings."
+        )
+        self.competitor_import_button.clicked.connect(
+            self._import_competitor_config
+        )
+        layout.addWidget(self.competitor_import_button)
+
+        self.competitor_import_status = QLabel("")
+        self.competitor_import_status.setWordWrap(True)
+        self.competitor_import_status.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.competitor_import_status)
+
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(divider)
@@ -393,15 +453,53 @@ class WelcomePage(QWizardPage):
 
     def nextId(self):
         wizard = self.wizard()
-        if wizard is not None and getattr(wizard, "imported_guild_config", None):
+        if wizard is not None and wizard.has_basic_import():
             if wizard.page(PAGE_DEPENDENCIES) is not None:
                 return PAGE_DEPENDENCIES
             if wizard.gw2ei_page.is_ready():
                 if wizard.log_folder_page.is_ready():
-                    return PAGE_COMPLETE
+                    return (
+                        PAGE_COMPLETE
+                        if wizard.imported_routing_ready()
+                        else PAGE_DISCORD
+                    )
                 return PAGE_LOG_FOLDER
             return PAGE_GW2EI
         return PAGE_AI_OPTIN
+
+    def _import_competitor_config(self):
+        wizard = self.wizard()
+        if wizard is None or not hasattr(wizard, "use_competitor_import"):
+            QMessageBox.warning(
+                self,
+                "Setup Import Is Not Ready",
+                "Close this setup window, reopen it, and try again.",
+            )
+            return
+        gw2_dirs = tuple(
+            install.directory
+            for install in getattr(
+                wizard.log_folder_page, "_gw2_installations", ()
+            )
+        )
+        plan = choose_competitor_import(self, gw2_dirs=gw2_dirs)
+        if plan is None:
+            return
+        try:
+            wizard.use_competitor_import(plan)
+        except CompetitorConfigError as exc:
+            QMessageBox.warning(self, "Settings Were Not Imported", str(exc))
+            return
+        theme.set_state(self.competitor_import_status, "success")
+        self.competitor_import_status.setText(
+            f"{plan.finding.app} setup loaded.\n"
+            "The other tool was not changed. Click Next to check anything "
+            "that tool did not store."
+        )
+        self.competitor_import_button.setText(
+            "Choose a Different Log Tool Setup..."
+        )
+        wizard.next()
 
     def _confirm_import(self, bundle: GuildConfigBundle) -> bool:
         box = QMessageBox(self)
@@ -817,10 +915,14 @@ class GW2EIPage(QWizardPage):
         wizard = self.wizard()
         if (
             wizard is not None
-            and getattr(wizard, "imported_guild_config", None)
+            and wizard.has_basic_import()
             and wizard.log_folder_page.is_ready()
         ):
-            return PAGE_COMPLETE
+            return (
+                PAGE_COMPLETE
+                if wizard.imported_routing_ready()
+                else PAGE_DISCORD
+            )
         return PAGE_LOG_FOLDER
 
 
@@ -975,12 +1077,13 @@ class LogFolderPage(QWizardPage):
             if setup.gw2_directory
             else "not matched automatically"
         )
+        wvw_logs = select_wvw_log_directory(setup.log_directory)
         return (
             "SparkyBot found an ArcDPS setup:<br>"
             f"<small>Guild Wars 2: <code>{gw2}</code><br>"
             f"ArcDPS: <code>{setup.arcdps_directory}</code></small><br><br>"
-            "ArcDPS says fight logs go here:<br>"
-            f"<code>{setup.log_directory}</code><br>"
+            "ArcDPS says WvW fight logs go here:<br>"
+            f"<code>{wvw_logs}</code><br>"
             "<small>Use these locations?</small>"
         )
 
@@ -1066,7 +1169,7 @@ class LogFolderPage(QWizardPage):
     def _use_arcdps_location(self):
         if self._arcdps_setup is None:
             return
-        target = self._arcdps_setup.log_directory
+        target = select_wvw_log_directory(self._arcdps_setup.log_directory)
         self.folder_edit.setText(str(target))
         if target.is_dir():
             theme.set_state(self.status_label, "ok")
@@ -1083,18 +1186,9 @@ class LogFolderPage(QWizardPage):
 
     def _use_default(self):
         base = Path(self._default_path)
-
-        # WvW logs go into a numbered subfolder — find it automatically
-        wvw_folder = None
-        if base.exists():
-            numbered = sorted(
-                [d for d in base.iterdir() if d.is_dir() and d.name.isdigit()],
-                key=lambda d: int(d.name)
-            )
-            if numbered:
-                wvw_folder = str(numbered[0])
-
-        target = wvw_folder or str(base)
+        selected = select_wvw_log_directory(base)
+        wvw_folder = str(selected) if selected.is_dir() else None
+        target = str(selected)
         self.folder_edit.setText(target)
 
         if wvw_folder:
@@ -1128,6 +1222,26 @@ class LogFolderPage(QWizardPage):
             self.status_label.setText("")
             self.manual_toggle.setChecked(True)
 
+    def use_imported_folder(self, folder: str | Path) -> None:
+        """Use a path the user explicitly approved in the import preview."""
+        target = Path(folder)
+        self.folder_edit.setText(str(target))
+        if target.is_dir():
+            theme.set_state(self.status_label, "ok")
+            self.status_label.setText(
+                "Fight-log folder imported from the other log tool."
+            )
+            self.manual_toggle.setChecked(False)
+            self.use_arcdps_btn.setVisible(False)
+            self.use_default_btn.setVisible(False)
+        else:
+            theme.set_state(self.status_label, "warn")
+            self.status_label.setText(
+                "The imported folder is not available right now. Connect "
+                "that drive or choose a different folder."
+            )
+            self.manual_toggle.setChecked(True)
+
     def validatePage(self):
         folder = self.folder_edit.text().strip()
         if not self.is_ready():
@@ -1148,8 +1262,12 @@ class LogFolderPage(QWizardPage):
 
     def nextId(self):
         wizard = self.wizard()
-        if wizard is not None and getattr(wizard, "imported_guild_config", None):
-            return PAGE_COMPLETE
+        if wizard is not None and wizard.has_basic_import():
+            return (
+                PAGE_COMPLETE
+                if wizard.imported_routing_ready()
+                else PAGE_DISCORD
+            )
         return PAGE_DISCORD
 
 
@@ -1182,6 +1300,21 @@ class DiscordPage(QWizardPage):
 
     def validatePage(self):
         if self.skip_check.isChecked():
+            wizard = self.wizard()
+            if (
+                wizard is not None
+                and getattr(wizard, "imported_competitor_plan", None) is not None
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Discord Destination Needed",
+                    "The imported tool did not provide complete Discord routing. "
+                    "Paste one webhook so SparkyBot can post both individual "
+                    "fights and the nightly debrief. You can split them into "
+                    "separate channels later.",
+                )
+                self.skip_check.setChecked(False)
+                return False
             return True
         url = self.webhook_edit.text().strip()
         if not url:
@@ -1206,6 +1339,15 @@ class DiscordPage(QWizardPage):
         )
         self.webhook_edit.setFocus()
         return False
+
+    def nextId(self):
+        wizard = self.wizard()
+        if (
+            wizard is not None
+            and getattr(wizard, "imported_competitor_plan", None) is not None
+        ):
+            return PAGE_COMPLETE
+        return super().nextId()
 
 
 class TwitchPage(QWizardPage):
@@ -2322,6 +2464,17 @@ class CompletePage(QWizardPage):
                 f"✓ {bundle.routing_summary().replace(chr(10), chr(10) + '✓ ')}\n"
                 "✓ AI, voice, and Twitch are off\n"
                 "✓ This computer's parser and fight-log folder are ready\n\n"
+                "Click Finish and Open SparkyBot, then click Start Run."
+            )
+        elif getattr(wizard, "imported_competitor_plan", None) is not None:
+            plan = wizard.imported_competitor_plan
+            self.summary_label.setText(
+                "SparkyBot is ready.\n\n"
+                f"✓ Setup reused from {plan.finding.app}\n"
+                "✓ Individual fights and nightly debrief are routed\n"
+                "✓ AI, voice, and Twitch are off\n"
+                "✓ This computer's parser and fight-log folder are ready\n"
+                "✓ The other log tool and its credentials were not changed\n\n"
                 "Click Finish and Open SparkyBot, then click Start Run."
             )
         else:

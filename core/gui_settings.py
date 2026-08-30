@@ -3758,8 +3758,29 @@ class SettingsWindow(QWidget):
         add_credit(
             '<a href="https://github.com/Plenyx/PlenBotLogUploader">'
             '<b>PlenBot Log Uploader</b></a> by Plenyx',
-            "Log uploader and Discord reporter for GW2",
+            "Mature uploading with excellent team, encounter, and webhook controls",
             "https://github.com/Plenyx/PlenBotLogUploader"
+        )
+
+        add_credit(
+            '<a href="https://github.com/darkharasho/axibridge">'
+            '<b>AxiBridge</b></a>',
+            "A polished visual WvW experience with strong web publishing",
+            "https://github.com/darkharasho/axibridge"
+        )
+
+        add_credit(
+            '<a href="https://github.com/darkharasho/TopStatsAIO">'
+            '<b>TopStatsAIO</b></a>',
+            "A focused all-in-one interface for deep top-stat workflows",
+            "https://github.com/darkharasho/TopStatsAIO"
+        )
+
+        add_credit(
+            '<a href="https://github.com/Retherichus/wvw-insights">'
+            '<b>WvW Insights</b></a>',
+            "In-game Nexus batch uploading and session management",
+            "https://github.com/Retherichus/wvw-insights"
         )
 
         add_credit(
@@ -3772,8 +3793,9 @@ class SettingsWindow(QWidget):
         layout.addSpacing(15)
 
         tagline = QLabel(
-            "SparkyBot is a community-built alternative for users who prefer "
-            "a Python-based solution with a focus on reliability and ease of deployment."
+            "We used and learned from these tools. SparkyBot should stand on "
+            "its own merits, make switching easy in both directions, and never "
+            "make another community project's work invisible."
         )
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tagline.setWordWrap(True)

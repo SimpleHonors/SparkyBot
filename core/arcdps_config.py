@@ -294,6 +294,28 @@ def resolve_log_directory(configured_base: Path) -> Path:
     return child
 
 
+def select_wvw_log_directory(log_directory: Path) -> Path:
+    """Narrow an ArcDPS log root to WvW encounter folder 1 when evidenced."""
+    base = Path(log_directory)
+    if base.name == "1" or "wvw" in base.name.casefold():
+        return base
+    wvw = base / "1"
+    if wvw.is_dir() or base.name.casefold() == "arcdps.cbtlogs":
+        # Returning the conventional child before it exists is intentional:
+        # setup then stays blocked until the user creates a real WvW log,
+        # instead of accepting a PvE encounter folder or the all-mode root.
+        return wvw
+    try:
+        named = sorted(
+            child
+            for child in base.iterdir()
+            if child.is_dir() and "wvw" in child.name.casefold()
+        )
+    except OSError:
+        named = []
+    return named[0] if named else base
+
+
 def _independent_config_candidates(documents: Path) -> list[tuple[Path, str, int]]:
     candidates = [
         (

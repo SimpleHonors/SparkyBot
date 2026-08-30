@@ -41,6 +41,16 @@ from pathlib import Path
 
 from core import theme
 from core.activity_feed import ActivityFeedModel, format_clock
+from core.arcdps_config import discover_gw2_installations
+from core.competitor_import import (
+    CompetitorConfigError,
+    apply_competitor_import,
+)
+from core.competitor_migration_ui import (
+    choose_competitor_export,
+    choose_competitor_import,
+    show_interop_catalog,
+)
 from core.gui_settings import ProcessFilesWidget, SettingsWindow
 from core.raid_session import discover_logs
 # Stage-weighted progress shares the Raid Report page's weights — the run
@@ -216,6 +226,18 @@ class MainWindow(QMainWindow):
         self.action_export_guild_config.triggered.connect(
             self._export_guild_config
         )
+        self.action_import_competitor_config = file_menu.addAction(
+            "Import from Another &Log Tool..."
+        )
+        self.action_import_competitor_config.triggered.connect(
+            self._import_competitor_config
+        )
+        self.action_export_competitor_config = file_menu.addAction(
+            "Create Setup for Another Log &Tool..."
+        )
+        self.action_export_competitor_config.triggered.connect(
+            self._export_competitor_config
+        )
         file_menu.addSeparator()
         self.action_settings_dialog = file_menu.addAction("&Settings...")
         self.action_settings_dialog.setShortcut(QKeySequence("Ctrl+,"))
@@ -248,6 +270,12 @@ class MainWindow(QMainWindow):
             lambda checked=False: self._open_settings_from_menu())
 
         help_menu = bar.addMenu("&Help")
+        self.action_interop_credits = help_menu.addAction(
+            "Other WvW Log Tools && &Credits..."
+        )
+        self.action_interop_credits.triggered.connect(
+            lambda checked=False: show_interop_catalog(self)
+        )
         self.action_about = help_menu.addAction("&About SparkyBot")
         self.action_about.triggered.connect(self._show_about)
 
@@ -373,6 +401,42 @@ class MainWindow(QMainWindow):
         box.setDefaultButton(cancel_button)
         box.exec()
         return box.clickedButton() is accept_button
+
+    def _import_competitor_config(self, checked=False):
+        """Reuse another tool's documented settings without changing its file."""
+        installations = discover_gw2_installations()
+        plan = choose_competitor_import(
+            self,
+            gw2_dirs=tuple(item.directory for item in installations),
+        )
+        if plan is None:
+            return
+        try:
+            # An existing user's explicitly enabled SparkyBot extras are theirs;
+            # a migration does not silently turn them off outside first-run.
+            apply_competitor_import(
+                self.config,
+                plan,
+                persist=True,
+                turn_off_optional=False,
+            )
+        except CompetitorConfigError as exc:
+            QMessageBox.warning(self, "Settings Were Not Imported", str(exc))
+            return
+        if self._settings is not None:
+            self._settings._load_settings(prompt_updates=False)
+        self.settings_changed.emit()
+        QMessageBox.information(
+            self,
+            "Log Tool Setup Imported",
+            f"{plan.summary()}\n\n"
+            "The other tool and its settings file were not changed. Your "
+            "existing SparkyBot AI, voice, and Twitch choices were preserved.",
+        )
+
+    def _export_competitor_config(self, checked=False):
+        """Create a reversible setup for a neighboring WvW log tool."""
+        choose_competitor_export(self, self.config)
 
     def _build_central(self):
         """Sidebar (QListWidget) + page stack (QStackedWidget)."""
