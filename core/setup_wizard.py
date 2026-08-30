@@ -26,6 +26,7 @@ from core.competitor_import import (
     CompetitorConfigError,
     CompetitorImportPlan,
     apply_competitor_import,
+    merge_competitor_findings,
 )
 from core.competitor_import import discover_competitor_configs
 from core.competitor_migration_ui import (
@@ -516,24 +517,40 @@ class WelcomePage(QWizardPage):
             self._detected_findings = ()
         if not self._detected_findings:
             return
-        top = self._detected_findings[0]
-        extra = len(self._detected_findings) - 1
-        suffix = f" and {extra} more" if extra else ""
+        findings = self._detected_findings
+        top = findings[0]
+        if len(findings) == 1:
+            self.competitor_import_status.setText(
+                f"SparkyBot found {top.app} already set up."
+            )
+            self.competitor_import_button.setText(
+                f"Found {top.app} — set me up from it"
+            )
+            self.competitor_import_button.setToolTip(
+                f"Reuse your existing {top.app} choices."
+            )
+            tone_app = top.app
+        else:
+            # Every found tool is combined in one click — nothing is buried.
+            names = ", ".join(item.app for item in findings)
+            self.competitor_import_status.setText(
+                f"SparkyBot found {len(findings)} tools you already use "
+                f"({names}) and will combine their settings."
+            )
+            self.competitor_import_button.setText(
+                "Set me up from the tools you already use"
+            )
+            self.competitor_import_button.setToolTip(
+                "Combine settings from every tool found; you pick which one "
+                "wins if any disagree."
+            )
+            tone_app = "your tools"
         theme.set_state(self.competitor_import_status, "success")
-        self.competitor_import_status.setText(
-            f"SparkyBot found {top.app} already set up{suffix}."
-        )
-        self.competitor_import_button.setText(
-            f"Found {top.app} — set me up from it"
-        )
-        self.competitor_import_button.setToolTip(
-            f"Reuse your existing {top.app} choices."
-        )
         theme.set_widget_class(self.competitor_import_button, "primary")
         self.competitor_offer.show()
         self.advanced_toggle.hide()
         self.advanced_options.hide()
-        self._set_guild_file_tone(top.app, imported=False)
+        self._set_guild_file_tone(tone_app, imported=False)
 
     def _toggle_advanced(self) -> None:
         opening = self.advanced_options.isHidden()
@@ -591,10 +608,74 @@ class WelcomePage(QWizardPage):
         return PAGE_AI_OPTIN
 
     def _import_competitor_config(self):
-        self._start_competitor_setup(use_detected=True)
+        if len(self._detected_findings) > 1:
+            self._start_merged_competitor_setup()
+        else:
+            self._start_competitor_setup(use_detected=True)
 
     def _choose_different_competitor_config(self):
         self._start_competitor_setup(use_detected=False)
+
+    def _start_merged_competitor_setup(self):
+        findings = self._detected_findings
+        # One question is the whole ask: which tool wins on any conflict.
+        # Labels are made unique so duplicate app names map to the right index.
+        labels = []
+        for index, item in enumerate(findings):
+            label = item.app
+            if any(other.app == item.app for j, other in enumerate(findings) if j != index):
+                label = f"{item.app} — {item.source_file.parent.name}"
+            while label in labels:
+                label = f"{label} ({index + 1})"
+            labels.append(label)
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Set Up From Your Tools",
+            f"SparkyBot found {len(findings)} tools you use and will combine "
+            "their settings.\nWhich do you use most? (it wins if any settings "
+            "disagree)",
+            labels,
+            0,
+            False,
+        )
+        if not ok:
+            return
+        primary_index = labels.index(choice)
+        try:
+            merged = merge_competitor_findings(findings, primary_index=primary_index)
+        except CompetitorConfigError as exc:
+            QMessageBox.warning(self, "Settings Were Not Combined", str(exc))
+            return
+        # Reuse the existing grouped consent preview + single atomic apply.
+        plan = preview_competitor_finding(merged, self)
+        if plan is None:
+            return
+        wizard = self.wizard()
+        if wizard is None or not hasattr(wizard, "use_competitor_import"):
+            QMessageBox.warning(
+                self,
+                "Setup Import Is Not Ready",
+                "Close this setup window, reopen it, and try again.",
+            )
+            return
+        try:
+            wizard.use_competitor_import(plan)
+        except CompetitorConfigError as exc:
+            QMessageBox.warning(self, "Settings Were Not Imported", str(exc))
+            return
+        theme.set_state(self.competitor_import_status, "success")
+        self.competitor_import_status.setText(
+            f"SparkyBot combined settings from {len(findings)} tools "
+            f"(using {findings[primary_index].app} for anything they "
+            "disagreed on).\nAdd your guild's file below if you have one, "
+            "or click Next."
+        )
+        self.competitor_import_button.hide()
+        self._detected_findings = (plan.finding,)
+        self.competitor_offer.show()
+        self.advanced_toggle.hide()
+        self.advanced_options.hide()
+        self._set_guild_file_tone(findings[primary_index].app, imported=True)
 
     def _start_competitor_setup(self, *, use_detected: bool):
         wizard = self.wizard()

@@ -50,7 +50,9 @@ def test_single_detected_tool_becomes_named_one_click_offer(
     assert welcome._detected_findings == (finding,)
 
 
-def test_multiple_detected_tools_named_with_count(app, tmp_path, monkeypatch):
+def test_multiple_detected_tools_offer_to_combine_not_pick_one(
+    app, tmp_path, monkeypatch
+):
     findings = [
         SimpleNamespace(app="MzFightReporter"),
         SimpleNamespace(app="PlenBot Log Uploader"),
@@ -59,10 +61,54 @@ def test_multiple_detected_tools_named_with_count(app, tmp_path, monkeypatch):
 
     welcome.initializePage()
 
+    # No tool is buried behind "and N more" — the offer combines them all.
     assert welcome.competitor_import_button.text() == (
-        "Found MzFightReporter — set me up from it"
+        "Set me up from the tools you already use"
     )
-    assert "and 1 more" in welcome.competitor_import_status.text()
+    status = welcome.competitor_import_status.text()
+    assert "and 1 more" not in status
+    assert "MzFightReporter" in status and "PlenBot Log Uploader" in status
+    assert "combine" in status
+
+
+def test_multiple_detected_merges_via_picker_then_shared_consent(
+    app, tmp_path, monkeypatch
+):
+    findings = [
+        SimpleNamespace(app="MzFightReporter"),
+        SimpleNamespace(app="PlenBot Log Uploader"),
+    ]
+    wizard, welcome = make_wizard(tmp_path, monkeypatch, findings)
+    welcome.initializePage()
+
+    merged = SimpleNamespace(app="MzFightReporter + PlenBot Log Uploader")
+    plan = SimpleNamespace(finding=merged)
+    merge_calls = []
+    previewed = []
+    applied = []
+
+    monkeypatch.setattr(
+        sw, "merge_competitor_findings",
+        lambda f, *, primary_index: merge_calls.append(primary_index) or merged,
+    )
+    monkeypatch.setattr(
+        sw, "preview_competitor_finding",
+        lambda item, parent: previewed.append(item) or plan,
+    )
+    # Pick the SECOND tool as primary — must map to index 1, not 0.
+    monkeypatch.setattr(
+        sw.QInputDialog, "getItem",
+        staticmethod(lambda *a, **k: ("PlenBot Log Uploader", True)),
+    )
+    monkeypatch.setattr(wizard, "use_competitor_import", applied.append)
+
+    welcome.competitor_import_button.click()
+
+    assert merge_calls == [1]          # chosen primary index, not defaulted to 0
+    assert previewed == [merged]       # merged finding went through shared consent
+    assert applied == [plan]           # single atomic apply
+    assert welcome.competitor_import_button.isHidden()
+    assert "combined settings from 2 tools" in welcome.competitor_import_status.text()
 
 
 def test_no_detected_tools_show_no_neighbor_feature_at_all(
@@ -104,9 +150,10 @@ def test_scan_runs_once_and_discovery_errors_stay_quiet(
 def test_primary_offer_always_previews_named_tool_and_then_gently_asks_for_guild(
     app, tmp_path, monkeypatch
 ):
+    # Single detected tool → direct preview, no picker. (The multi-tool
+    # combine+picker flow is covered by its own test.)
     findings = [
         SimpleNamespace(app="MzFightReporter"),
-        SimpleNamespace(app="PlenBot Log Uploader"),
     ]
     wizard, welcome = make_wizard(tmp_path, monkeypatch, findings)
     welcome.initializePage()

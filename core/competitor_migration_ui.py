@@ -70,7 +70,14 @@ class CompetitorImportDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        source = QLabel(f"Where it came from: {finding.source_file}")
+        if len(finding.source_files) == 1:
+            source_text = f"Where it came from: {finding.source_file}"
+        else:
+            # A merged setup lists every file it drew from, so any stale or
+            # unexpected find is visible before the user clicks Use This Setup.
+            joined = "\n".join(f"  • {path}" for path in finding.source_files)
+            source_text = f"Where it came from ({len(finding.source_files)} files):\n{joined}"
+        source = QLabel(source_text)
         source.setTextFormat(Qt.TextFormat.PlainText)
         source.setWordWrap(True)
         theme.mark_hint(source)
