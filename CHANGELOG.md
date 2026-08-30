@@ -12,10 +12,14 @@ All notable changes to SparkyBot will be documented in this file.
 - Interoperability with the other WvW log tools. SparkyBot can read the config
   of eighteen tool families with your consent — PlenBot, MzFightReporter,
   TopStatsAIO, WvW Insights, Drevarr's parsers, and friends — so switching in
-  means nothing gets retyped. Seven of them get reciprocal export (with unique
-  backups and neighbor settings preserved), because leaving should be as easy
-  as arriving. Credits, honest comparisons, and license posture live in
-  `docs/WVW_LOG_TOOL_INTEROPERABILITY.md`.
+  means nothing gets retyped. A detected app becomes the first named setup
+  action; with no detection the offer is absent, while a collapsed Advanced
+  path seeds the selected app's expected file location. Compatible paths,
+  routes, and safe matching preferences transfer in a grouped consent preview;
+  a later guild file overrides only its guild-facing Discord layer. Seven tools
+  get reciprocal export (with unique backups and neighbor settings preserved),
+  because leaving should be as easy as arriving. Credits, honest comparisons,
+  and license posture live in `docs/WVW_LOG_TOOL_INTEROPERABILITY.md`.
 - End-of-night reports ship as one compressed, self-contained HTML file by
   default — big nights fit under Discord's free attachment limit. Uses the
   upstream combiner capability SparkyBot contributed in its v1.8.0 release.

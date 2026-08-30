@@ -29,7 +29,7 @@ from core.competitor_import import (
 )
 from core.competitor_import import discover_competitor_configs
 from core.competitor_migration_ui import (
-    choose_competitor_import,
+    choose_manual_competitor_import,
     preview_competitor_finding,
 )
 from core.shareable_config import (
@@ -387,22 +387,51 @@ class WelcomePage(QWizardPage):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        intro = QLabel(
+        # This starts hidden, so a computer with no supported neighbor app
+        # never sees or has to understand this feature. initializePage() fills
+        # and reveals it before the page is painted only when detection wins.
+        self.competitor_offer = QFrame()
+        offer_layout = QVBoxLayout(self.competitor_offer)
+        offer_layout.setContentsMargins(0, 0, 0, 0)
+        offer_layout.setSpacing(6)
+        self.competitor_import_status = QLabel("")
+        self.competitor_import_status.setWordWrap(True)
+        self.competitor_import_status.setTextFormat(Qt.TextFormat.PlainText)
+        offer_layout.addWidget(self.competitor_import_status)
+        self.competitor_import_button = QPushButton("")
+        self.competitor_import_button.setMinimumHeight(46)
+        self.competitor_import_button.clicked.connect(
+            self._import_competitor_config
+        )
+        offer_layout.addWidget(self.competitor_import_button)
+        self.competitor_choose_different_button = QPushButton("Use a different one")
+        self.competitor_choose_different_button.setFlat(True)
+        self.competitor_choose_different_button.clicked.connect(
+            self._choose_different_competitor_config
+        )
+        offer_layout.addWidget(self.competitor_choose_different_button)
+        self.competitor_offer.hide()
+        layout.addWidget(self.competitor_offer)
+
+        self._detected_findings = ()
+        self._competitor_scan_done = False
+
+        self.guild_file_intro = QLabel(
             "Have a setup file from your guild admin? Choose it below and "
             "SparkyBot will load the correct Discord channels automatically."
         )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+        self.guild_file_intro.setWordWrap(True)
+        layout.addWidget(self.guild_file_intro)
 
-        route_help = QLabel(
+        self.guild_file_help = QLabel(
             "It sets up:\n"
             "• Individual fight reports (Logspam)\n"
             "• End-of-night debrief and logs\n\n"
             "AI, voice, Twitch, and other extras stay off. You can add them later."
         )
-        route_help.setWordWrap(True)
-        theme.mark_hint(route_help)
-        layout.addWidget(route_help)
+        self.guild_file_help.setWordWrap(True)
+        theme.mark_hint(self.guild_file_help)
+        layout.addWidget(self.guild_file_help)
 
         self.import_button = QPushButton("Choose Guild Setup File...")
         self.import_button.setMinimumHeight(42)
@@ -418,47 +447,42 @@ class WelcomePage(QWizardPage):
         self.import_status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.import_status)
 
-        neighbor_help = QLabel(
-            "Already use another ArcDPS log tool? SparkyBot can reuse its "
-            "fight-log folder and compatible Discord destinations."
-        )
-        neighbor_help.setWordWrap(True)
-        theme.mark_hint(neighbor_help)
-        layout.addWidget(neighbor_help)
-
-        self.competitor_import_button = QPushButton(
-            "Import from Another Log Tool..."
-        )
-        self.competitor_import_button.setMinimumHeight(38)
-        self.competitor_import_button.setToolTip(
-            "Find AxiBridge, TopStatsAIO, PlenBot, MzFightReporter, and other supported settings."
-        )
-        self.competitor_import_button.clicked.connect(
-            self._import_competitor_config
-        )
-        layout.addWidget(self.competitor_import_button)
-
-        self.competitor_import_status = QLabel("")
-        self.competitor_import_status.setWordWrap(True)
-        self.competitor_import_status.setTextFormat(Qt.TextFormat.PlainText)
-        layout.addWidget(self.competitor_import_status)
-
-        # Proactive offer state: filled by _offer_detected_setups() the
-        # first time the page shows. The user must never hunt for the
-        # import — if a known tool is set up, the button names it.
-        self._detected_findings = ()
-        self._competitor_scan_done = False
-
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(divider)
 
-        manual = QLabel(
+        self.manual_help = QLabel(
             "No guild setup file? Click Next to configure SparkyBot manually."
         )
-        manual.setWordWrap(True)
-        theme.mark_hint(manual)
-        layout.addWidget(manual)
+        self.manual_help.setWordWrap(True)
+        theme.mark_hint(self.manual_help)
+        layout.addWidget(self.manual_help)
+
+        # Power-user escape hatch. The default screen says only "Advanced";
+        # the missed-app wording does not exist visually until they open it.
+        self.advanced_toggle = QPushButton("Advanced")
+        self.advanced_toggle.setFlat(True)
+        self.advanced_toggle.clicked.connect(self._toggle_advanced)
+        layout.addWidget(self.advanced_toggle)
+        self.advanced_options = QFrame()
+        advanced_layout = QVBoxLayout(self.advanced_options)
+        advanced_layout.setContentsMargins(12, 0, 0, 0)
+        advanced_help = QLabel(
+            "Using a fight-report app we did not find? Choose it manually."
+        )
+        advanced_help.setWordWrap(True)
+        theme.mark_hint(advanced_help)
+        advanced_layout.addWidget(advanced_help)
+        self.advanced_competitor_button = QPushButton(
+            "Choose an App and Its File"
+        )
+        self.advanced_competitor_button.setFlat(True)
+        self.advanced_competitor_button.clicked.connect(
+            self._choose_different_competitor_config
+        )
+        advanced_layout.addWidget(self.advanced_competitor_button)
+        self.advanced_options.hide()
+        layout.addWidget(self.advanced_options)
         layout.addStretch()
 
     def initializePage(self):
@@ -494,14 +518,61 @@ class WelcomePage(QWizardPage):
             return
         top = self._detected_findings[0]
         extra = len(self._detected_findings) - 1
-        suffix = f" (and {extra} more)" if extra else ""
+        suffix = f" and {extra} more" if extra else ""
         theme.set_state(self.competitor_import_status, "success")
         self.competitor_import_status.setText(
-            f"Found {top.app} already set up on this computer{suffix}. "
-            "One click reuses its settings — nothing to hunt down."
+            f"SparkyBot found {top.app} already set up{suffix}."
         )
-        self.competitor_import_button.setText(f"Use {top.app}'s Settings")
+        self.competitor_import_button.setText(
+            f"Found {top.app} — set me up from it"
+        )
+        self.competitor_import_button.setToolTip(
+            f"Reuse your existing {top.app} choices."
+        )
         theme.set_widget_class(self.competitor_import_button, "primary")
+        self.competitor_offer.show()
+        self.advanced_toggle.hide()
+        self.advanced_options.hide()
+        self._set_guild_file_tone(top.app, imported=False)
+
+    def _toggle_advanced(self) -> None:
+        opening = self.advanced_options.isHidden()
+        self.advanced_options.setVisible(opening)
+        self.advanced_toggle.setText("Hide Advanced" if opening else "Advanced")
+
+    def _set_guild_file_tone(self, app: str, *, imported: bool) -> None:
+        """Keep the guild override available without competing with detection."""
+        if imported:
+            self.guild_file_intro.setText(
+                "Did your guild admin also send you a SparkyBot file? Add it "
+                "on top if you have one. Otherwise, keep going — your base "
+                "setup is ready."
+            )
+            self.guild_file_help.setText(
+                f"It can correct your guild's Discord channels. Your fight "
+                f"folder and other choices from {app} will stay."
+            )
+            self.import_button.setText("Add My Guild's File")
+            self.manual_help.setText(
+                "No guild file? Click Next. SparkyBot will check anything "
+                "still needed."
+            )
+        else:
+            self.guild_file_intro.setText(
+                f"Start with {app} above. If your guild admin also sent you a "
+                "SparkyBot file, you can add it afterward."
+            )
+            self.guild_file_help.setText(
+                "The guild file can supply the exact Logspam and nightly "
+                "channels. If you do not have one, that is okay."
+            )
+            self.import_button.setText("I Also Have a Guild File")
+            self.manual_help.setText(
+                "Use the found setup above, or click Next to set up by hand."
+            )
+        self.import_button.setFlat(True)
+        self.import_button.setMinimumHeight(32)
+        theme.set_widget_class(self.import_button, "secondary")
 
     def nextId(self):
         wizard = self.wizard()
@@ -520,6 +591,12 @@ class WelcomePage(QWizardPage):
         return PAGE_AI_OPTIN
 
     def _import_competitor_config(self):
+        self._start_competitor_setup(use_detected=True)
+
+    def _choose_different_competitor_config(self):
+        self._start_competitor_setup(use_detected=False)
+
+    def _start_competitor_setup(self, *, use_detected: bool):
         wizard = self.wizard()
         if wizard is None or not hasattr(wizard, "use_competitor_import"):
             QMessageBox.warning(
@@ -534,12 +611,14 @@ class WelcomePage(QWizardPage):
                 wizard.log_folder_page, "_gw2_installations", ()
             )
         )
-        if len(self._detected_findings) == 1:
-            # The offer named this exact tool — no picker, straight to the
-            # consent preview.
+        if use_detected:
+            if not self._detected_findings:
+                return
+            # The primary offer always names this exact tool — no picker,
+            # straight to the complete consent preview even when others exist.
             plan = preview_competitor_finding(self._detected_findings[0], self)
         else:
-            plan = choose_competitor_import(self, gw2_dirs=gw2_dirs)
+            plan = choose_manual_competitor_import(self, gw2_dirs=gw2_dirs)
         if plan is None:
             return
         try:
@@ -549,14 +628,19 @@ class WelcomePage(QWizardPage):
             return
         theme.set_state(self.competitor_import_status, "success")
         self.competitor_import_status.setText(
-            f"{plan.finding.app} setup loaded.\n"
-            "The other tool was not changed. Click Next to check anything "
-            "that tool did not store."
+            f"SparkyBot is set up from {plan.finding.app}.\n"
+            "The other tool was not changed. Add your guild's file below if "
+            "you have one, or click Next to check anything it did not store."
         )
         self.competitor_import_button.setText(
-            "Choose a Different Log Tool Setup..."
+            f"Set me up again from {plan.finding.app}"
         )
-        wizard.next()
+        self.competitor_import_button.hide()
+        self._detected_findings = (plan.finding,)
+        self.competitor_offer.show()
+        self.advanced_toggle.hide()
+        self.advanced_options.hide()
+        self._set_guild_file_tone(plan.finding.app, imported=True)
 
     def _confirm_import(self, bundle: GuildConfigBundle) -> bool:
         box = QMessageBox(self)

@@ -41,10 +41,12 @@ def test_single_detected_tool_becomes_named_one_click_offer(
     welcome.initializePage()
 
     assert welcome.competitor_import_button.text() == (
-        "Use PlenBot Log Uploader's Settings"
+        "Found PlenBot Log Uploader — set me up from it"
     )
-    assert "Found PlenBot Log Uploader" in welcome.competitor_import_status.text()
-    assert "hunt" in welcome.competitor_import_status.text()
+    assert "found PlenBot Log Uploader" in welcome.competitor_import_status.text()
+    assert not welcome.competitor_offer.isHidden()
+    assert welcome.import_button.text() == "I Also Have a Guild File"
+    assert "Start with PlenBot Log Uploader above" in welcome.guild_file_intro.text()
     assert welcome._detected_findings == (finding,)
 
 
@@ -58,20 +60,24 @@ def test_multiple_detected_tools_named_with_count(app, tmp_path, monkeypatch):
     welcome.initializePage()
 
     assert welcome.competitor_import_button.text() == (
-        "Use MzFightReporter's Settings"
+        "Found MzFightReporter — set me up from it"
     )
-    assert "(and 1 more)" in welcome.competitor_import_status.text()
+    assert "and 1 more" in welcome.competitor_import_status.text()
 
 
-def test_no_detected_tools_keeps_generic_button(app, tmp_path, monkeypatch):
+def test_no_detected_tools_show_no_neighbor_feature_at_all(
+    app, tmp_path, monkeypatch
+):
     wizard, welcome = make_wizard(tmp_path, monkeypatch, [])
 
     welcome.initializePage()
 
-    assert welcome.competitor_import_button.text() == (
-        "Import from Another Log Tool..."
-    )
+    assert welcome.competitor_offer.isHidden()
+    assert welcome.competitor_import_button.text() == ""
     assert welcome.competitor_import_status.text() == ""
+    assert welcome.import_button.text() == "Choose Guild Setup File..."
+    assert welcome.advanced_options.isHidden()
+    assert welcome.advanced_toggle.text() == "Advanced"
 
 
 def test_scan_runs_once_and_discovery_errors_stay_quiet(
@@ -91,6 +97,67 @@ def test_scan_runs_once_and_discovery_errors_stay_quiet(
     welcome.initializePage()
 
     assert calls == [1]  # once, and the failure never reached the user
-    assert welcome.competitor_import_button.text() == (
-        "Import from Another Log Tool..."
+    assert welcome.competitor_offer.isHidden()
+    assert welcome.competitor_import_button.text() == ""
+
+
+def test_primary_offer_always_previews_named_tool_and_then_gently_asks_for_guild(
+    app, tmp_path, monkeypatch
+):
+    findings = [
+        SimpleNamespace(app="MzFightReporter"),
+        SimpleNamespace(app="PlenBot Log Uploader"),
+    ]
+    wizard, welcome = make_wizard(tmp_path, monkeypatch, findings)
+    welcome.initializePage()
+    previewed = []
+    applied = []
+    next_calls = []
+    plan = SimpleNamespace(finding=findings[0])
+
+    def preview(item, parent):
+        previewed.append((item, parent))
+        return plan
+
+    monkeypatch.setattr(sw, "preview_competitor_finding", preview)
+    monkeypatch.setattr(
+        sw,
+        "choose_manual_competitor_import",
+        lambda *_args, **_kwargs: pytest.fail("primary offer opened the picker"),
     )
+    monkeypatch.setattr(wizard, "use_competitor_import", applied.append)
+    monkeypatch.setattr(wizard, "next", lambda: next_calls.append(True))
+
+    welcome.competitor_import_button.click()
+
+    assert previewed == [(findings[0], welcome)]
+    assert applied == [plan]
+    assert next_calls == []
+    assert welcome.competitor_import_button.isHidden()
+    assert welcome.import_button.text() == "Add My Guild's File"
+    assert "your base setup is ready" in welcome.guild_file_intro.text()
+    assert "will stay" in welcome.guild_file_help.text()
+
+
+def test_advanced_manual_path_stays_buried_until_user_opens_it(
+    app, tmp_path, monkeypatch
+):
+    wizard, welcome = make_wizard(tmp_path, monkeypatch, [])
+    welcome.initializePage()
+    calls = []
+    monkeypatch.setattr(
+        sw,
+        "choose_manual_competitor_import",
+        lambda parent, **kwargs: calls.append((parent, kwargs)) or None,
+    )
+
+    assert welcome.advanced_options.isHidden()
+    welcome.advanced_toggle.click()
+    assert not welcome.advanced_options.isHidden()
+    assert "did not find" in welcome.advanced_options.findChild(
+        sw.QLabel
+    ).text()
+
+    welcome.advanced_competitor_button.click()
+    assert calls and calls[0][0] is welcome
+    assert welcome.competitor_offer.isHidden()

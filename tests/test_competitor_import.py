@@ -5,11 +5,17 @@ from pathlib import Path
 import pytest
 
 from core.competitor_import import (
+    COMPETITOR_IMPORT_TARGETS,
     CompetitorConfigError,
+    CompetitorFinding,
+    CompetitorImportPlan,
+    ImportedSetting,
     MAX_CONFIG_BYTES,
     apply_competitor_import,
     build_import_plan,
     discover_competitor_configs,
+    expected_competitor_config_path,
+    expected_competitor_config_paths,
     parse_competitor_config,
 )
 from core.config import Config
@@ -19,7 +25,36 @@ def webhook(number: int, token: str) -> str:
     return f"https://discord.com/api/webhooks/{number:018d}/{token}"
 
 
-def test_mzfightreporter_imports_only_log_paths_and_named_webhooks(tmp_path):
+def test_every_advanced_tool_choice_has_a_specific_expected_file(tmp_path):
+    home = tmp_path / "home"
+    roaming = tmp_path / "roaming"
+    local = tmp_path / "local"
+    gw2 = tmp_path / "Guild Wars 2"
+
+    for target in COMPETITOR_IMPORT_TARGETS:
+        paths = expected_competitor_config_paths(
+            target.key,
+            home=home,
+            appdata=roaming,
+            local_appdata=local,
+            gw2_dirs=(gw2,),
+        )
+        assert paths, target.name
+        assert paths[0].name not in {"", "."}
+
+    expected = gw2 / "addons" / "wvw-insights" / "settings.json"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("{}", encoding="utf-8")
+    assert expected_competitor_config_path(
+        "wvw-insights",
+        home=home,
+        appdata=roaming,
+        local_appdata=local,
+        gw2_dirs=(gw2,),
+    ) == expected
+
+
+def test_mzfightreporter_imports_every_safe_matching_preference(tmp_path):
     logs = tmp_path / "logs" / "1"
     logs.mkdir(parents=True)
     config_file = tmp_path / "config.properties"
@@ -32,7 +67,24 @@ def test_mzfightreporter_imports_only_log_paths_and_named_webhooks(tmp_path):
                 "discordWebhookLabel=Logspam",
                 f"discordWebhook2={webhook(2, 'fight-two')}",
                 "discordWebhookLabel2=Second Guild",
+                f"discordWebhook3={webhook(3, 'fight-three')}",
+                "discordWebhookLabel3=Third Guild",
                 "activeDiscordWebhook=2",
+                "minFightDuration=27",
+                "minFightDowns=3",
+                "minFightTotalDmg=765432",
+                "maxUploadMegabytes=24",
+                "largeUploadsAfterParse=true",
+                "showDamage=false",
+                "showHeals=false",
+                "showQuickReport=false",
+                "closeToTray=true",
+                "minimizeToTray=false",
+                "startMinimized=true",
+                "maxParseMemory=8192",
+                "embedColor=#A1B2C3",
+                "twitchChannelName=quiet_commander",
+                "twitchUseTLS=false",
                 "twitchBotToken=must-not-import",
             )
         ),
@@ -46,10 +98,42 @@ def test_mzfightreporter_imports_only_log_paths_and_named_webhooks(tmp_path):
     assert [hook.display_name for hook in finding.webhooks] == [
         "Logspam",
         "Second Guild",
+        "Third Guild",
     ]
     assert finding.webhooks[1].preferred is True
+    imported = {
+        (setting.section, setting.key): setting.value
+        for setting in finding.settings
+    }
+    assert imported[("Thresholds", "minFightDuration")] == "27"
+    assert imported[("Thresholds", "maxUploadSize")] == "24"
+    assert imported[("UI", "showDamage")] == "false"
+    assert imported[("Behavior", "closeToTray")] == "true"
+    assert imported[("Behavior", "maxParseMemory")] == "8192"
+    assert imported[("Discord", "embedColor")] == "0xA1B2C3"
+    assert imported[("Twitch", "twitchChannelName")] == "quiet_commander"
+    assert imported[("Twitch", "twitchUseTLS")] == "false"
+    assert any("token" in warning.casefold() for warning in finding.warnings)
     assert "must-not-import" not in finding.summary()
     assert "fight-two" not in finding.summary()
+
+    config = Config(tmp_path / "sparky.properties")
+    apply_competitor_import(config, build_import_plan(finding), persist=False)
+    assert config.min_fight_duration == 27
+    assert config.show_damage is False
+    assert config.close_to_tray is True
+    assert config.embed_color == 0xA1B2C3
+    assert config.twitch_channel == "quiet_commander"
+    assert config.twitch_use_tls is False
+    assert config.enable_twitch is False
+    assert config.twitch_token == ""
+    assert config.discord_webhook == webhook(2, "fight-two")
+    assert config.discord_webhook_name1 == "Second Guild"
+    assert config.discord_webhook2 == webhook(1, "fight-one")
+    assert config.discord_webhook_name2 == "Logspam"
+    assert config.discord_webhook3 == webhook(3, "fight-three")
+    assert config.discord_webhook_name3 == "Third Guild"
+    assert config.raid_report_discord_webhook == 1
 
 
 def test_plenbot_pairs_app_settings_with_active_discord_webhooks(tmp_path):
@@ -59,7 +143,15 @@ def test_plenbot_pairs_app_settings_with_active_discord_webhooks(tmp_path):
     gw2.mkdir()
     settings = tmp_path / "app_settings.json"
     settings.write_text(
-        json.dumps({"logsLocation": str(logs), "gw2Location": str(gw2)}),
+        json.dumps(
+            {
+                "logsLocation": str(logs),
+                "gw2Location": str(gw2),
+                "closeToTry": True,
+                "minimiseToTry": False,
+                "gw2APIKeys": [{"apiKey": "must-not-import"}],
+            }
+        ),
         encoding="utf-8",
     )
     (tmp_path / "discord_webhooks.json").write_text(
@@ -79,6 +171,15 @@ def test_plenbot_pairs_app_settings_with_active_discord_webhooks(tmp_path):
     assert finding.log_folders == (logs,)
     assert finding.gw2_directories == (gw2,)
     assert len(finding.source_files) == 2
+    assert {
+        (setting.section, setting.key, setting.value)
+        for setting in finding.settings
+    } == {
+        ("Behavior", "closeToTray", "true"),
+        ("Behavior", "minimizeToTray", "false"),
+    }
+    assert any("credentials" in warning.casefold() for warning in finding.warnings)
+    assert "must-not-import" not in finding.summary()
     assert plan.fight_webhook.display_name == "Current"
     assert plan.nightly_webhook == plan.fight_webhook
 
@@ -105,6 +206,17 @@ def test_axibridge_assigns_fight_and_nightly_routes_without_exposing_tokens(tmp_
                         "enabled": True,
                     }
                 ],
+                "embedStatSettings": {
+                    "showDamage": False,
+                    "showHealing": False,
+                    "showCleanses": True,
+                    "showBoonStrips": False,
+                    "showCC": True,
+                    "showDowns": False,
+                    "showKills": False,
+                },
+                "closeBehavior": "minimize",
+                "dpsReportToken": "do-not-touch-either",
                 "githubToken": "do-not-touch",
             }
         ),
@@ -118,7 +230,21 @@ def test_axibridge_assigns_fight_and_nightly_routes_without_exposing_tokens(tmp_
     assert plan.fight_webhook.role == "fight"
     assert plan.nightly_webhook.role == "nightly"
     assert plan.nightly_webhook.display_name == "Nightly Debrief"
+    assert {
+        (setting.section, setting.key): setting.value
+        for setting in finding.settings
+    } == {
+        ("UI", "showDamage"): "false",
+        ("UI", "showHeals"): "false",
+        ("UI", "showCleanses"): "true",
+        ("UI", "showStrips"): "false",
+        ("UI", "showCCs"): "true",
+        ("UI", "showDownsKills"): "false",
+        ("Behavior", "closeToTray"): "true",
+    }
+    assert any("credentials" in warning.casefold() for warning in finding.warnings)
     assert "do-not-touch" not in plan.summary()
+    assert "do-not-touch-either" not in finding.summary()
     assert "nightly" not in finding.summary().split("Nightly debrief: ", 1)[1]
 
 
@@ -131,7 +257,8 @@ def test_topstats_imports_raw_last_folder_but_not_combiner_output_folder(tmp_pat
     state.write_text(json.dumps({"lastFolder": str(raw_logs)}), encoding="utf-8")
     combiner = tmp_path / "top_stats_config.ini"
     combiner.write_text(
-        "[TopStats]\n"
+        "[TopStatsCfg]\n"
+        "guild_name = Friendly Guild\n"
         f"input_directory = {output}\n"
         "[DiscordCfg]\n"
         f"webhook_url = {webhook(8, 'nightly')}\n",
@@ -145,6 +272,7 @@ def test_topstats_imports_raw_last_folder_but_not_combiner_output_folder(tmp_pat
     assert state_finding.log_folders == (raw_logs,)
     assert combiner_finding.log_folders == ()
     assert combiner_finding.webhooks[0].role == "nightly"
+    assert combiner_finding.settings[0].value == "Friendly Guild"
     assert str(output) not in combiner_finding.summary()
 
 
@@ -154,7 +282,16 @@ def test_wvw_insights_pairs_settings_and_webhook_files(tmp_path):
     logs = tmp_path / "logs"
     logs.mkdir()
     settings = addon / "settings.json"
-    settings.write_text(json.dumps({"log_directory": str(logs)}), encoding="utf-8")
+    settings.write_text(
+        json.dumps(
+            {
+                "log_directory": str(logs),
+                "guild_name": "Reset Fight Club",
+                "history_token": "must-not-import",
+            }
+        ),
+        encoding="utf-8",
+    )
     (addon / "webhooks.json").write_text(
         json.dumps(
             {
@@ -173,6 +310,31 @@ def test_wvw_insights_pairs_settings_and_webhook_files(tmp_path):
     assert finding.log_folders == (logs,)
     assert len(finding.webhooks) == 2
     assert all(item.role == "fight" for item in finding.webhooks)
+    assert finding.settings[0].section == "Discord"
+    assert finding.settings[0].key == "discordWebhookLabel"
+    assert finding.settings[0].value == "Reset Fight Club"
+    assert any("tokens" in warning.casefold() for warning in finding.warnings)
+    assert "must-not-import" not in finding.summary()
+
+
+def test_invalid_neighbor_preferences_are_ignored_instead_of_poisoning_config(
+    tmp_path,
+):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    config_file = tmp_path / "config.properties"
+    config_file.write_text(
+        f"defaultLogFolder={logs}\n"
+        "minFightDuration=999999\n"
+        "showDamage=maybe\n"
+        "embedColor=definitely-purple\n"
+        "maxParseMemory=-1\n",
+        encoding="utf-8",
+    )
+
+    finding = parse_competitor_config(config_file)
+
+    assert finding.settings == ()
 
 
 @pytest.mark.parametrize(
@@ -449,6 +611,30 @@ def test_existing_user_can_import_without_disabling_their_optional_features(tmp_
 
     assert config.enable_ai_analysis is True
     assert config.log_folder == str(logs)
+
+
+def test_apply_rejects_unallowlisted_preferences_and_rolls_back(tmp_path):
+    config = Config(tmp_path / "sparky.properties")
+    original_folder = config.log_folder
+    candidate_folder = tmp_path / "logs"
+    candidate_folder.mkdir()
+    source = tmp_path / "neighbor.json"
+    source.write_text("{}", encoding="utf-8")
+    finding = CompetitorFinding(app="Neighbor", source_files=(source,))
+    plan = CompetitorImportPlan(
+        finding=finding,
+        log_folder=candidate_folder,
+        parser_executable=None,
+        fight_webhook=None,
+        nightly_webhook=None,
+        settings=(ImportedSetting("AI", "aiApiKey", "stolen", "API key"),),
+    )
+
+    with pytest.raises(CompetitorConfigError, match="not a safe"):
+        apply_competitor_import(config, plan, persist=False)
+
+    assert config.log_folder == original_folder
+    assert config.ai_api_key == ""
 
 
 def test_manual_import_rejects_oversized_or_unrecognized_files(tmp_path):

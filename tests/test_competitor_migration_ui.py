@@ -7,11 +7,13 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QScrollArea
 
 from core import apppaths
+import core.competitor_migration_ui as migration_ui
 from core.competitor_import import (
     CompetitorFinding,
+    ImportedSetting,
     ImportedWebhook,
     build_import_plan,
 )
@@ -20,6 +22,7 @@ from core.competitor_migration_ui import (
     CompetitorExportConfirmDialog,
     CompetitorImportDialog,
     InteropCatalogDialog,
+    choose_manual_competitor_import,
 )
 from core.config import Config
 from core.setup_wizard import (
@@ -71,12 +74,29 @@ def finding(tmp_path, *, with_routes=True):
                 webhook(2, "nightly-hidden"),
                 "nightly",
             ),
+            ImportedWebhook(
+                "Backup Guild",
+                webhook(3, "backup-hidden"),
+                "fight",
+                preferred=False,
+            ),
         )
     return CompetitorFinding(
         app="AxiBridge",
         source_files=(source,),
         log_folders=(logs,),
         webhooks=hooks,
+        settings=(
+            ImportedSetting(
+                "Thresholds",
+                "minFightDuration",
+                "27",
+                "Minimum fight duration (seconds)",
+            ),
+            ImportedSetting(
+                "Behavior", "closeToTray", "true", "Close to tray"
+            ),
+        ),
         tier=1,
     )
 
@@ -98,7 +118,45 @@ def test_import_dialog_shows_named_choices_but_never_webhook_secrets(
     )
     assert "fight-hidden" not in visible
     assert "nightly-hidden" not in visible
+    assert "backup-hidden" not in visible
+    assert "Also keep these saved channels: Backup Guild" in visible
     assert dialog.selected_plan().has_discord_routing
+    assert dialog.selected_plan().settings == dialog.finding.settings
+    assert {group.title() for group in dialog.findChildren(QGroupBox)} >= {
+        "Thresholds",
+        "Behavior",
+    }
+    assert "Minimum fight duration (seconds)" in visible
+    assert "27" in visible
+
+
+def test_advanced_import_asks_for_tool_then_seeds_its_expected_file(
+    tmp_path, monkeypatch, qt_app
+):
+    expected = tmp_path / "Guild Wars 2" / "addons" / "wvw-insights" / "settings.json"
+    seen = {}
+    monkeypatch.setattr(
+        migration_ui.QInputDialog,
+        "getItem",
+        lambda *_args, **_kwargs: ("WvW Insights", True),
+    )
+    def expected_path(key, **_kwargs):
+        seen["key"] = key
+        return expected
+
+    monkeypatch.setattr(
+        migration_ui, "expected_competitor_config_path", expected_path
+    )
+
+    def choose_file(_parent, _title, start, _filter):
+        seen["start"] = start
+        return "", ""
+
+    monkeypatch.setattr(migration_ui.QFileDialog, "getOpenFileName", choose_file)
+
+    assert choose_manual_competitor_import(None) is None
+    assert seen["key"] == "wvw-insights"
+    assert seen["start"] == str(expected)
 
 
 def test_export_confirmation_is_readable_and_says_backup_or_separate_folder(
@@ -116,6 +174,25 @@ def test_export_confirmation_is_readable_and_says_backup_or_separate_folder(
     assert dialog.minimumWidth() >= 640
     assert "separate migration folder" in visible
     assert "Create Setup" == dialog.create_button.text()
+
+
+def test_long_export_preference_preview_scrolls_instead_of_growing_offscreen(
+    tmp_path, qt_app
+):
+    preview = "\n".join(f"Preference {index}: On" for index in range(30))
+    dialog = CompetitorExportConfirmDialog(
+        "MzFightReporter",
+        preview,
+        tmp_path / "export",
+        patches_existing=True,
+    )
+
+    scrolls = dialog.findChildren(QScrollArea)
+    assert scrolls
+    assert scrolls[0].maximumHeight() == 300
+    assert "Preference 29: On" in "\n".join(
+        label.text() for label in dialog.findChildren(QLabel)
+    )
 
 
 def test_export_success_is_wide_and_keeps_paths_selectable(tmp_path, qt_app):
@@ -148,6 +225,7 @@ def test_full_competitor_import_skips_optional_setup_and_is_go_ready(
             log_folders=item.log_folders,
             parser_executables=(parser,),
             webhooks=item.webhooks,
+            settings=item.settings,
             tier=1,
         )
     )
@@ -160,6 +238,9 @@ def test_full_competitor_import_skips_optional_setup_and_is_go_ready(
     assert wizard.gw2ei_page.path_edit.text() == str(parser)
     assert config.discord_webhook == webhook(1, "fight-hidden")
     assert config.discord_webhook2 == webhook(2, "nightly-hidden")
+    assert config.discord_webhook3 == webhook(3, "backup-hidden")
+    assert config.min_fight_duration == 27
+    assert config.close_to_tray is True
     assert "Setup reused from AxiBridge" in wizard.complete_page.summary_label.text()
     assert "other log tool and its credentials were not changed" in wizard.complete_page.summary_label.text()
 
@@ -225,6 +306,55 @@ def test_guild_file_routes_win_when_competitor_import_adds_local_paths(
 
     assert config.discord_webhook.endswith("/guild-fight")
     assert config.discord_webhook2.endswith("/guild-nightly")
+    assert config.log_folder == str(item.log_folders[0])
+
+
+def test_tool_base_then_guild_override_keeps_non_overlapping_preferences(
+    tmp_path, monkeypatch, qt_app
+):
+    wizard, config, parser = build_wizard(tmp_path, monkeypatch)
+    item = finding(tmp_path)
+    wizard.use_competitor_import(
+        build_import_plan(
+            CompetitorFinding(
+                app=item.app,
+                source_files=item.source_files,
+                log_folders=item.log_folders,
+                parser_executables=(parser,),
+                webhooks=item.webhooks,
+                settings=item.settings,
+            )
+        )
+    )
+    assert config.discord_webhook == webhook(1, "fight-hidden")
+    assert config.min_fight_duration == 27
+
+    guild = parse_guild_config(
+        {
+            "format": "sparkybot-guild-config",
+            "version": 1,
+            "discord": {
+                "enabled": True,
+                "destinations": [
+                    {"name": "Guild Logspam", "webhook_url": "21/guild-fight"},
+                    {"name": "Guild Nightly", "webhook_url": "22/guild-night"},
+                    {"name": "Third", "webhook_url": ""},
+                ],
+                "active_destination": 1,
+                "raid_report_destination": 2,
+                "bot_name": "Guild Sparky",
+                "embed_color": "#123456",
+            },
+        }
+    )
+    wizard.use_imported_guild_config(guild)
+
+    assert config.discord_webhook.endswith("/guild-fight")
+    assert config.discord_webhook2.endswith("/guild-night")
+    assert config.discord_webhook_label == "Guild Sparky"
+    assert config.embed_color == 0x123456
+    assert config.min_fight_duration == 27
+    assert config.close_to_tray is True
     assert config.log_folder == str(item.log_folders[0])
 
 

@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGroupBox,
     QInputDialog,
     QLabel,
     QMessageBox,
@@ -30,12 +32,14 @@ from core.competitor_export import (
     export_preview,
 )
 from core.competitor_import import (
+    COMPETITOR_IMPORT_TARGETS,
     CompetitorConfigError,
     CompetitorFinding,
     CompetitorImportPlan,
     ImportedWebhook,
     build_import_plan,
     discover_competitor_configs,
+    expected_competitor_config_path,
     parse_competitor_config,
 )
 from core.interop_catalog import INTEROP_PLAIN_PROMISE, INTEROP_PROJECTS
@@ -54,19 +58,19 @@ class CompetitorImportDialog(QDialog):
         super().__init__(parent)
         self.finding = finding
         self.default_plan = build_import_plan(finding)
-        self.setWindowTitle(f"Use {finding.app} Setup?")
+        self.setWindowTitle(f"Set Up from {finding.app}?")
         self.setMinimumWidth(610)
 
         layout = QVBoxLayout(self)
         intro = QLabel(
-            f"SparkyBot found settings from <b>{finding.app}</b>. "
-            "The obvious choices are already selected."
+            f"SparkyBot found what it can reuse from <b>{finding.app}</b>. "
+            "Everything below is already selected."
         )
         intro.setTextFormat(Qt.TextFormat.RichText)
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        source = QLabel(f"Settings file: {finding.source_file}")
+        source = QLabel(f"Where it came from: {finding.source_file}")
         source.setTextFormat(Qt.TextFormat.PlainText)
         source.setWordWrap(True)
         theme.mark_hint(source)
@@ -80,16 +84,16 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.log_folder,
             "Let SparkyBot find the fight logs",
         )
-        form.addRow("ArcDPS fight logs:", self.log_combo)
+        form.addRow("Fight files:", self.log_combo)
 
         self.parser_combo = QComboBox()
         self._fill_path_combo(
             self.parser_combo,
             finding.parser_executables,
             self.default_plan.parser_executable,
-            "Let SparkyBot install or find the parser",
+            "Let SparkyBot find the report helper",
         )
-        form.addRow("Fight-log parser:", self.parser_combo)
+        form.addRow("Report helper:", self.parser_combo)
 
         self.fight_combo = QComboBox()
         self._fill_webhook_combo(
@@ -98,7 +102,7 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.fight_webhook,
             "Set up individual fight reports later",
         )
-        form.addRow("Individual fight reports:", self.fight_combo)
+        form.addRow("Individual fight channel:", self.fight_combo)
 
         self.nightly_combo = QComboBox()
         self._fill_webhook_combo(
@@ -107,13 +111,55 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.nightly_webhook,
             "Set up nightly debrief later",
         )
-        form.addRow("Nightly debrief and logs:", self.nightly_combo)
+        form.addRow("Nightly debrief channel:", self.nightly_combo)
         layout.addLayout(form)
 
+        self.additional_webhooks_label = QLabel("")
+        self.additional_webhooks_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.additional_webhooks_label.setWordWrap(True)
+        theme.mark_hint(self.additional_webhooks_label)
+        layout.addWidget(self.additional_webhooks_label)
+        self.fight_combo.currentIndexChanged.connect(
+            self._refresh_additional_webhooks
+        )
+        self.nightly_combo.currentIndexChanged.connect(
+            self._refresh_additional_webhooks
+        )
+        self._refresh_additional_webhooks()
+
+        if finding.settings:
+            preferences_heading = QLabel("<b>Other matching choices</b>")
+            preferences_heading.setTextFormat(Qt.TextFormat.RichText)
+            layout.addWidget(preferences_heading)
+
+            settings_scroll = QScrollArea()
+            settings_scroll.setWidgetResizable(True)
+            settings_scroll.setMinimumHeight(150)
+            settings_scroll.setMaximumHeight(260)
+            settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            settings_widget = QWidget()
+            settings_layout = QVBoxLayout(settings_widget)
+            settings_layout.setContentsMargins(0, 0, 0, 0)
+            sections: dict[str, list] = {}
+            for setting in finding.settings:
+                sections.setdefault(setting.section, []).append(setting)
+            for section, settings in sections.items():
+                group = QGroupBox(section)
+                group_form = QFormLayout(group)
+                for setting in settings:
+                    value = QLabel(setting.display_value)
+                    value.setTextFormat(Qt.TextFormat.PlainText)
+                    value.setWordWrap(True)
+                    group_form.addRow(f"{setting.label}:", value)
+                settings_layout.addWidget(group)
+            settings_layout.addStretch()
+            settings_scroll.setWidget(settings_widget)
+            layout.addWidget(settings_scroll)
+
         privacy = QLabel(
-            "SparkyBot reads only these selected paths and Discord destinations. "
-            "It does not change the other tool. Passwords, API keys, bot tokens, "
-            "Twitch, account data, and upload history are ignored."
+            "Only the items shown above will be reused. SparkyBot does not "
+            "change the other tool. Passwords, API keys, bot tokens, account "
+            "data, and upload history are ignored. Optional features stay off."
         )
         privacy.setWordWrap(True)
         theme.mark_hint(privacy)
@@ -187,7 +233,18 @@ class CompetitorImportDialog(QDialog):
             parser_executable=self.parser_combo.currentData(),
             fight_webhook=self.fight_combo.currentData(),
             nightly_webhook=self.nightly_combo.currentData(),
+            settings=self.default_plan.settings,
         )
+
+    def _refresh_additional_webhooks(self) -> None:
+        extras = self.selected_plan().additional_webhooks
+        self.additional_webhooks_label.setText(
+            "Also keep these saved channels: "
+            + ", ".join(hook.display_name for hook in extras)
+            if extras
+            else ""
+        )
+        self.additional_webhooks_label.setVisible(bool(extras))
 
 
 class CompetitorExportConfirmDialog(QDialog):
@@ -215,7 +272,19 @@ class CompetitorExportConfirmDialog(QDialog):
         details = QLabel(preview)
         details.setTextFormat(Qt.TextFormat.PlainText)
         details.setWordWrap(True)
-        layout.addWidget(details)
+        details.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        if len(preview.splitlines()) > 12:
+            preview_scroll = QScrollArea()
+            preview_scroll.setWidgetResizable(True)
+            preview_scroll.setMinimumHeight(170)
+            preview_scroll.setMaximumHeight(300)
+            preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            preview_scroll.setWidget(details)
+            layout.addWidget(preview_scroll)
+        else:
+            layout.addWidget(details)
 
         destination = QLabel(f"Destination:\n{output}")
         destination.setTextFormat(Qt.TextFormat.PlainText)
@@ -280,14 +349,19 @@ class CompetitorExportDoneDialog(QDialog):
         layout.addWidget(buttons)
 
 
-def _manual_import(parent: QWidget | None) -> CompetitorFinding | None:
-    downloads = QStandardPaths.writableLocation(
-        QStandardPaths.StandardLocation.DownloadLocation
-    )
+def _manual_import(
+    parent: QWidget | None,
+    initial_path: str | Path | None = None,
+) -> CompetitorFinding | None:
+    start = str(initial_path or "")
+    if not start:
+        start = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation
+        )
     path, _selected_filter = QFileDialog.getOpenFileName(
         parent,
         "Choose Settings from Another Log Tool",
-        downloads,
+        start,
         _CONFIG_FILTER,
     )
     if not path:
@@ -297,6 +371,37 @@ def _manual_import(parent: QWidget | None) -> CompetitorFinding | None:
     except CompetitorConfigError as exc:
         QMessageBox.warning(parent, "Settings File Not Used", str(exc))
         return None
+
+
+def choose_manual_competitor_import(
+    parent: QWidget | None,
+    *,
+    gw2_dirs: Iterable[str | Path] = (),
+) -> CompetitorImportPlan | None:
+    """Advanced path: ask which app, then seed its expected settings file."""
+    names = [target.name for target in COMPETITOR_IMPORT_TARGETS]
+    name, accepted = QInputDialog.getItem(
+        parent,
+        "Advanced Setup",
+        "Which fight-report app do you already use?",
+        names,
+        0,
+        False,
+    )
+    if not accepted:
+        return None
+    target = COMPETITOR_IMPORT_TARGETS[names.index(name)]
+    try:
+        expected = expected_competitor_config_path(
+            target.key, gw2_dirs=gw2_dirs
+        )
+    except CompetitorConfigError as exc:
+        QMessageBox.warning(parent, "Could Not Guess the File", str(exc))
+        return None
+    finding = _manual_import(parent, expected)
+    if finding is None:
+        return None
+    return preview_competitor_finding(finding, parent)
 
 
 def choose_competitor_import(
@@ -325,11 +430,11 @@ def choose_competitor_import(
         if not accepted:
             return None
         if label == labels[-1]:
-            finding = _manual_import(parent)
+            return choose_manual_competitor_import(parent, gw2_dirs=gw2_dirs)
         else:
             finding = findings[labels.index(label)]
     else:
-        finding = _manual_import(parent)
+        return choose_manual_competitor_import(parent, gw2_dirs=gw2_dirs)
     if finding is None:
         return None
 

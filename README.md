@@ -130,13 +130,20 @@ provider keys, Twitch tokens, voice keys, or local paths.
 
 ### Switching to or from another log tool
 
-SparkyBot should earn your use, not trap your setup. Choose **Import from
-Another Log Tool...** on first launch or from the File menu to reuse compatible
-settings from AxiBridge, TopStatsAIO, PlenBot, MzFightReporter, WvW Insights,
-the Drevarr tools, and other ArcDPS upload/report workflows. SparkyBot previews
-the exact log folder and named Discord routes first; it never imports bot
-tokens, API keys, Twitch credentials, account data, or history, and it never
-changes the source tool.
+SparkyBot should earn your use, not trap your setup. On first launch it quietly
+checks for AxiBridge, TopStatsAIO, PlenBot, MzFightReporter, WvW Insights, the
+Drevarr tools, and other supported ArcDPS workflows. When one is found, the
+first action names it plainly: **Found PlenBot — set me up from it**. When none
+is found, that feature is completely absent. A collapsed **Advanced** path asks
+experienced users which app they run, then opens that app's expected settings
+file and folder.
+
+Before anything moves, SparkyBot previews the exact log folder, named Discord
+routes, and every safe matching preference grouped by section. Bot tokens, API
+keys, passwords, account data, and history never transfer, and the source tool
+is never changed. These choices form the base setup; a guild file added next
+overrides its Discord channels and presentation while local paths, thresholds,
+and other non-overlapping preferences stay.
 
 Choose **File → Create Setup for Another Log Tool...** to go the other way.
 SparkyBot can create real settings for AxiBridge, TopStatsAIO, PlenBot,

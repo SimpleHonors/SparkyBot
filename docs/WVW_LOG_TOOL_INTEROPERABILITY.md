@@ -7,11 +7,20 @@ them—especially MzFightReporter, Elite Insights, the Drevarr stats stack, and
 the broader TopStats workflow.
 
 The setup screen therefore supports explicit, one-time moves in both
-directions:
+directions without making a new user study migration vocabulary:
 
-- **Import from Another Log Tool** reads only compatible log paths, parser
-  paths, and Discord webhook destinations. It never runs the other program or
-  imports bot tokens, API keys, Twitch credentials, account data, or history.
+- On first launch, a supported setup that is found automatically becomes the
+  first, named action: **Found PlenBot — set me up from it**. If nothing is
+  found, the entire offer is absent. A collapsed **Advanced** path lets an
+  experienced user name their app and opens its expected settings filename and
+  directory.
+- A consented import reads compatible log/parser paths, Discord destinations,
+  and non-secret preferences with direct SparkyBot equivalents. The preview
+  groups every transferred preference by section. It never runs the other
+  program or imports bot tokens, API keys, passwords, account data, or history.
+- Imported app choices form a base layer. A guild file can then override the
+  guild's Discord destinations, names, routing, and presentation while the
+  local log folder, thresholds, and other non-overlapping choices survive.
 - **Create Setup for Another Log Tool** writes that tool's documented settings
   format. Existing settings are patched narrowly, backed up, and restored if a
   multi-file update fails.
@@ -50,13 +59,13 @@ setting to write.
 
 | Tool | Import | Export | Compatible values |
 |---|:---:|:---:|---|
-| [AxiBridge / ArcBridge](https://github.com/darkharasho/axibridge) | Yes | Yes | Raw logs, named fight webhooks, named report/nightly webhooks |
+| [AxiBridge / ArcBridge](https://github.com/darkharasho/axibridge) | Yes | Yes | Raw logs, named fight/report webhooks, matching report-stat toggles, close behavior |
 | [TopStatsAIO](https://github.com/darkharasho/TopStatsAIO) | Yes | Yes | Raw-log folder; per-run webhook is not falsely presented as persistent |
-| [PlenBot](https://github.com/Plenyx/PlenBotLogUploader) | Yes | Yes | Raw logs, GW2 path, named active webhooks |
-| [MzFightReporter](https://github.com/Swedemon/MzFightReporter) | Yes | Yes | Raw logs, three named webhooks, active route, adjacent EI executable |
-| [WvW Insights](https://github.com/Retherichus/wvw-insights) | Yes | Yes | Raw logs and saved webhooks |
+| [PlenBot](https://github.com/Plenyx/PlenBotLogUploader) | Yes | Yes | Raw logs, GW2 path, named active webhooks, close/minimize-to-tray choices |
+| [MzFightReporter](https://github.com/Swedemon/MzFightReporter) | Yes | Yes | Raw logs, three named webhooks, active route, adjacent EI executable, fight thresholds, shared report toggles, tray/start behavior, memory/upload limits, non-secret Twitch connection choices |
+| [WvW Insights](https://github.com/Retherichus/wvw-insights) | Yes | Yes | Raw logs, saved webhooks, guild display name |
 | [EVTC_parser](https://github.com/Drevarr/EVTC_parser) | Yes | Yes | Raw logs and fight webhook |
-| [GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner) | Yes | Yes | Nightly webhook only; `input_directory` is generated EI JSON and is never treated as raw logs |
+| [GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner) | Yes | Yes | Nightly webhook and guild display name; `input_directory` is generated EI JSON and is never treated as raw logs |
 | [GW2 Manny Uploader](https://github.com/LoganWal/GW2-MannyUploader) | Yes | — | Raw logs; separate credentials intentionally ignored |
 | [GW2Scratch Log Manager](https://github.com/gw2scratch/evtc) | Yes | — | One or more raw-log roots |
 | [Nexus Wingman Uploader](https://github.com/belst/nexus-wingman-uploader) | Yes | — | Raw-log folder |

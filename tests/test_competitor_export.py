@@ -62,6 +62,15 @@ def test_every_supported_export_is_readable_by_its_import_adapter(
 
 def test_axibridge_round_trip_keeps_fight_and_nightly_roles(tmp_path):
     config, _logs = configured_sparky(tmp_path)
+    for section, key, value in (
+        ("UI", "showDamage", "false"),
+        ("UI", "showHeals", "false"),
+        ("UI", "showStrips", "false"),
+        ("UI", "showDownsKills", "false"),
+        ("Behavior", "closeToTray", "true"),
+    ):
+        config.update(section, key, value)
+    config._load_values()
     destination = tmp_path / "AxiBridge"
 
     export_competitor_config(config, "axibridge", destination)
@@ -72,6 +81,94 @@ def test_axibridge_round_trip_keeps_fight_and_nightly_roles(tmp_path):
         hook.display_name == "Nightly Debrief & Logs" and hook.role == "nightly"
         for hook in finding.webhooks
     )
+    settings = {
+        (setting.section, setting.key): setting.value
+        for setting in finding.settings
+    }
+    assert settings[("UI", "showDamage")] == "false"
+    assert settings[("UI", "showHeals")] == "false"
+    assert settings[("UI", "showStrips")] == "false"
+    assert settings[("UI", "showDownsKills")] == "false"
+    assert settings[("Behavior", "closeToTray")] == "true"
+
+
+def test_safe_preferences_round_trip_through_reciprocal_neighbor_formats(tmp_path):
+    config, _logs = configured_sparky(tmp_path)
+    updates = (
+        ("Discord", "discordWebhookLabel", "Reset Fight Club"),
+        ("Discord", "embedColor", "0xA1B2C3"),
+        ("Thresholds", "minFightDuration", "27"),
+        ("Thresholds", "minFightDowns", "3"),
+        ("Thresholds", "minFightTotalDmg", "765432"),
+        ("Thresholds", "maxUploadSize", "24"),
+        ("Thresholds", "uploadLargeAfterParse", "true"),
+        ("UI", "showDamage", "false"),
+        ("UI", "showQuickReport", "false"),
+        ("Behavior", "closeToTray", "true"),
+        ("Behavior", "minimizeToTray", "false"),
+        ("Behavior", "startMinimized", "true"),
+        ("Behavior", "maxParseMemory", "8192"),
+        ("Twitch", "twitchChannelName", "quiet_commander"),
+        ("Twitch", "twitchUseTLS", "false"),
+    )
+    for section, key, value in updates:
+        config.update(section, key, value)
+    config._load_values()
+
+    preview = export_preview(config, "mzfightreporter")
+    assert "Matching preferences:" in preview
+    assert "Thresholds:" in preview
+    assert "Minimum fight duration (seconds): 27" in preview
+    assert "UI:" in preview
+    assert "Show damage: Off" in preview
+    assert "Twitch:" in preview
+    assert "Twitch channel: quiet_commander" in preview
+    assert "twitchBotToken" not in preview
+
+    mz_dir = tmp_path / "mz-round-trip"
+    plen_dir = tmp_path / "plen-round-trip"
+    insights_dir = tmp_path / "insights-round-trip"
+    combiner_dir = tmp_path / "combiner-round-trip"
+    export_competitor_config(config, "mzfightreporter", mz_dir)
+    export_competitor_config(config, "plenbot", plen_dir)
+    export_competitor_config(config, "wvw-insights", insights_dir)
+    export_competitor_config(config, "gw2-ei-combiner", combiner_dir)
+
+    mz = parse_competitor_config(mz_dir / "config.properties")
+    plen = parse_competitor_config(plen_dir / "app_settings.json")
+    insights = parse_competitor_config(insights_dir / "settings.json")
+    combiner = parse_competitor_config(combiner_dir / "top_stats_config.ini")
+    mz_settings = {
+        (setting.section, setting.key): setting.value for setting in mz.settings
+    }
+    plen_settings = {
+        (setting.section, setting.key): setting.value for setting in plen.settings
+    }
+
+    assert mz_settings[("Discord", "embedColor")] == "0xA1B2C3"
+    assert mz_settings[("Thresholds", "minFightDuration")] == "27"
+    assert mz_settings[("Thresholds", "maxUploadSize")] == "24"
+    assert mz_settings[("UI", "showDamage")] == "false"
+    assert mz_settings[("UI", "showQuickReport")] == "false"
+    assert mz_settings[("Behavior", "maxParseMemory")] == "8192"
+    assert mz_settings[("Twitch", "twitchChannelName")] == "quiet_commander"
+    assert mz_settings[("Twitch", "twitchUseTLS")] == "false"
+    assert plen_settings[("Behavior", "closeToTray")] == "true"
+    assert plen_settings[("Behavior", "minimizeToTray")] == "false"
+    assert insights.settings[0].value == "Reset Fight Club"
+    assert combiner.settings[0].value == "Reset Fight Club"
+
+    rendered = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            mz_dir / "config.properties",
+            plen_dir / "app_settings.json",
+            insights_dir / "settings.json",
+            combiner_dir / "top_stats_config.ini",
+        )
+    )
+    assert "twitchBotToken" not in rendered
+    assert "api_key" not in rendered
 
 
 def test_existing_target_settings_are_preserved_and_backed_up(tmp_path):

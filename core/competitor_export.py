@@ -18,7 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from core.competitor_import import CompetitorConfigError, MAX_CONFIG_BYTES
+from core.competitor_import import (
+    CompetitorConfigError,
+    MAX_CONFIG_BYTES,
+    describe_parity_setting,
+    normalize_parity_setting,
+)
 
 
 @dataclass(frozen=True)
@@ -54,7 +59,7 @@ COMPETITOR_EXPORT_TARGETS = (
         "axibridge",
         "AxiBridge",
         ("config.json",),
-        "fight-log folder, individual-fight Discord route, and nightly report route",
+        "fight-log folder, Discord routes, and matching report/display preferences",
         "AI, voice, Twitch, API keys, tokens, and SparkyBot-only behavior",
     ),
     CompetitorExportTarget(
@@ -68,21 +73,21 @@ COMPETITOR_EXPORT_TARGETS = (
         "plenbot",
         "PlenBot Log Uploader",
         ("app_settings.json", "discord_webhooks.json"),
-        "fight-log folder and Discord destinations",
+        "fight-log folder, Discord destinations, and close/minimize behavior",
         "nightly scheduling, AI, voice, Twitch, and private credentials",
     ),
     CompetitorExportTarget(
         "mzfightreporter",
         "MzFightReporter",
         ("config.properties",),
-        "fight-log folder and up to three named Discord destinations",
+        "fight-log folder, named Discord destinations, and matching report, tray, and non-secret Twitch preferences",
         "nightly scheduling, AI, voice, and private credentials",
     ),
     CompetitorExportTarget(
         "wvw-insights",
         "WvW Insights",
         ("settings.json", "webhooks.json"),
-        "fight-log folder and saved Discord destinations",
+        "fight-log folder, saved Discord destinations, and guild display name",
         "nightly scheduling, AI, voice, Twitch, and private credentials",
     ),
     CompetitorExportTarget(
@@ -96,7 +101,7 @@ COMPETITOR_EXPORT_TARGETS = (
         "gw2-ei-combiner",
         "GW2 EI Log Combiner",
         ("top_stats_config.ini",),
-        "nightly debrief Discord route",
+        "nightly debrief Discord route and guild display name",
         "raw ArcDPS logs, generated-EI input paths, AI, voice, Twitch, and private credentials",
     ),
 )
@@ -110,6 +115,7 @@ class _SparkyValues:
     webhooks: tuple[tuple[str, str], ...]
     fight_index: int
     nightly_index: int
+    settings: tuple[tuple[str, str, str], ...]
 
     def route(self, index: int) -> tuple[str, str] | None:
         if index < 1 or index > len(self.webhooks):
@@ -124,6 +130,85 @@ class _SparkyValues:
     @property
     def nightly(self) -> tuple[str, str] | None:
         return self.route(self.nightly_index) or self.fight
+
+    def setting(self, section: str, key: str) -> str | None:
+        return next(
+            (
+                value
+                for saved_section, saved_key, value in self.settings
+                if saved_section == section and saved_key == key
+            ),
+            None,
+        )
+
+
+_PARITY_CONFIG_KEYS = (
+    ("Discord", "discordWebhookLabel"),
+    ("Discord", "embedColor"),
+    ("Thresholds", "minFightDuration"),
+    ("Thresholds", "minFightDowns"),
+    ("Thresholds", "minFightTotalDmg"),
+    ("Thresholds", "maxUploadSize"),
+    ("Thresholds", "uploadLargeAfterParse"),
+    ("UI", "showDamage"),
+    ("UI", "showHeals"),
+    ("UI", "showDefense"),
+    ("UI", "showCCs"),
+    ("UI", "showStrips"),
+    ("UI", "showCleanses"),
+    ("UI", "showDownsKills"),
+    ("UI", "showBurstDmg"),
+    ("UI", "showTopEnemySkills"),
+    ("UI", "showOffensiveBoons"),
+    ("UI", "showDefensiveBoons"),
+    ("UI", "showEnemyBreakdown"),
+    ("UI", "showQuickReport"),
+    ("Behavior", "closeToTray"),
+    ("Behavior", "minimizeToTray"),
+    ("Behavior", "startMinimized"),
+    ("Behavior", "maxParseMemory"),
+    ("Twitch", "twitchChannelName"),
+    ("Twitch", "twitchUseTLS"),
+)
+
+_TARGET_PARITY_KEYS = {
+    "axibridge": (
+        ("UI", "showDamage"),
+        ("UI", "showHeals"),
+        ("UI", "showCleanses"),
+        ("UI", "showStrips"),
+        ("UI", "showCCs"),
+        ("UI", "showDownsKills"),
+        ("Behavior", "closeToTray"),
+    ),
+    "plenbot": (
+        ("Behavior", "closeToTray"),
+        ("Behavior", "minimizeToTray"),
+    ),
+    "mzfightreporter": tuple(
+        item
+        for item in _PARITY_CONFIG_KEYS
+        if item != ("Discord", "discordWebhookLabel")
+    ),
+    "wvw-insights": (("Discord", "discordWebhookLabel"),),
+    "gw2-ei-combiner": (("Discord", "discordWebhookLabel"),),
+}
+
+
+def _parity_values_from_config(config: Any) -> tuple[tuple[str, str, str], ...]:
+    parser = getattr(config, "_config", None)
+    if parser is None:
+        return ()
+    result: list[tuple[str, str, str]] = []
+    for section, key in _PARITY_CONFIG_KEYS:
+        try:
+            raw = parser.get(section, key)
+        except (configparser.Error, KeyError, AttributeError):
+            continue
+        value = normalize_parity_setting(section, key, raw)
+        if value is not None:
+            result.append((section, key, value))
+    return tuple(result)
 
 
 def _values_from_config(config: Any) -> _SparkyValues:
@@ -150,6 +235,7 @@ def _values_from_config(config: Any) -> _SparkyValues:
         webhooks=webhooks,
         fight_index=fight_index if fight_index in (1, 2, 3) else 1,
         nightly_index=nightly_index,
+        settings=_parity_values_from_config(config),
     )
 
 
@@ -189,6 +275,24 @@ def export_preview(config: Any, target_key: str) -> str:
             if destinations
             else "Discord destinations: none configured"
         )
+    preview_settings = [
+        (section, describe_parity_setting(section, key, values.setting(section, key)))
+        for section, key in _TARGET_PARITY_KEYS.get(target.key, ())
+    ]
+    preview_settings = [
+        (section, description)
+        for section, description in preview_settings
+        if description is not None
+    ]
+    if preview_settings:
+        lines.append("Matching preferences:")
+        current_section = ""
+        for section, description in preview_settings:
+            if section != current_section:
+                current_section = section
+                lines.append(f"  {section}:")
+            label, display_value = description
+            lines.append(f"    {label}: {display_value}")
     lines.append(f"Stays in SparkyBot: {target.limitation}")
     return "\n".join(lines)
 
@@ -301,6 +405,30 @@ def _patch_axibridge(directory: Path, values: _SparkyValues) -> dict[Path, str]:
                 "titleTemplate": "{date} - {day_of_week} - {commander}",
             },
         )
+    embed_settings = data.get("embedStatSettings", {})
+    if not isinstance(embed_settings, dict):
+        raise CompetitorConfigError(
+            "AxiBridge embedStatSettings must contain an object."
+        )
+    embed_mappings = (
+        ("UI", "showDamage", "showDamage"),
+        ("UI", "showHeals", "showHealing"),
+        ("UI", "showCleanses", "showCleanses"),
+        ("UI", "showStrips", "showBoonStrips"),
+        ("UI", "showCCs", "showCC"),
+    )
+    for section, key, axi_key in embed_mappings:
+        value = values.setting(section, key)
+        if value is not None:
+            embed_settings[axi_key] = value == "true"
+    downs_kills = values.setting("UI", "showDownsKills")
+    if downs_kills is not None:
+        embed_settings["showDowns"] = downs_kills == "true"
+        embed_settings["showKills"] = downs_kills == "true"
+    data["embedStatSettings"] = embed_settings
+    close_to_tray = values.setting("Behavior", "closeToTray")
+    if close_to_tray is not None:
+        data["closeBehavior"] = "minimize" if close_to_tray == "true" else "quit"
     return {path: _json_payload(data)}
 
 
@@ -319,6 +447,12 @@ def _patch_plenbot(directory: Path, values: _SparkyValues) -> dict[Path, str]:
     if not isinstance(settings, dict):
         raise CompetitorConfigError("PlenBot app_settings.json must contain an object.")
     settings["logsLocation"] = values.log_folder
+    close_to_tray = values.setting("Behavior", "closeToTray")
+    minimize_to_tray = values.setting("Behavior", "minimizeToTray")
+    if close_to_tray is not None:
+        settings["closeToTry"] = close_to_tray == "true"
+    if minimize_to_tray is not None:
+        settings["minimiseToTry"] = minimize_to_tray == "true"
 
     hooks_path = directory / "discord_webhooks.json"
     existing_hooks = _read_existing_json(hooks_path, [])
@@ -443,6 +577,35 @@ def _patch_ini_section(text: str, section: str, updates: dict[str, str]) -> str:
     return "\n".join(rendered).rstrip("\n") + "\n"
 
 
+_MZ_EXPORT_MAPPINGS = (
+    ("Discord", "embedColor", "embedColor"),
+    ("Thresholds", "minFightDuration", "minFightDuration"),
+    ("Thresholds", "minFightDowns", "minFightDowns"),
+    ("Thresholds", "minFightTotalDmg", "minFightTotalDmg"),
+    ("Thresholds", "maxUploadSize", "maxUploadMegabytes"),
+    ("Thresholds", "uploadLargeAfterParse", "largeUploadsAfterParse"),
+    ("UI", "showDamage", "showDamage"),
+    ("UI", "showHeals", "showHeals"),
+    ("UI", "showDefense", "showDefense"),
+    ("UI", "showCCs", "showCCs"),
+    ("UI", "showStrips", "showStrips"),
+    ("UI", "showCleanses", "showCleanses"),
+    ("UI", "showDownsKills", "showDownsKills"),
+    ("UI", "showBurstDmg", "showBurstDmg"),
+    ("UI", "showTopEnemySkills", "showTopEnemySkills"),
+    ("UI", "showOffensiveBoons", "showOffensiveBoons"),
+    ("UI", "showDefensiveBoons", "showDefensiveBoons"),
+    ("UI", "showEnemyBreakdown", "showEnemyBreakdown"),
+    ("UI", "showQuickReport", "showQuickReport"),
+    ("Behavior", "closeToTray", "closeToTray"),
+    ("Behavior", "minimizeToTray", "minimizeToTray"),
+    ("Behavior", "startMinimized", "startMinimized"),
+    ("Behavior", "maxParseMemory", "maxParseMemory"),
+    ("Twitch", "twitchChannelName", "twitchChannelName"),
+    ("Twitch", "twitchUseTLS", "twitchUseTLS"),
+)
+
+
 def _patch_mz(directory: Path, values: _SparkyValues) -> dict[Path, str]:
     path = directory / "config.properties"
     if path.exists():
@@ -461,6 +624,10 @@ def _patch_mz(directory: Path, values: _SparkyValues) -> dict[Path, str]:
         else "defaultLogFolder"
     )
     updates = {log_key: values.log_folder}
+    for section, key, mz_key in _MZ_EXPORT_MAPPINGS:
+        value = values.setting(section, key)
+        if value is not None:
+            updates[mz_key] = value
     slots: dict[int, tuple[str, str]] = {}
     for index in range(1, 4):
         suffix = "" if index == 1 else str(index)
@@ -504,6 +671,9 @@ def _patch_wvw_insights(directory: Path, values: _SparkyValues) -> dict[Path, st
     if not isinstance(settings, dict):
         raise CompetitorConfigError("WvW Insights settings.json must contain an object.")
     settings["log_directory"] = values.log_folder
+    guild_name = values.setting("Discord", "discordWebhookLabel")
+    if guild_name is not None:
+        settings["guild_name"] = guild_name
 
     webhooks_path = directory / "webhooks.json"
     webhooks_data = _read_existing_json(webhooks_path, {})
@@ -572,7 +742,7 @@ def _patch_evtc(directory: Path, values: _SparkyValues) -> dict[Path, str]:
 def _patch_gw2_ei_combiner(
     directory: Path, values: _SparkyValues
 ) -> dict[Path, str]:
-    """Hand off only the Combiner's confirmed nightly Discord setting.
+    """Hand off the Combiner's confirmed nightly route and guild name.
 
     ``input_directory`` contains generated Elite Insights JSON, not ArcDPS
     encounter logs, so it is deliberately left alone.
@@ -597,13 +767,20 @@ def _patch_gw2_ei_combiner(
         raise CompetitorConfigError(
             "Set a nightly Discord destination before exporting to the Combiner."
         )
-    return {
-        path: _patch_ini_section(
-            text,
-            "DiscordCfg",
-            {"webhook_url": nightly[1]},
+    guild_name = values.setting("Discord", "discordWebhookLabel")
+    updated = text
+    if guild_name is not None:
+        updated = _patch_ini_section(
+            updated,
+            "TopStatsCfg",
+            {"guild_name": guild_name},
         )
-    }
+    updated = _patch_ini_section(
+        updated,
+        "DiscordCfg",
+        {"webhook_url": nightly[1]},
+    )
+    return {path: updated}
 
 
 _BUILDERS: dict[str, Callable[[Path, _SparkyValues], dict[Path, str]]] = {

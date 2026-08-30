@@ -1,10 +1,10 @@
 """Safe, consent-gated imports from other ArcDPS/WvW log tools.
 
-Only the handful of values SparkyBot needs for basic operation are read:
-the raw ArcDPS log directory, a compatible GW2 Elite Insights executable,
-and Discord webhook destinations.  Competitor programs are never executed and
-their API keys, bot tokens, Twitch credentials, account data, and upload
-history are deliberately ignored.
+Only values with a confirmed SparkyBot equivalent are read: machine-local
+paths, Discord destinations, and safe preferences such as fight thresholds or
+window behavior. Competitor programs are never executed and their API keys,
+bot tokens, passwords, account data, and upload history are deliberately
+ignored.
 """
 
 from __future__ import annotations
@@ -54,6 +54,26 @@ class ImportedWebhook:
 
 
 @dataclass(frozen=True)
+class ImportedSetting:
+    """One non-secret, validated preference with a SparkyBot equivalent."""
+
+    section: str
+    key: str
+    value: str
+    label: str
+
+    @property
+    def display_value(self) -> str:
+        if self.value == "true":
+            return "On"
+        if self.value == "false":
+            return "Off"
+        if self.key == "embedColor" and self.value.lower().startswith("0x"):
+            return f"#{self.value[2:].upper()}"
+        return self.value
+
+
+@dataclass(frozen=True)
 class CompetitorFinding:
     app: str
     source_files: tuple[Path, ...]
@@ -61,6 +81,7 @@ class CompetitorFinding:
     gw2_directories: tuple[Path, ...] = ()
     parser_executables: tuple[Path, ...] = ()
     webhooks: tuple[ImportedWebhook, ...] = ()
+    settings: tuple[ImportedSetting, ...] = ()
     warnings: tuple[str, ...] = ()
     tier: int = 2
 
@@ -70,7 +91,12 @@ class CompetitorFinding:
 
     @property
     def useful(self) -> bool:
-        return bool(self.log_folders or self.parser_executables or self.webhooks)
+        return bool(
+            self.log_folders
+            or self.parser_executables
+            or self.webhooks
+            or self.settings
+        )
 
     def summary(self) -> str:
         """Plain-language preview containing no webhook URLs or credentials."""
@@ -92,7 +118,15 @@ class CompetitorFinding:
             lines.append("Other Discord destinations: " + ", ".join(unknown))
         if not self.webhooks:
             lines.append("Discord: not stored here; SparkyBot will ask")
-        lines.append("Passwords, API keys, bot tokens, and Twitch settings: ignored")
+        if self.settings:
+            lines.append("Other preferences to reuse:")
+            current_section = ""
+            for setting in self.settings:
+                if setting.section != current_section:
+                    current_section = setting.section
+                    lines.append(f"  {current_section}:")
+                lines.append(f"    {setting.label}: {setting.display_value}")
+        lines.append("Passwords, API keys, bot tokens, and account credentials: ignored")
         if self.warnings:
             lines.extend(f"Note: {warning}" for warning in self.warnings)
         return "\n".join(lines)
@@ -105,10 +139,35 @@ class CompetitorImportPlan:
     parser_executable: Path | None
     fight_webhook: ImportedWebhook | None
     nightly_webhook: ImportedWebhook | None
+    settings: tuple[ImportedSetting, ...] = ()
 
     @property
     def has_discord_routing(self) -> bool:
         return self.fight_webhook is not None and self.nightly_webhook is not None
+
+    @property
+    def saved_webhooks(self) -> tuple[ImportedWebhook, ...]:
+        """Selected routes first, then other named destinations, up to capacity."""
+        if not self.has_discord_routing:
+            return ()
+        return _unique_webhooks(
+            (
+                self.fight_webhook,
+                self.nightly_webhook,
+                *self.finding.webhooks,
+            )
+        )[:3]
+
+    @property
+    def additional_webhooks(self) -> tuple[ImportedWebhook, ...]:
+        selected_urls = {
+            hook.url
+            for hook in (self.fight_webhook, self.nightly_webhook)
+            if hook is not None
+        }
+        return tuple(
+            hook for hook in self.saved_webhooks if hook.url not in selected_urls
+        )
 
     def summary(self) -> str:
         lines = [f"Import from {self.finding.app}"]
@@ -132,8 +191,122 @@ class CompetitorImportPlan:
             if self.nightly_webhook
             else "Nightly debrief and logs: SparkyBot will ask"
         )
-        lines.append("AI, voice, Twitch, and competitor credentials: not imported")
+        if self.additional_webhooks:
+            lines.append(
+                "Other saved Discord destinations: "
+                + ", ".join(hook.display_name for hook in self.additional_webhooks)
+            )
+        if self.settings:
+            lines.append(f"Other matching preferences: {len(self.settings)}")
+        lines.append(
+            "AI, voice, and private credentials are not imported; optional "
+            "features stay off"
+        )
         return "\n".join(lines)
+
+
+# One allowlist owns both adapter parsing and apply-time validation. Bounds are
+# the ranges SparkyBot's own Settings screen accepts, not merely what a neighbor
+# happens to store.
+_SETTING_RULES: dict[tuple[str, str], tuple[str, int, int, str]] = {
+    ("Discord", "discordWebhookLabel"): ("text", 1, 80, "Discord name"),
+    ("Discord", "embedColor"): ("color", 0, 0xFFFFFF, "Discord color"),
+    ("Thresholds", "minFightDuration"): (
+        "int", 1, 3600, "Minimum fight duration (seconds)"
+    ),
+    ("Thresholds", "minFightDowns"): ("int", 0, 10, "Minimum downs"),
+    ("Thresholds", "minFightTotalDmg"): (
+        "int", 0, 9_999_999, "Minimum total damage"
+    ),
+    ("Thresholds", "maxUploadSize"): ("int", 1, 1024, "Upload limit (MB)"),
+    ("Thresholds", "uploadLargeAfterParse"): (
+        "bool", 0, 0, "Upload large reports after parsing"
+    ),
+    ("UI", "showDamage"): ("bool", 0, 0, "Show damage"),
+    ("UI", "showHeals"): ("bool", 0, 0, "Show healing"),
+    ("UI", "showDefense"): ("bool", 0, 0, "Show defense"),
+    ("UI", "showCCs"): ("bool", 0, 0, "Show crowd control"),
+    ("UI", "showStrips"): ("bool", 0, 0, "Show boon strips"),
+    ("UI", "showCleanses"): ("bool", 0, 0, "Show cleanses"),
+    ("UI", "showDownsKills"): ("bool", 0, 0, "Show downs and kills"),
+    ("UI", "showBurstDmg"): ("bool", 0, 0, "Show burst damage"),
+    ("UI", "showTopEnemySkills"): ("bool", 0, 0, "Show top enemy skills"),
+    ("UI", "showOffensiveBoons"): ("bool", 0, 0, "Show offensive boons"),
+    ("UI", "showDefensiveBoons"): ("bool", 0, 0, "Show defensive boons"),
+    ("UI", "showEnemyBreakdown"): ("bool", 0, 0, "Show enemy breakdown"),
+    ("UI", "showQuickReport"): ("bool", 0, 0, "Show quick report"),
+    ("Behavior", "closeToTray"): ("bool", 0, 0, "Close to tray"),
+    ("Behavior", "minimizeToTray"): ("bool", 0, 0, "Minimize to tray"),
+    ("Behavior", "startMinimized"): ("bool", 0, 0, "Start minimized"),
+    ("Behavior", "maxParseMemory"): (
+        "int", 512, 16_384, "Parser memory (MB)"
+    ),
+    ("Twitch", "twitchChannelName"): ("text", 1, 80, "Twitch channel"),
+    ("Twitch", "twitchUseTLS"): ("bool", 0, 0, "Secure Twitch connection"),
+}
+
+
+def normalize_parity_setting(section: str, key: str, raw: Any) -> str | None:
+    """Normalize an allowlisted non-secret setting, or reject it safely."""
+    rule = _SETTING_RULES.get((section, key))
+    if rule is None:
+        return None
+    kind, minimum, maximum, _label = rule
+    if kind == "bool":
+        if isinstance(raw, bool):
+            return "true" if raw else "false"
+        if isinstance(raw, str):
+            folded = raw.strip().casefold()
+            if folded in {"true", "false"}:
+                return folded
+        return None
+    if kind == "int":
+        if isinstance(raw, bool):
+            return None
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return str(value) if minimum <= value <= maximum else None
+    if kind == "color":
+        if isinstance(raw, bool):
+            return None
+        text = str(raw).strip()
+        if re.fullmatch(r"(?i)(?:#|0x)[0-9a-f]{6}", text):
+            value = int(re.sub(r"(?i)^(?:#|0x)", "", text), 16)
+        else:
+            try:
+                value = int(text)
+            except ValueError:
+                return None
+        return f"0x{value:06X}" if minimum <= value <= maximum else None
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not (minimum <= len(text) <= maximum):
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in text):
+        return None
+    return text
+
+
+def describe_parity_setting(
+    section: str, key: str, raw: Any
+) -> tuple[str, str] | None:
+    """Return the safe human label/value pair used by consent previews."""
+    value = normalize_parity_setting(section, key, raw)
+    rule = _SETTING_RULES.get((section, key))
+    if value is None or rule is None:
+        return None
+    setting = ImportedSetting(section, key, value, rule[3])
+    return setting.label, setting.display_value
+
+
+def _make_setting(section: str, key: str, raw: Any) -> ImportedSetting | None:
+    value = normalize_parity_setting(section, key, raw)
+    if value is None:
+        return None
+    return ImportedSetting(section, key, value, _SETTING_RULES[(section, key)][3])
 
 
 def _unique_paths(values: Iterable[Path | str]) -> tuple[Path, ...]:
@@ -159,6 +332,18 @@ def _unique_webhooks(values: Iterable[ImportedWebhook]) -> tuple[ImportedWebhook
             continue
         seen.add(key)
         result.append(hook)
+    return tuple(result)
+
+
+def _unique_settings(values: Iterable[ImportedSetting]) -> tuple[ImportedSetting, ...]:
+    result: list[ImportedSetting] = []
+    seen: set[tuple[str, str]] = set()
+    for setting in values:
+        key = (setting.section, setting.key)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(setting)
     return tuple(result)
 
 
@@ -283,6 +468,7 @@ def _finding(
     gw2_directories: Iterable[Path | str] = (),
     parser_executables: Iterable[Path | str] = (),
     webhooks: Iterable[ImportedWebhook] = (),
+    settings: Iterable[ImportedSetting] = (),
     warnings: Iterable[str] = (),
     tier: int = 2,
 ) -> CompetitorFinding:
@@ -295,6 +481,7 @@ def _finding(
         gw2_directories=_unique_paths(gw2_directories),
         parser_executables=parsers,
         webhooks=_unique_webhooks(webhooks),
+        settings=_unique_settings(settings),
         warnings=tuple(dict.fromkeys(str(item) for item in warnings if item)),
         tier=tier,
     )
@@ -323,6 +510,37 @@ def _json_webhook_array(
     return hooks
 
 
+def _mapped_settings(
+    values: dict[str, Any],
+    mappings: Iterable[tuple[str, str, str]],
+) -> tuple[ImportedSetting, ...]:
+    settings: list[ImportedSetting] = []
+    for source_key, section, target_key in mappings:
+        if source_key not in values:
+            continue
+        setting = _make_setting(section, target_key, values[source_key])
+        if setting is not None:
+            settings.append(setting)
+    return _unique_settings(settings)
+
+
+def _contains_private_credentials(value: Any, depth: int = 0) -> bool:
+    """Notice credential-bearing fields without copying or displaying them."""
+    if depth >= 16:
+        return False
+    if isinstance(value, dict):
+        for key, item in value.items():
+            folded = str(key).casefold().replace("_", "")
+            if any(word in folded for word in ("token", "apikey", "password", "secret")):
+                if item not in (None, "", [], {}):
+                    return True
+            if _contains_private_credentials(item, depth + 1):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_private_credentials(item, depth + 1) for item in value)
+    return False
+
+
 def _parse_plenbot(path: Path, data: Any) -> CompetitorFinding | None:
     lower_name = path.name.casefold()
     is_settings = isinstance(data, dict) and (
@@ -347,12 +565,26 @@ def _parse_plenbot(path: Path, data: Any) -> CompetitorFinding | None:
     log_path = _expand_path(settings.get("logsLocation"))
     gw2_path = _expand_path(settings.get("gw2Location"))
     hooks = _json_webhook_array(hooks_data, "fight", active_key="isActive")
+    parity_settings = _mapped_settings(
+        settings,
+        (
+            ("closeToTry", "Behavior", "closeToTray"),
+            ("minimiseToTry", "Behavior", "minimizeToTray"),
+        ),
+    )
+    warnings = (
+        ("Private PlenBot credentials were found and will not be copied.",)
+        if _contains_private_credentials(settings)
+        else ()
+    )
     return _finding(
         "PlenBot Log Uploader",
         files,
         log_folders=(log_path,) if log_path else (),
         gw2_directories=(gw2_path,) if gw2_path else (),
         webhooks=hooks,
+        settings=parity_settings,
+        warnings=warnings,
         tier=1,
     )
 
@@ -379,11 +611,51 @@ def _parse_axibridge(path: Path, data: Any) -> CompetitorFinding | None:
         hooks.append(primary)
     hooks.extend(_json_webhook_array(data.get("reportWebhooks"), "nightly"))
     log_path = _expand_path(data.get("logDirectory"))
+    embed_settings = data.get("embedStatSettings")
+    parity_settings: list[ImportedSetting] = []
+    if isinstance(embed_settings, dict):
+        parity_settings.extend(
+            _mapped_settings(
+                embed_settings,
+                (
+                    ("showDamage", "UI", "showDamage"),
+                    ("showHealing", "UI", "showHeals"),
+                    ("showCleanses", "UI", "showCleanses"),
+                    ("showBoonStrips", "UI", "showStrips"),
+                    ("showCC", "UI", "showCCs"),
+                ),
+            )
+        )
+        # AxiBridge exposes downs and kills separately; SparkyBot combines
+        # them, so only transfer the choice when both agree.
+        if (
+            isinstance(embed_settings.get("showDowns"), bool)
+            and embed_settings.get("showDowns") == embed_settings.get("showKills")
+        ):
+            combined = _make_setting(
+                "UI", "showDownsKills", embed_settings["showDowns"]
+            )
+            if combined:
+                parity_settings.append(combined)
+    close_behavior = data.get("closeBehavior")
+    if isinstance(close_behavior, str) and close_behavior in {"minimize", "quit"}:
+        close_setting = _make_setting(
+            "Behavior", "closeToTray", close_behavior == "minimize"
+        )
+        if close_setting:
+            parity_settings.append(close_setting)
+    warnings = (
+        ("Private AxiBridge credentials were found and will not be copied.",)
+        if _contains_private_credentials(data)
+        else ()
+    )
     return _finding(
         "AxiBridge" if parent != "arcbridge" else "ArcBridge (now AxiBridge)",
         (path,),
         log_folders=(log_path,) if log_path else (),
         webhooks=hooks,
+        settings=parity_settings,
+        warnings=warnings,
         tier=1,
     )
 
@@ -480,11 +752,21 @@ def _parse_wvw_insights(path: Path, data: Any) -> CompetitorFinding | None:
     if last:
         hooks.insert(0, last)
     log_path = _expand_path(settings.get("log_directory"))
+    guild_name = _make_setting(
+        "Discord", "discordWebhookLabel", settings.get("guild_name")
+    )
+    warnings = (
+        ("Private WvW Insights tokens were found and will not be copied.",)
+        if _contains_private_credentials(settings)
+        else ()
+    )
     return _finding(
         "WvW Insights",
         files,
         log_folders=(log_path,) if log_path else (),
         webhooks=hooks,
+        settings=(guild_name,) if guild_name else (),
+        warnings=warnings,
     )
 
 
@@ -562,6 +844,35 @@ def _parse_json(path: Path) -> CompetitorFinding:
     )
 
 
+_MZ_SETTING_MAPPINGS = (
+    ("embedColor", "Discord", "embedColor"),
+    ("minFightDuration", "Thresholds", "minFightDuration"),
+    ("minFightDowns", "Thresholds", "minFightDowns"),
+    ("minFightTotalDmg", "Thresholds", "minFightTotalDmg"),
+    ("maxUploadMegabytes", "Thresholds", "maxUploadSize"),
+    ("largeUploadsAfterParse", "Thresholds", "uploadLargeAfterParse"),
+    ("showDamage", "UI", "showDamage"),
+    ("showHeals", "UI", "showHeals"),
+    ("showDefense", "UI", "showDefense"),
+    ("showCCs", "UI", "showCCs"),
+    ("showStrips", "UI", "showStrips"),
+    ("showCleanses", "UI", "showCleanses"),
+    ("showDownsKills", "UI", "showDownsKills"),
+    ("showBurstDmg", "UI", "showBurstDmg"),
+    ("showTopEnemySkills", "UI", "showTopEnemySkills"),
+    ("showOffensiveBoons", "UI", "showOffensiveBoons"),
+    ("showDefensiveBoons", "UI", "showDefensiveBoons"),
+    ("showEnemyBreakdown", "UI", "showEnemyBreakdown"),
+    ("showQuickReport", "UI", "showQuickReport"),
+    ("closeToTray", "Behavior", "closeToTray"),
+    ("minimizeToTray", "Behavior", "minimizeToTray"),
+    ("startMinimized", "Behavior", "startMinimized"),
+    ("maxParseMemory", "Behavior", "maxParseMemory"),
+    ("twitchChannelName", "Twitch", "twitchChannelName"),
+    ("twitchUseTLS", "Twitch", "twitchUseTLS"),
+)
+
+
 def _parse_properties(path: Path) -> CompetitorFinding:
     values: dict[str, str] = {}
     for raw_line in _read_text(path).splitlines():
@@ -595,11 +906,19 @@ def _parse_properties(path: Path) -> CompetitorFinding:
         )
         if hook:
             hooks.append(hook)
+    settings = _mapped_settings(values, _MZ_SETTING_MAPPINGS)
+    warnings = (
+        ("A Twitch bot token was found and will not be copied.",)
+        if values.get("twitchBotToken", "").strip()
+        else ()
+    )
     return _finding(
         "MzFightReporter",
         (path,),
         log_folders=paths,
         webhooks=hooks,
+        settings=settings,
+        warnings=warnings,
         tier=1,
     )
 
@@ -645,10 +964,18 @@ def _parse_ini(path: Path) -> CompetitorFinding:
         warnings = (
             "The combiner's input_directory contains generated EI JSON, not raw ArcDPS logs, so it was not imported.",
         )
+        guild_name = _make_setting(
+            "Discord",
+            "discordWebhookLabel",
+            values.get("topstatscfg.guild_name", values.get("guild_name")),
+        )
+        if values.get("topstatscfg.api_key", values.get("api_key", "")).strip():
+            warnings += ("A Guild Wars 2 API key was found and will not be copied.",)
         return _finding(
             "TopStats / GW2 EI Log Combiner",
             (path,),
             webhooks=(hook,) if hook else (),
+            settings=(guild_name,) if guild_name else (),
             warnings=warnings,
             tier=1,
         )
@@ -808,6 +1135,158 @@ _KNOWN_APP_DIRS: dict[str, tuple[str, ...]] = {
 }
 
 
+@dataclass(frozen=True)
+class CompetitorImportTarget:
+    """A supported app plus narrow, known places for its primary settings."""
+
+    key: str
+    name: str
+    appdata_paths: tuple[str, ...] = ()
+    gw2_paths: tuple[str, ...] = ()
+    portable_paths: tuple[str, ...] = ()
+
+
+COMPETITOR_IMPORT_TARGETS = (
+    CompetitorImportTarget(
+        "axibridge", "AxiBridge / ArcBridge",
+        ("AxiBridge/config.json", "ArcBridge/config.json"),
+        portable_paths=("AxiBridge/config.json", "ArcBridge/config.json"),
+    ),
+    CompetitorImportTarget(
+        "topstatsaio", "TopStatsAIO", ("TopStatsAIO/ui-state.json",),
+        portable_paths=("TopStatsAIO/ui-state.json",),
+    ),
+    CompetitorImportTarget(
+        "gw2-ei-combiner", "GW2 EI Log Combiner",
+        ("TopStatsAIO/top_stats_config.ini",),
+        portable_paths=("GW2_EI_log_combiner/top_stats_config.ini",),
+    ),
+    CompetitorImportTarget(
+        "plenbot", "PlenBot Log Uploader",
+        (
+            "PlenBotLogUploader/app_settings.json",
+            "PlenBot/app_settings.json",
+        ),
+        portable_paths=("PlenBotLogUploader/app_settings.json",),
+    ),
+    CompetitorImportTarget(
+        "mzfightreporter", "MzFightReporter",
+        ("MzFightReporter/config.properties",),
+        portable_paths=("MzFightReporter/config.properties",),
+    ),
+    CompetitorImportTarget(
+        "wvw-insights", "WvW Insights",
+        gw2_paths=("addons/wvw-insights/settings.json",),
+        appdata_paths=("wvw-insights/settings.json",),
+    ),
+    CompetitorImportTarget(
+        "evtc-parser", "EVTC_parser", ("evtc_parser/config.ini",),
+        portable_paths=("EVTC_parser/config.ini",),
+    ),
+    CompetitorImportTarget(
+        "manny", "GW2 Manny Uploader",
+        gw2_paths=("addons/manny-uploader/settings.json",),
+    ),
+    CompetitorImportTarget(
+        "gw2scratch", "GW2Scratch Log Manager",
+        ("ArcdpsLogManager/Settings.json",),
+    ),
+    CompetitorImportTarget(
+        "wingman", "Nexus Wingman Uploader",
+        gw2_paths=("addons/wingman-uploader/settings.json",),
+    ),
+    CompetitorImportTarget(
+        "wvw-log-uploader", "WvW Log Uploader",
+        portable_paths=("WvW-Log-Uploader/config.json",),
+    ),
+    CompetitorImportTarget(
+        "commanders-watch", "GW2 Commanders Watch",
+        portable_paths=("GW2_Commanders_Watch/config.json",),
+    ),
+    CompetitorImportTarget(
+        "l0g", "L0G-101086",
+        portable_paths=("L0G-101086/l0g-101086-config.json",),
+    ),
+    CompetitorImportTarget(
+        "arclog", "arclog", ("arclog/config.toml",),
+        portable_paths=("arclog/config.toml",),
+    ),
+    CompetitorImportTarget(
+        "toxic-elitist", "toxic-elitist",
+        portable_paths=("toxic-elitist/config.yml",),
+    ),
+    CompetitorImportTarget(
+        "loguploader2", "LogUploader2", ("LogUploader2/user.config",),
+        portable_paths=("LogUploader2/user.config",),
+    ),
+    CompetitorImportTarget(
+        "arcdps-uploader", "arcdps-uploader",
+        gw2_paths=("addons/uploader/uploader.db",),
+    ),
+    CompetitorImportTarget(
+        "axipulse", "AxiPulse", ("AxiPulse/config.json",),
+        portable_paths=("AxiPulse/config.json",),
+    ),
+)
+
+_IMPORT_TARGETS = {target.key: target for target in COMPETITOR_IMPORT_TARGETS}
+
+
+def expected_competitor_config_paths(
+    target_key: str,
+    *,
+    gw2_dirs: Iterable[str | Path] = (),
+    home: str | Path | None = None,
+    appdata: str | Path | None = None,
+    local_appdata: str | Path | None = None,
+) -> tuple[Path, ...]:
+    """Return bounded, tool-specific picker guesses in useful priority order."""
+    target = _IMPORT_TARGETS.get(target_key)
+    if target is None:
+        raise CompetitorConfigError(f"Unknown log tool: {target_key}")
+    user_home = Path(home) if home is not None else Path.home()
+    roaming = Path(appdata) if appdata is not None else Path(
+        os.environ.get("APPDATA", user_home / "AppData" / "Roaming")
+    )
+    local = Path(local_appdata) if local_appdata is not None else Path(
+        os.environ.get("LOCALAPPDATA", user_home / "AppData" / "Local")
+    )
+    candidates: list[Path] = []
+    candidates.extend(
+        Path(gw2) / relative
+        for gw2 in gw2_dirs
+        for relative in target.gw2_paths
+    )
+    candidates.extend(
+        base / relative
+        for base in (roaming, local)
+        for relative in target.appdata_paths
+    )
+    candidates.extend(
+        base / relative
+        for base in (
+            user_home / "Documents",
+            user_home / "Downloads",
+            user_home / "Desktop",
+        )
+        for relative in target.portable_paths
+    )
+    return _unique_paths(candidates)
+
+
+def expected_competitor_config_path(
+    target_key: str,
+    **kwargs: Any,
+) -> Path:
+    """Pick an existing expected file when possible, otherwise the best guess."""
+    candidates = expected_competitor_config_paths(target_key, **kwargs)
+    if not candidates:
+        raise CompetitorConfigError(
+            "SparkyBot does not know an expected settings location for that tool."
+        )
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+
 def _known_candidates_in(directory: Path) -> list[Path]:
     names = _KNOWN_APP_DIRS.get(directory.name.casefold(), ())
     return [directory / name for name in names]
@@ -868,6 +1347,9 @@ def _merge_findings(findings: Iterable[CompetitorFinding]) -> tuple[CompetitorFi
                 ),
                 webhooks=_unique_webhooks(
                     hook for item in group for hook in item.webhooks
+                ),
+                settings=_unique_settings(
+                    setting for item in group for setting in item.settings
                 ),
                 warnings=tuple(
                     dict.fromkeys(warning for item in group for warning in item.warnings)
@@ -1011,6 +1493,7 @@ def build_import_plan(finding: CompetitorFinding) -> CompetitorImportPlan:
         ),
         fight_webhook=fight,
         nightly_webhook=nightly,
+        settings=finding.settings,
     )
 
 
@@ -1030,16 +1513,47 @@ def apply_competitor_import(
         if plan.parser_executable:
             config.update("Paths", "gw2eiExe", str(plan.parser_executable))
 
+        for setting in plan.settings:
+            normalized = normalize_parity_setting(
+                setting.section, setting.key, setting.value
+            )
+            if normalized is None or normalized != setting.value:
+                raise CompetitorConfigError(
+                    f"{setting.label} is not a safe SparkyBot setting."
+                )
+            # A guild-admin file remains authoritative for every Discord
+            # presentation/routing value when local neighbor setup is added.
+            if setting.section == "Discord" and not include_discord:
+                continue
+            config.update(setting.section, setting.key, setting.value)
+
         if include_discord and plan.fight_webhook and plan.nightly_webhook:
             fight = plan.fight_webhook
             nightly = plan.nightly_webhook
-            same = fight.url == nightly.url
-            config.update("Discord", "discordWebhook", fight.url)
-            config.update("Discord", "discordWebhookName1", fight.display_name)
-            config.update("Discord", "discordWebhook2", "" if same else nightly.url)
-            config.update("Discord", "discordWebhookName2", "" if same else nightly.display_name)
+            saved = plan.saved_webhooks
+            for index in range(1, 4):
+                suffix = "" if index == 1 else str(index)
+                hook = saved[index - 1] if index <= len(saved) else None
+                config.update(
+                    "Discord", f"discordWebhook{suffix}", hook.url if hook else ""
+                )
+                config.update(
+                    "Discord",
+                    f"discordWebhookName{index}",
+                    hook.display_name if hook else "",
+                )
+            nightly_index = next(
+                (
+                    index
+                    for index, hook in enumerate(saved, 1)
+                    if hook.url == nightly.url
+                ),
+                1,
+            )
             config.update("Discord", "activeDiscordWebhook", "1")
-            config.update("Discord", "raidReportDiscordWebhook", "1" if same else "2")
+            config.update(
+                "Discord", "raidReportDiscordWebhook", str(nightly_index)
+            )
             config.update("Discord", "enableDiscordBot", "true")
 
         if turn_off_optional:
@@ -1065,22 +1579,6 @@ def apply_competitor_import(
         ) from exc
 
 
-SUPPORTED_COMPETITOR_CONFIGS = (
-    "AxiBridge / ArcBridge",
-    "TopStatsAIO and GW2 EI Log Combiner",
-    "PlenBot Log Uploader",
-    "MzFightReporter",
-    "WvW Insights",
-    "EVTC_parser",
-    "GW2 Manny Uploader",
-    "GW2Scratch Log Manager",
-    "Nexus Wingman Uploader",
-    "WvW Log Uploader",
-    "GW2 Commanders Watch",
-    "L0G-101086",
-    "arclog",
-    "toxic-elitist",
-    "LogUploader2",
-    "arcdps-uploader",
-    "AxiPulse",
+SUPPORTED_COMPETITOR_CONFIGS = tuple(
+    target.name for target in COMPETITOR_IMPORT_TARGETS
 )
