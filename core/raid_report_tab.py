@@ -53,6 +53,10 @@ class RaidReportTab(QWidget):
     sig_error = Signal(str)
     sig_publish_done = Signal(bool, str)
     sig_process_files_requested = Signal()
+    # Background discover thread -> GUI thread. The log folder is typically a
+    # network share; scanning it on the GUI thread froze the window whenever
+    # the share hiccuped (ticket 6c8e08f9). (logs, sizes, preserve, chip)
+    sig_logs_discovered = Signal(object, object, object, object)
 
     def __init__(self, *, discover, select_session, select_today,
                  select_recent=None, runner_factory, publish, parent=None):
@@ -69,15 +73,18 @@ class RaidReportTab(QWidget):
         self.sig_done.connect(self._on_done)
         self.sig_error.connect(self._on_error)
         self.sig_publish_done.connect(self._on_publish_done)
+        self.sig_logs_discovered.connect(self._on_logs_discovered)
 
         self._running = False
+        self._discovering = False
         self._logs: list[LogInfo] = []
+        self._log_sizes: dict = {}
         self._error_details = ""
         self.last_result: Optional[ReportResult] = None
 
         self._setup_ui()
-        self._refresh()
-        self._apply_chip("recent")
+        # Async initial scan; the "recent" quick-pick applies when it lands.
+        self._refresh(chip="recent")
 
     # ------------------------------------------------------------------
     # ui
@@ -310,9 +317,8 @@ class RaidReportTab(QWidget):
     # ------------------------------------------------------------------
 
     @Slot()
-    def _refresh(self):
-        self._logs = self._discover()
-        self._populate()
+    def _refresh(self, chip=None):
+        self._start_discover(preserve=None, chip=chip)
 
     @Slot()
     def rescan(self):
@@ -322,11 +328,46 @@ class RaidReportTab(QWidget):
         if self._running:
             return
         checked = {log.path for log in self.selected_logs()}
-        self._logs = self._discover()
+        self._start_discover(preserve=checked, chip=None)
+
+    def _start_discover(self, preserve, chip):
+        """Run the log-folder scan (network share — must never block the GUI
+        thread) on a daemon thread. Sizes are gathered there too so
+        _populate needs no per-row stat. Single-flight: a scan already out
+        wins; the page-open contract retriggers on the next open."""
+        if self._discovering:
+            return
+        self._discovering = True
+
+        def _work():
+            try:
+                logs = self._discover()
+            except Exception:
+                logger.exception("Log discovery failed")
+                logs = []
+            sizes = {}
+            for log in logs:
+                try:
+                    sizes[log.path] = log.path.stat().st_size
+                except OSError:
+                    sizes[log.path] = 0
+            self.sig_logs_discovered.emit(logs, sizes, preserve, chip)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_logs_discovered(self, logs, sizes, preserve, chip):
+        """GUI-thread landing slot for a finished background scan."""
+        self._discovering = False
+        if self._running:
+            return          # never repopulate mid-generation
+        self._logs = logs
+        self._log_sizes = sizes
         self._populate()
-        if checked:
+        if preserve:
             self._check_rows_for(
-                [log for log in self._logs if log.path in checked])
+                [log for log in self._logs if log.path in preserve])
+        elif chip:
+            self._apply_chip(chip)
         self._update_found()
 
     @Slot()
@@ -362,10 +403,9 @@ class RaidReportTab(QWidget):
             fight_item = QTableWidgetItem(log.path.stem)
             self._table.setItem(row, _COL_FIGHT, fight_item)
 
-            try:
-                size_bytes = log.path.stat().st_size
-            except OSError:
-                size_bytes = 0
+            # Sizes were gathered on the discover thread — no per-row
+            # network stat on the GUI thread.
+            size_bytes = self._log_sizes.get(log.path, 0)
             size_item = _SortableItem(
                 f"{size_bytes / 1024 / 1024:.1f} MB")
             size_item.setData(_ROLE_SORT, size_bytes)
