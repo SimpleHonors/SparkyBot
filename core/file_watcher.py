@@ -13,6 +13,16 @@ from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedE
 
 logger = logging.getLogger(__name__)
 
+# Watcher self-test (user-initiated starts only): after writing a temp
+# probe file into a folder the observer must see an event within this
+# window, otherwise OS events are not arriving (e.g. a network folder the
+# drive-type API reports as LOCAL) and we fall back to compatibility
+# polling.
+NATIVE_WATCH_PROBE_TIMEOUT = 2.0
+NATIVE_PROBE_PREFIX = "SparkyBot-watch-probe"
+COMPAT_STATUS_NOTE = ("Network folder detected — using compatibility "
+                      "watching")
+
 
 def is_network_path(path: Path) -> bool:
     """Check if a path is a network share (UNC path).
@@ -365,6 +375,9 @@ class FileWatcher:
         self._running = False
         self._use_polling = False
         self._is_network: Optional[bool] = None  # Instance-level cache
+        # Set when a self-test downgraded us to compatibility polling, so the
+        # UI can surface a plain status note. None otherwise.
+        self.status_note: Optional[str] = None
 
     def _scan_existing_files(self):
         """Scan for existing files to skip them initially"""
@@ -390,35 +403,99 @@ class FileWatcher:
         self._is_network = False
         return False
 
-    def start(self):
-        """Start watching for new log files"""
+    def _probe_native_events(self, folder: Path,
+                             timeout: float = NATIVE_WATCH_PROBE_TIMEOUT) -> bool:
+        """Return True if the OS really delivers events for this folder.
+
+        Writes a temp probe file and waits ``timeout`` seconds for a
+        watchdog event on a throwaway observer. Used only by the
+        user-initiated start path.
+        """
+        fired = threading.Event()
+
+        class _Probe(FileSystemEventHandler):
+            def on_any_event(self, event):
+                if not event.is_directory:
+                    fired.set()
+
+        probe = folder / f"{NATIVE_PROBE_PREFIX}-" \
+                        f"{int(time.time() * 1000)}.tmp"
+        observer = Observer()
+        try:
+            observer.schedule(_Probe(), str(folder), recursive=True)
+            observer.start()
+            try:
+                probe.write_bytes(b"")
+                return fired.wait(timeout)
+            finally:
+                observer.stop()
+                observer.join(timeout)
+        except Exception as e:
+            logger.debug(f"Native watch probe error in {folder}: {e}")
+            return False
+        finally:
+            try:
+                probe.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _start_polling(self):
+        """Start the compatibility polling watcher (network-safe path)."""
+        logger.info("Network share detected - using polling watcher")
+        self._use_polling = True
+        self._polling_watcher = PollingFileWatcher(
+            self.config,
+            self._on_new_file,
+            self.poll_interval
+        )
+        self._polling_watcher.start(self._initial_files)
+
+    def _start_native(self):
+        """Start the OS-native event watcher."""
+        logger.info("Local folder detected - using OS-native events")
+        self._use_polling = False
+        self._event_handler = LogFileHandler(self._on_new_file)
+        self._observer = Observer()
+
+        for folder in self.config.get_log_folders():
+            if folder.exists():
+                logger.info(f"Watching folder: {folder}")
+                self._observer.schedule(self._event_handler, str(folder), recursive=True)
+            else:
+                logger.warning(f"Folder does not exist, skipping: {folder}")
+
+        self._observer.start()
+
+    def start(self, selftest: bool = False,
+              probe_timeout: float = NATIVE_WATCH_PROBE_TIMEOUT):
+        """Start watching for new log files.
+
+        Args:
+            selftest: verify the OS event watcher actually fires before
+                trusting it, falling back to compatibility polling on
+                silence. Only pass True from user-initiated flows (start
+                button / tray toggle); automatic launches keep the plain
+                startup behavior.
+        """
         self._scan_existing_files()
 
         # Check if we need polling for network shares
         if self._is_network_share():
-            logger.info("Network share detected - using polling watcher")
-            self._use_polling = True
-            self._polling_watcher = PollingFileWatcher(
-                self.config,
-                self._on_new_file,
-                self.poll_interval
-            )
-            self._polling_watcher.start(self._initial_files)
+            self._start_polling()
         else:
-            # Use efficient OS-native events
-            logger.info("Local folder detected - using OS-native events")
-            self._use_polling = False
-            self._event_handler = LogFileHandler(self._on_new_file)
-            self._observer = Observer()
-
-            for folder in self.config.get_log_folders():
-                if folder.exists():
-                    logger.info(f"Watching folder: {folder}")
-                    self._observer.schedule(self._event_handler, str(folder), recursive=True)
+            if selftest:
+                folders = [f for f in self.config.get_log_folders()
+                           if f.exists()]
+                silent = [f for f in folders
+                          if not self._probe_native_events(f, probe_timeout)]
+                if folders and silent:
+                    logger.info(COMPAT_STATUS_NOTE)
+                    self.status_note = COMPAT_STATUS_NOTE
+                    self._start_polling()
                 else:
-                    logger.warning(f"Folder does not exist, skipping: {folder}")
-
-            self._observer.start()
+                    self._start_native()
+            else:
+                self._start_native()
 
         self._running = True
         logger.info("File watcher started")
