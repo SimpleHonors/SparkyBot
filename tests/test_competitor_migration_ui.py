@@ -7,7 +7,13 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QScrollArea
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QGroupBox,
+    QLabel,
+    QScrollArea,
+)
 
 from core import apppaths
 import core.competitor_migration_ui as migration_ui
@@ -128,6 +134,41 @@ def test_import_dialog_shows_named_choices_but_never_webhook_secrets(
     }
     assert "Minimum fight duration (seconds)" in visible
     assert "27" in visible
+
+
+def test_import_dialog_scrolls_without_covering_fixed_actions_on_short_screen(
+    tmp_path, qt_app
+):
+    base = finding(tmp_path)
+    sources = tuple(
+        tmp_path / f"Tool {index}" / "config.json" for index in range(6)
+    )
+    item = CompetitorFinding(
+        app="AxiBridge + MzFightReporter + TopStatsAIO + PlenBot + WvW Insights",
+        source_files=sources,
+        log_folders=base.log_folders,
+        webhooks=base.webhooks,
+        settings=base.settings,
+        warnings=(
+            "Fight folders differed; prioritizing AxiBridge.",
+            "Individual fight channels differed; using AxiBridge: Logspam.",
+            "One optional destination was not copied.",
+        ),
+    )
+    dialog = CompetitorImportDialog(item)
+    dialog.resize(620, 400)
+    dialog.show()
+    qt_app.processEvents()
+
+    body_scroll = dialog.findChild(QScrollArea)
+    buttons = dialog.findChild(QDialogButtonBox)
+    assert body_scroll is not None and buttons is not None
+    assert body_scroll.geometry().bottom() < buttons.geometry().top()
+    assert body_scroll.verticalScrollBar().maximum() > 0
+    assert dialog.use_button.isVisible() and dialog.use_button.isEnabled()
+    visible = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+    assert all(str(path) in visible for path in sources)
+    dialog.close()
 
 
 def test_advanced_import_asks_for_tool_then_seeds_its_expected_file(
