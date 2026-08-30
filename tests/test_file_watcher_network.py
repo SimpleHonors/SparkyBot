@@ -55,10 +55,11 @@ def test_drive_type_is_none_off_windows(monkeypatch):
 
 @pytest.mark.parametrize('drive_type,expected', [
     (fw.DRIVE_REMOTE, True),
-    (fw.DRIVE_LOCAL, False),
+    (fw.DRIVE_FIXED, False),
     (fw.DRIVE_REMOVABLE, False),
     (fw.DRIVE_UNKNOWN, False),
-    (fw.DRIVE_CDROM, False),   # 4 is CDROM, NOT remote — the ticket trap
+    (fw.DRIVE_FIXED, False),   # 3 = a normal local hard drive, never network
+    (fw.DRIVE_CDROM, False),
     (fw.DRIVE_RAMDISK, False),
     (None, False),             # non-Windows: behavior unchanged
 ])
@@ -69,7 +70,7 @@ def test_mapped_drive_classification(monkeypatch, drive_type, expected):
 
 
 def test_driveless_path_falls_back_to_unc_check(monkeypatch):
-    monkeypatch.setattr(fw, '_drive_type', lambda root: fw.DRIVE_LOCAL)
+    monkeypatch.setattr(fw, '_drive_type', lambda root: fw.DRIVE_FIXED)
     unc = FakePath(drive='', text='\\\\NAS\\gw2\\logs')
     assert fw.check_remote_drive(unc) is True
     local = FakePath(drive='', text='/home/user/logs')
@@ -270,3 +271,12 @@ def test_one_silent_folder_triggers_fallback(clean_fakes, tmp_path):
         assert w.status_note == fw.COMPAT_STATUS_NOTE
     finally:
         w.stop()
+
+
+def test_winbase_numeric_truth():
+    """winbase.h: DRIVE_FIXED == 3, DRIVE_REMOTE == 4. A flipped mapping
+    classifies every local disk as a network share — pin the numbers."""
+    import core.file_watcher as fw
+    assert fw.DRIVE_FIXED == 3
+    assert fw.DRIVE_REMOTE == 4
+    assert fw.DRIVE_CDROM == 5

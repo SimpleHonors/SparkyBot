@@ -33,12 +33,15 @@ def is_network_path(path: Path) -> bool:
     return str(path).startswith('\\\\')
 
 
+# GetDriveTypeW return values (winbase.h): 0 UNKNOWN, 1 NO_ROOT_DIR,
+# 2 REMOVABLE, 3 FIXED, 4 REMOTE (mapped network drive), 5 CDROM, 6 RAMDISK.
 DRIVE_UNKNOWN = 0
-DRIVE_REMOVABLE = 1
-DRIVE_LOCAL = 2
-DRIVE_REMOTE = 3  # GetDriveTypeW: mapped/remote drive (4 is CDROM!)
-DRIVE_CDROM = 4
-DRIVE_RAMDISK = 5
+DRIVE_NO_ROOT_DIR = 1
+DRIVE_REMOVABLE = 2
+DRIVE_FIXED = 3
+DRIVE_REMOTE = 4
+DRIVE_CDROM = 5
+DRIVE_RAMDISK = 6
 
 
 def _drive_type(drive_root: str) -> Optional[int]:
