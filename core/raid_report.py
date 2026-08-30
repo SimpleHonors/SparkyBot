@@ -20,6 +20,7 @@ from core.raid_session import (
 )
 from core.report_bake import (
     apply_guild_icon,
+    apply_report_title,
     apply_sticky_table_headers,
     merge_augmented_tiddlers,
     summarize_tiddlers,
@@ -251,6 +252,15 @@ class RaidReportRunner:
         # report header and as a $:/sparkybot/guild-icon tiddler any skin
         # can read. Never fails the report.
         apply_guild_icon(standalone_html, self.guild_icon)
+
+        # Same augmentation path: swap the upstream "Top Stats - Elite
+        # Insight Log Summary" header for SparkyBot's own title, in the
+        # visible header tiddler, $:/SiteTitle, and the browser-tab
+        # <title>. Never fails the report.
+        apply_report_title(
+            standalone_html,
+            session_date=f"{selected[0].timestamp:%Y-%m-%d}",
+        )
 
         if report_name is not None and report_name.strip():
             name = report_name.strip()
