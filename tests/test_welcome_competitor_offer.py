@@ -75,6 +75,32 @@ def test_clicking_the_lead_button_is_what_starts_the_scan(
     assert len(calls) == 1
 
 
+def test_the_welcome_click_is_permission_for_the_log_folder_hunt_too(
+    app, tmp_path, monkeypatch
+):
+    hunt_calls = []
+    monkeypatch.setattr(sw, "discover_competitor_configs", lambda **kwargs: ())
+    monkeypatch.setattr(
+        sw.LogFolderPage,
+        "_detect_gw2_installations",
+        lambda _self: hunt_calls.append("gw2") or (),
+    )
+    monkeypatch.setattr(
+        sw.LogFolderPage, "_detect_arcdps_setups", lambda _self: ()
+    )
+    wizard = sw.SetupWizard(Config(tmp_path / "config.properties"))
+    welcome = wizard.page(sw.PAGE_WELCOME)
+    page = wizard.log_folder_page
+
+    assert hunt_calls == []          # wizard build probes nothing
+    assert not page.scan_btn.isHidden()
+
+    welcome.autodetect_button.click()
+
+    assert hunt_calls == ["gw2"]     # the click covered this page's hunt…
+    assert page.scan_btn.isHidden()  # …so the page does not re-ask
+
+
 def test_single_detected_tool_becomes_named_one_click_offer(
     app, tmp_path, monkeypatch
 ):
