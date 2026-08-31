@@ -2,6 +2,52 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.2.0] — 2026-08-30
+
+### Added
+
+- Themes: 11 selectable themes for the whole app — Workbench Dark (default,
+  brighter text), Obsidian (true-black AMOLED), Daylight, Midnight Blue,
+  Mist Teal, Crimson, Sunset, Legendary Gold, Bubblegum, High Contrast, and
+  JADE (guild theme matched to the JADE logo). Pick one in Settings >
+  Application; it applies live and persists.
+- Help everywhere: a "?" button on each screen opens that screen's help page
+  in your browser, backed by new per-screen help docs; every input field now
+  has a plain-language hover tooltip.
+- The guild icon now takes over the report header logo slot, and reports
+  carry SparkyBot's own title ("SparkyBot — Combined Fight Log Summary")
+  instead of the upstream parser's.
+- Optional dps.report links on fight posts (off by default). Enabling asks
+  you to choose: post fights right away with the link following in a second
+  message, or wait for the upload and post everything together (slower).
+  An upload problem never costs you the fight post.
+- Developer mode (`--dev` launch flag) unlocks full settings export/import —
+  secrets included, loudly labeled — for moving your own complete setup
+  between machines. The safe guild setup file is unchanged and still strips
+  secrets.
+- Automatic setup is now ask-first: SparkyBot never hunts for your GW2
+  install, ArcDPS, or other log tools until you click the setup button —
+  the click is the permission.
+
+### Changed
+
+- Welcome screen leads with the guided walk-through; the guild setup file
+  import is tucked below it.
+- "Raid Report" is now "Combined Fight Log Summary" everywhere you can see
+  ("Fight Summary" where space is tight).
+- Long tables in the classic report keep their headers visible while
+  scrolling.
+- Smaller installer: the app ships a thin launcher with everything else in
+  `_internal/`, and unused Qt modules are left out.
+
+### Fixed
+
+- The window no longer freezes during folder scans, report discovery,
+  end-of-run checks, or the setup wizard's installs — all of that now runs
+  off the interface thread.
+- Poison chart: every profession now gets its real class color (newer
+  professions such as Antiquary and Galeshot previously rendered grey).
+
 ## [2.1.0] — 2026-08-30
 
 ### Added
