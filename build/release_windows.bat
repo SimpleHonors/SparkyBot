@@ -26,12 +26,15 @@ build\venv\Scripts\python.exe build\package_release.py ^
 if errorlevel 1 goto :fail
 
 echo [4/6] Building the Inno Setup installer...
-where iscc >nul 2>nul
-if errorlevel 1 (
+set "ISCC_EXE="
+for %%I in (iscc.exe) do set "ISCC_EXE=%%~$PATH:I"
+if not defined ISCC_EXE if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC_EXE=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if not defined ISCC_EXE if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC_EXE=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+if not defined ISCC_EXE (
     echo ERROR: Inno Setup 6 is not installed or iscc.exe is not on PATH.
     goto :fail
 )
-iscc /DMyAppVersion=%APP_VERSION% build\sparkybot.iss
+"%ISCC_EXE%" /DMyAppVersion=%APP_VERSION% build\sparkybot.iss
 if errorlevel 1 goto :fail
 
 echo [5/6] Verifying the tag, archive bytes, and release manifest...

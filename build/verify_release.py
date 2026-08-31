@@ -126,6 +126,15 @@ def verify_repository_version(
         )
 
     if require_tag:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        if status.stdout.strip():
+            problems.append("release checkout is dirty; build the exact tag unchanged")
         completed = subprocess.run(
             ["git", "tag", "--points-at", "HEAD"],
             cwd=repo_root,
