@@ -2,7 +2,11 @@
 setlocal EnableExtensions
 pushd "%~dp0\.."
 
-echo [1/6] Building the locked PyInstaller runtime...
+echo [1/7] Verifying a clean exact release tag before generating outputs...
+py -3.12 build\verify_release.py --repo-root . --require-tag --repo-only
+if errorlevel 1 goto :fail
+
+echo [2/7] Building the locked PyInstaller runtime...
 call build\build_windows.bat --no-pause
 if errorlevel 1 goto :fail
 
@@ -12,12 +16,12 @@ if not defined APP_VERSION (
     goto :fail
 )
 
-echo [2/6] Running the full suite at the exact release commit...
+echo [3/7] Running the full suite at the exact release commit...
 set "QT_QPA_PLATFORM=offscreen"
 build\venv\Scripts\python.exe -m pytest -q
 if errorlevel 1 goto :fail
 
-echo [3/6] Creating deterministic ZIP and manifest for v%APP_VERSION%...
+echo [4/7] Creating deterministic ZIP and manifest for v%APP_VERSION%...
 build\venv\Scripts\python.exe build\package_release.py ^
     --repo-root . ^
     --dist-dir dist\SparkyBot ^
@@ -25,7 +29,7 @@ build\venv\Scripts\python.exe build\package_release.py ^
     --version %APP_VERSION%
 if errorlevel 1 goto :fail
 
-echo [4/6] Building the Inno Setup installer...
+echo [5/7] Building the Inno Setup installer...
 set "ISCC_EXE="
 for %%I in (iscc.exe) do set "ISCC_EXE=%%~$PATH:I"
 if not defined ISCC_EXE if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC_EXE=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
@@ -37,16 +41,17 @@ if not defined ISCC_EXE (
 "%ISCC_EXE%" /DMyAppVersion=%APP_VERSION% build\sparkybot.iss
 if errorlevel 1 goto :fail
 
-echo [5/6] Verifying the tag, archive bytes, and release manifest...
+echo [6/7] Verifying source, archive bytes, and release manifest...
 build\venv\Scripts\python.exe build\verify_release.py ^
     --repo-root . ^
     --version %APP_VERSION% ^
     --require-tag ^
+    --allow-untracked ^
     --archive dist\release\SparkyBot-v%APP_VERSION%.zip ^
     --manifest dist\release\SparkyBot-v%APP_VERSION%.manifest.json
 if errorlevel 1 goto :fail
 
-echo [6/6] Verifying Authenticode signatures...
+echo [7/7] Verifying Authenticode signatures...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File build\verify_authenticode.ps1 ^
     dist\SparkyBot\SparkyBot.exe ^
     dist\SparkyBot\SparkyBotUpdater.exe ^

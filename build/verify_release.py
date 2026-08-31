@@ -120,6 +120,7 @@ def verify_repository_version(
     *,
     expected_version: str | None = None,
     require_tag: bool = False,
+    allow_untracked: bool = False,
 ) -> str:
     repo_root = Path(repo_root).resolve()
     source_version = _source_version(repo_root / "core/version.py")
@@ -152,15 +153,21 @@ def verify_repository_version(
 
     if require_tag:
         git = find_git_executable()
+        untracked_mode = "no" if allow_untracked else "all"
         status = subprocess.run(
-            [git, "status", "--porcelain", "--untracked-files=all"],
+            [
+                git,
+                "status",
+                "--porcelain",
+                f"--untracked-files={untracked_mode}",
+            ],
             cwd=repo_root,
             check=True,
             capture_output=True,
             text=True,
         )
         if status.stdout.strip():
-            problems.append("release checkout is dirty; build the exact tag unchanged")
+            problems.append("release checkout has source changes; build the exact tag unchanged")
         completed = subprocess.run(
             [git, "tag", "--points-at", "HEAD"],
             cwd=repo_root,
@@ -306,11 +313,13 @@ def compare_manifests(previous_path: Path, current_path: Path) -> dict[str, Any]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--archive", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--version")
     parser.add_argument("--require-tag", action="store_true")
+    parser.add_argument("--allow-untracked", action="store_true")
+    parser.add_argument("--repo-only", action="store_true")
     parser.add_argument("--previous-manifest", type=Path)
     parser.add_argument("--diff-output", type=Path)
     args = parser.parse_args(argv)
@@ -319,7 +328,13 @@ def main(argv: list[str] | None = None) -> int:
         args.repo_root,
         expected_version=args.version,
         require_tag=args.require_tag,
+        allow_untracked=args.allow_untracked,
     )
+    if args.repo_only:
+        print(f"PASS clean-tag-version={version}")
+        return 0
+    if not args.archive:
+        parser.error("--archive is required unless --repo-only is used")
     report = verify_archive(
         args.archive,
         version,

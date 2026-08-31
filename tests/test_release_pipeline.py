@@ -204,5 +204,18 @@ def test_exact_tag_gate_rejects_a_dirty_checkout(tmp_path):
 
     assert verify_release.verify_repository_version(repo, require_tag=True) == "9.8.7"
     _write(repo / "untracked.txt", b"dirty")
-    with pytest.raises(verify_release.ReleaseVerificationError, match="dirty"):
+    with pytest.raises(verify_release.ReleaseVerificationError, match="source changes"):
         verify_release.verify_repository_version(repo, require_tag=True)
+    assert verify_release.verify_repository_version(
+        repo,
+        require_tag=True,
+        allow_untracked=True,
+    ) == "9.8.7"
+
+    (repo / "CHANGELOG.md").write_text("## [9.8.7] - changed\n", encoding="utf-8")
+    with pytest.raises(verify_release.ReleaseVerificationError, match="source changes"):
+        verify_release.verify_repository_version(
+            repo,
+            require_tag=True,
+            allow_untracked=True,
+        )

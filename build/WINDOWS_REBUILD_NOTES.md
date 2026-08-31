@@ -53,11 +53,20 @@ the real runtime does not satisfy.
 
 ## Mechanical verification
 
-The release driver runs:
+The release driver first rejects any tracked or untracked file in the tagged
+checkout before generating build output:
+
+```bat
+py -3.12 build\verify_release.py ^
+  --repo-root . --require-tag --repo-only
+```
+
+After building, it allows the new untracked `build/` and `dist/` files but
+still rejects any tracked-source change:
 
 ```bat
 build\venv\Scripts\python.exe build\verify_release.py ^
-  --repo-root . --require-tag ^
+  --repo-root . --require-tag --allow-untracked ^
   --archive dist\release\SparkyBot-vX.Y.Z.zip ^
   --manifest dist\release\SparkyBot-vX.Y.Z.manifest.json
 ```
