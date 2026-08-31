@@ -8,8 +8,10 @@ from dataclasses import dataclass
 import fnmatch
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
 from typing import Any
 import zipfile
@@ -61,6 +63,29 @@ class VerificationReport:
     version: str
     file_count: int
     archive_sha256: str
+
+
+def find_git_executable() -> str:
+    """Return Git from PATH or its standard Windows install locations."""
+    on_path = shutil.which("git")
+    if on_path:
+        return on_path
+    candidates = []
+    for variable, suffix in (
+        ("ProgramFiles", "Git/cmd/git.exe"),
+        ("ProgramFiles(x86)", "Git/cmd/git.exe"),
+        ("LocalAppData", "Programs/Git/cmd/git.exe"),
+    ):
+        root = os.environ.get(variable)
+        if root:
+            candidates.append(Path(root) / suffix)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    raise ReleaseVerificationError(
+        "Git is required for the exact-tag gate and was not found on PATH "
+        "or in a standard Windows install location"
+    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -126,8 +151,9 @@ def verify_repository_version(
         )
 
     if require_tag:
+        git = find_git_executable()
         status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
+            [git, "status", "--porcelain", "--untracked-files=all"],
             cwd=repo_root,
             check=True,
             capture_output=True,
@@ -136,7 +162,7 @@ def verify_repository_version(
         if status.stdout.strip():
             problems.append("release checkout is dirty; build the exact tag unchanged")
         completed = subprocess.run(
-            ["git", "tag", "--points-at", "HEAD"],
+            [git, "tag", "--points-at", "HEAD"],
             cwd=repo_root,
             check=True,
             capture_output=True,

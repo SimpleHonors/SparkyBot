@@ -181,6 +181,7 @@ def test_written_manifest_matches_verified_archive(tmp_path):
 
 
 def test_exact_tag_gate_rejects_a_dirty_checkout(tmp_path):
+    git = verify_release.find_git_executable()
     repo = tmp_path / "repo"
     _write(repo / "core/version.py", b'VERSION = "9.8.7"\n')
     _write(repo / "CHANGELOG.md", b"## [9.8.7] - test\n")
@@ -188,18 +189,18 @@ def test_exact_tag_gate_rejects_a_dirty_checkout(tmp_path):
         repo / "build/sparkybot.iss",
         b"#ifndef MyAppVersion\n#error inject version\n#endif\n",
     )
-    subprocess.run(["git", "init", "-q", repo], check=True)
-    subprocess.run(["git", "-C", repo, "add", "."], check=True)
+    subprocess.run([git, "init", "-q", repo], check=True)
+    subprocess.run([git, "-C", repo, "add", "."], check=True)
     subprocess.run(
         [
-            "git", "-C", repo,
+            git, "-C", repo,
             "-c", "user.name=Release Test",
             "-c", "user.email=release@example.invalid",
             "commit", "-qm", "fixture",
         ],
         check=True,
     )
-    subprocess.run(["git", "-C", repo, "tag", "v9.8.7"], check=True)
+    subprocess.run([git, "-C", repo, "tag", "v9.8.7"], check=True)
 
     assert verify_release.verify_repository_version(repo, require_tag=True) == "9.8.7"
     _write(repo / "untracked.txt", b"dirty")
