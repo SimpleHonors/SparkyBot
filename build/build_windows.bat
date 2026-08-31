@@ -7,6 +7,10 @@ REM
 REM  Output: dist\SparkyBot\SparkyBot.exe
 REM ============================================================
 
+setlocal EnableExtensions
+set "NO_PAUSE="
+if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+
 echo.
 echo ============================================================
 echo  SparkyBot build kit
@@ -21,13 +25,10 @@ if exist build\venv (
 )
 py -3.12 -m venv build\venv 2>nul
 if errorlevel 1 (
-    python -m venv build\venv
-    if errorlevel 1 (
-        echo.
-        echo ERROR: Could not create venv. Make sure Python 3.11+ is installed.
-        pause
-        exit /b 1
-    )
+    echo.
+    echo ERROR: Python 3.12 is required for the locked Windows build.
+    if not defined NO_PAUSE pause
+    exit /b 1
 )
 
 echo   Activating venv and installing dependencies...
@@ -36,14 +37,12 @@ call build\venv\Scripts\activate.bat
 REM --- Step 2: pip install ---
 echo.
 echo [2/4] Installing packages...
-python -m pip install --upgrade pip --quiet
-pip install -r requirements.txt --quiet
-pip install pyinstaller --quiet
+python -m pip install -r build\requirements-windows.lock --quiet
 
 if errorlevel 1 (
     echo.
     echo ERROR: pip install failed. Check your internet connection.
-    pause
+    if not defined NO_PAUSE pause
     exit /b 1
 )
 
@@ -55,7 +54,7 @@ pyinstaller --clean --noconfirm build\sparkybot.spec
 if errorlevel 1 (
     echo.
     echo ERROR: Build failed. See the output above.
-    pause
+    if not defined NO_PAUSE pause
     exit /b 1
 )
 
@@ -67,17 +66,11 @@ pyinstaller --clean --noconfirm build\sparkybot_updater.spec
 if errorlevel 1 (
     echo.
     echo ERROR: Updater build failed. See the output above.
-    pause
+    if not defined NO_PAUSE pause
     exit /b 1
 )
 
 copy /Y dist\SparkyBotUpdater.exe dist\SparkyBot\SparkyBotUpdater.exe >nul
-
-REM --- Copy GW2EI next to the exe (writable, outside _internal) ---
-echo.
-echo Copying GW2EI to dist\SparkyBot\GW2EI...
-if exist dist\SparkyBot\GW2EI rmdir /s /q dist\SparkyBot\GW2EI
-xcopy GW2EI dist\SparkyBot\GW2EI\ /E /I /Q /H >nul
 
 echo.
 echo ============================================================
@@ -87,7 +80,8 @@ echo.
 echo  BEFORE DISTRIBUTING, run the smoke checklist in
 echo  build\README-BUILD.md on a clean machine.
 echo.
-echo  To package for release:
-echo    zip -r SparkyBot-vX.Y.Z.zip dist\SparkyBot\
+echo  Build release artifacts only with:
+echo    build\release_windows.bat
 echo ============================================================
-pause
+if not defined NO_PAUSE pause
+endlocal

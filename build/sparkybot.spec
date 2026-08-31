@@ -58,29 +58,41 @@ a = Analysis(
     optimize=0,
 )
 
-# Drop binaries that Qt's PySide6 binary hooks collect but that this app
-# can never use.  Module excludes above remove the Qt modules; these two are
-# loose DLLs (software-OpenGL fallback + Direct2D platform plugin) that are
-# collected unconditionally, so strip them from the collected binary list.
-# COLLECT reads a.binaries, so filtering here removes them from the bundle.
-_DEAD_BINARIES = (
-    'opengl32sw.dll',   # 20.6 MB software GL fallback; ANGLE/DX path is used
-    'qdirect2d',        # Direct2D platform plugin; 'windows' platform plugin used
-)
+# Drop binaries that Qt's PySide6 hooks collect even after their Python
+# modules are excluded above.  COLLECT reads a.binaries, so filtering the
+# exact destination/source basenames here removes the dead DLLs from the
+# shipped bundle instead of merely removing their .pyd import modules.
+_DEAD_BINARY_NAMES = {
+    'opengl32sw.dll',          # software OpenGL fallback; ANGLE/DX is used
+    'qdirect2d.dll',           # unused Direct2D platform plugin
+    'qt6pdf.dll',
+    'qt6quick.dll',
+    'qt6qml.dll',
+    'qt6qmlmeta.dll',
+    'qt6qmlmodels.dll',
+    'qt6qmlworkerscript.dll',
+}
+
+
+def _is_dead_binary(entry):
+    return any(
+        os.path.basename(str(part)).casefold() in _DEAD_BINARY_NAMES
+        for part in entry[:2]
+    )
+
+
 a.binaries = [
     b for b in a.binaries
-    if not any(d in str(part).lower() for part in b[:2] for d in _DEAD_BINARIES)
+    if not _is_dead_binary(b)
 ]
 
 pyz = PYZ(a.pure)
 
-# v2.2.1: the thin-bootloader exe (exclude_binaries=True) is REVERTED.
-# A real user's Windows Defender blocked the v2.2.0 thin stub — the small
-# unsigned bootloader-only exe is a classic Defender false-positive shape —
-# while the fat exe layout below is exactly what v2.0.x/v2.1.0 shipped and
-# ran clean on that same machine. It double-ships the DLLs (exe + _internal)
-# and costs ~60MB; do not re-thin without proving the artifact launches
-# under Defender + SmartScreen on the operator's actual machine.
+# Keep the v2.2.1 fat-exe topology until a signed thin build passes the real
+# operator path.  This topology is not a SmartScreen fix: unsigned downloads
+# can still show "Unknown publisher" regardless of their PyInstaller layout.
+# It does duplicate DLL payload in the exe and _internal, so any future change
+# must be measured and exercised from an Internet-marked archive on Windows.
 exe = EXE(
     pyz,
     a.scripts,
@@ -91,7 +103,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -108,7 +120,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='SparkyBot',
 )

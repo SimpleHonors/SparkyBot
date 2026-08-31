@@ -1,156 +1,75 @@
-# SparkyBot Windows Build Kit
+# SparkyBot Windows release build
 
-How to build and distribute the SparkyBot `.exe` from this repository.
+`build\release_windows.bat` is the only supported release path. It builds the
+app and updater, runs the exact tagged source suite, creates a deterministic
+ZIP plus SHA-256 manifest, builds the installer, verifies the archive, and
+checks all three executables for Authenticode signatures.
 
-## Prerequisites (on the Windows build machine)
+## Prerequisites
 
-- Windows 10 or 11 (64-bit)
-- Python 3.11 or newer on PATH (`py -3.12` preferred, `python` fallback)
-- Internet access for `pip install`
-- ~500 MB free disk space for the virtual environment and build artifacts
+- 64-bit CPython 3.12 (`py -3.12`); v2.2.2 uses Python 3.12.8.
+- Inno Setup 6 with `iscc.exe` on `PATH`.
+- Internet access for the first locked dependency install.
+- A clean checkout whose `HEAD` is tagged `v<core/version.py VERSION>`.
+- A code-signing certificate and signing step before a public release.
 
-### Runtime dependency for end users (not the builder)
+Do not install UPX. Both specs explicitly disable it so the same source and
+lock file cannot silently produce different bytes on different build hosts.
 
-GW2EI (Guild Wars 2 Elite Insights Parser) is a .NET 8 application. Users must
-have the **.NET 8 Desktop Runtime** installed on their PC to run GW2EI.
-Alternatively, you can swap the `GW2EI/` folder in this repo with a
-**self-contained** GW2EI build (which bundles the runtime), so users need no
-separate .NET install. The self-contained build is provided on
-[GW2EI's releases page](https://github.com/baaron4/GW2-Elite-Insights-Parser/releases).
+## Build
 
-## Build steps
+From a Windows command prompt at the repository root:
 
-1. Clone this repository on a Windows machine.
-2. Double-click `build/build_windows.bat` **from the repo root**.
-3. Wait for the build to complete (~2–5 minutes).
-4. The compiled app is at `dist/SparkyBot/SparkyBot.exe`.
-
-### What the batch file does
-
-```
-[1/3] Creates a Python venv at build/venv/
-[2/3] Installs requirements.txt + PyInstaller into the venv
-[3/3] Runs pyinstaller --clean --noconfirm build/sparkybot.spec
+```bat
+build\release_windows.bat
 ```
 
-### Manual build (if you prefer the command line)
+The dependency environment is recreated from
+`build\requirements-windows.lock`. The command fails if tests, tag/version
+agreement, ZIP contents, installer construction, or signatures fail.
 
-```
-py -3.12 -m venv build\venv
-build\venv\Scripts\activate
-pip install -r requirements.txt pyinstaller
-pyinstaller --clean --noconfirm build\sparkybot.spec
-```
+Outputs are written to `dist\release\`:
 
-**Installer diet / spec changes:** before rebuilding after any spec edit,
-read `build/WINDOWS_REBUILD_NOTES.md` for the expected before/after sizes
-and the DLL presence checks.
+- `SparkyBot-vX.Y.Z.zip`
+- `SparkyBot-vX.Y.Z.manifest.json`
+- `SparkyBot-vX.Y.Z-Setup.exe`
+- `SHA256SUMS`
 
-## Output layout
+`GW2EI` is downloaded by SparkyBot after the user opts in. It is never copied
+into a release. Config files, logs, `.evtc`/`.zevtc` files, caches, and other
+runtime state are also excluded.
 
-```
-dist/
-  SparkyBot/
-    SparkyBot.exe            <-- launch this
-    _internal/               <-- bundled Python + deps + data
-      core/
-      prompts/
-      assets/
-      GW2EI/
-      ...
-```
+## Internal unsigned candidate
 
-The one-directory layout is deliberate (never `--onefile`). It starts faster,
-generates fewer AV false positives, and lets users inspect or replace the
-bundled GW2EI folder.
+Signing is the only durable fix for SmartScreen's "Unknown publisher" warning.
+Changing PyInstaller's fat/thin layout does not establish a publisher identity.
+The release driver therefore blocks unsigned publication by default.
 
-**GW2EI placement:** The `GW2EI/` folder is placed at `dist/SparkyBot/GW2EI/`
-(next to `SparkyBot.exe`), not inside `_internal/`. This makes it writable so
-the EI self-updater can replace files at runtime. The `gw2ei_dir()` helper in
-`core/apppaths.py` resolves to this location when frozen.
+For a clearly labelled internal test candidate only:
 
-## Installer
-
-SparkyBot ships an Inno Setup 6 installer (`build/sparkybot.iss`) that produces
-a single `SparkyBot-vX.Y.Z-setup.exe` for end users.
-
-### Prerequisites for building the installer
-
-- Inno Setup 6 installed on the Windows build machine.
-  - `winget install --id=JRSoftware.InnoSetup -e` (recommended)
-  - Or download `innosetup-6.*.exe` from https://jrsoftware.org/isdl.php and
-    run with `/VERYSILENT`.
-
-### Build command
-
-From the repo root, after `build_windows.bat` has completed:
-
-```
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build\sparkybot.iss
+```bat
+set SPARKYBOT_ALLOW_UNSIGNED_CANDIDATE=1
+build\release_windows.bat
 ```
 
-Output: `dist\SparkyBot-vX.Y.Z-setup.exe`
+That override does not make the files safe to publish and does not count as a
+SmartScreen pass.
 
-### Smoke checklist additions (installer)
+## Required operator-layer smoke
 
-- [ ] Run `SparkyBot-vX.Y.Z-setup.exe /VERYSILENT /DIR=C:\Temp\SparkyBotTest`
-      — installs without UI to a temp directory.
-- [ ] Run `C:\Temp\SparkyBotTest\SparkyBot.exe` — app launches.
-- [ ] Uninstall via `"C:\Temp\SparkyBotTest\unins000.exe" /VERYSILENT` — temp
-      directory is removed.
+After the scripted gate passes, follow
+[`WINDOWS_INTERACTIVE_SMOKE.md`](WINDOWS_INTERACTIVE_SMOKE.md) using the exact
+ZIP copied back from the release share. Source-driven/offscreen widget grabs,
+unit tests, hashes, and a process-alive check are not substitutes for packaged
+pixels in a logged-in Windows desktop.
 
-### Packaging for distribution
+The Setup installer must also complete a silent install/launch/uninstall
+round-trip before publication:
 
-Zip the entire `dist/SparkyBot/` directory:
-
-```
-zip -r SparkyBot-vX.Y.Z.zip dist/SparkyBot/
-```
-
-Users extract the zip anywhere and run `SparkyBot.exe`. No installer or admin
-rights needed.
-
-**Important:** `config.properties` is created next to `SparkyBot.exe` on first
-run (not inside `_internal/`). When zipping for distribution, do NOT include a
-`config.properties` — let each user generate their own.
-
-## Qt multimedia plugins
-
-PySide6's QtMultimedia module (used for TTS audio playback) requires platform
-media service plugins. These DLLs live under `_internal/PySide6/plugins/`
-
-If audio playback fails on a target machine, confirm the following files exist
-in the dist directory:
-
-```
-_internal/PySide6/plugins/multimedia/windowsmediaplugin.dll
-_internal/PySide6/plugins/audio/qtaudio_windows.dll
+```bat
+SparkyBot-vX.Y.Z-Setup.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
 ```
 
-## Smoke checklist
-
-Run **every item** on a **clean machine** (no Python installed, no repo checkout)
-after every build:
-
-- [ ] Launch `SparkyBot.exe` — splash/setup wizard appears within ~3 seconds.
-- [ ] The Settings window opens from the tray icon.
-- [ ] GW2EI download works (Settings → Elite Insights → Download/Update).
-- [ ] TTS test plays audio (Settings → TTS → Test).
-- [ ] Drop a sample `.evtc` log into the watched folder — watcher picks it up
-      and a fight report appears.
-- [ ] Raid Report page generates without error.
-- [ ] Close the app — tray icon disappears, process exits cleanly.
-- [ ] Relaunch — `config.properties` is found and settings are preserved.
-
-## Known issues
-
-- **AV false positives:** PyInstaller executables (even one-directory builds)
-  are occasionally flagged by antivirus software. This is a well-known
-  industry-wide issue with Python-packaged executables, not specific to
-  SparkyBot. A future code-signing certificate will eliminate most of these.
-- **First-run delay:** The setup wizard downloads GW2EI on first launch
-  (~50 MB). Release builds intentionally leave the writable `GW2EI/` folder
-  empty so every new install fetches the current parser.
-- **Qt Multimedia DLLs:** On some Windows editions the required media
-  plugin DLLs may be stripped by PyInstaller. If TTS audio playback fails,
-  check for the files listed in the "Qt multimedia plugins" section above.
+Record every gate as `PASS`, `FAIL`, or `SKIPPED — reason` in the candidate's
+build notes. A skipped operator-layer check means the candidate is not
+user-verified.

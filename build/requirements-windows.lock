@@ -1,0 +1,36 @@
+# Exact environment used to build v2.2.1 on Windows Server 2025.
+# Python: CPython 3.12.8 (64-bit). Refresh deliberately and review the
+# release-manifest diff whenever any pin changes.
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+altgraph==0.17.5
+attrs==26.1.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+colorama==0.4.6
+edge-tts==7.2.8
+frozenlist==1.8.0
+idna==3.19
+iniconfig==2.1.0
+multidict==6.7.1
+packaging==26.3
+pefile==2024.8.26
+pluggy==1.6.0
+propcache==0.5.2
+Pygments==2.19.2
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+pytest==8.4.2
+pywin32-ctypes==0.2.3
+requests==2.34.2
+setuptools==84.0.0
+shiboken6==6.11.2
+tabulate==0.10.0
+typing_extensions==4.16.0
+urllib3==2.7.0
+watchdog==6.0.0
+yarl==1.24.5

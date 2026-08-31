@@ -112,11 +112,14 @@ class RaidReportTab(QWidget):
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
-        # 3. Chip row + found count
-        chip_and_found = QHBoxLayout()
+        # 3. Quick-pick row.  Keep the discovery/selection count on its own
+        # line: the packaged default window leaves about 400 px for this page,
+        # and placing the count after all four chips clipped it to
+        # "No fights foun..." on a real Windows desktop.
+        quick_picks = QHBoxLayout()
         pick_label = QLabel("Quick pick:")
         theme.mark_hint(pick_label)
-        chip_and_found.addWidget(pick_label)
+        quick_picks.addWidget(pick_label)
 
         self._chip_recent = QPushButton("Last 12 hours")
         self._chip_recent.setToolTip(
@@ -125,7 +128,7 @@ class RaidReportTab(QWidget):
         )
         theme.set_widget_class(self._chip_recent, "chip")
         self._chip_recent.clicked.connect(lambda: self._apply_chip("recent"))
-        chip_and_found.addWidget(self._chip_recent)
+        quick_picks.addWidget(self._chip_recent)
 
         self._chip_today = QPushButton("Today")
         self._chip_today.setToolTip(
@@ -133,7 +136,7 @@ class RaidReportTab(QWidget):
         )
         theme.set_widget_class(self._chip_today, "chip")
         self._chip_today.clicked.connect(lambda: self._apply_chip("today"))
-        chip_and_found.addWidget(self._chip_today)
+        quick_picks.addWidget(self._chip_today)
 
         self._chip_all = QPushButton("All")
         self._chip_all.setToolTip(
@@ -141,7 +144,7 @@ class RaidReportTab(QWidget):
         )
         theme.set_widget_class(self._chip_all, "chip")
         self._chip_all.clicked.connect(lambda: self._apply_chip("all"))
-        chip_and_found.addWidget(self._chip_all)
+        quick_picks.addWidget(self._chip_all)
 
         self._chip_none = QPushButton("None")
         self._chip_none.setToolTip(
@@ -149,14 +152,13 @@ class RaidReportTab(QWidget):
         )
         theme.set_widget_class(self._chip_none, "chip")
         self._chip_none.clicked.connect(lambda: self._apply_chip("none"))
-        chip_and_found.addWidget(self._chip_none)
+        quick_picks.addWidget(self._chip_none)
+        quick_picks.addStretch()
+        layout.addLayout(quick_picks)
 
-        chip_and_found.addSpacing(12)
         self._found_label = QLabel("")
         theme.mark_hint(self._found_label)
-        chip_and_found.addWidget(self._found_label)
-        chip_and_found.addStretch()
-        layout.addLayout(chip_and_found)
+        layout.addWidget(self._found_label)
 
         # Empty-state bridge: raw logs first go through Process Files, then
         # appear here as pickable fights. Do not leave a blank table with no

@@ -2,10 +2,30 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.2.2] — 2026-08-30
+
+### Fixed
+
+- Fight Summary now shows its full found/selected status at the shipped
+  default window width instead of clipping the last words.
+- Removed six unused Qt Quick/QML/PDF runtime DLLs that the previous build
+  documentation said were absent but the v2.2.0 and v2.2.1 ZIPs still shipped.
+- Restored the Windows installer build and made its version come from the same
+  source as the app and changelog.
+
+### Release safety
+
+- Added deterministic ZIP packaging, per-file SHA-256 manifests, privacy and
+  runtime-file checks, exact Windows dependency pins, and an archive verifier.
+- Publishing now fails closed when the EXE, updater, or installer is unsigned.
+  An explicit override exists only for clearly labelled internal test builds;
+  unsigned builds can still show Windows SmartScreen's "Unknown publisher."
+
 ## [2.2.1] — 2026-08-30
 
-v2.2.0 was pulled before publication: a real machine's Windows Defender
-blocked its slimmed-down launcher, and the Setup Wizard shipped broken.
+v2.2.0 was pulled before publication: Windows SmartScreen blocked its unsigned
+launcher as an unknown publisher on a real machine, and the Setup Wizard
+shipped broken.
 
 ### Fixed
 
@@ -16,9 +36,9 @@ blocked its slimmed-down launcher, and the Setup Wizard shipped broken.
 - Help "?" buttons are absent from this build. They pointed at help pages
   that are not published yet, so every click opened a 404. They return
   only once the pages are live (guarded by a shipped-default test).
-- The launcher is back to the proven full-size executable shipped since
-  v2.0; the v2.2.0 slim launcher was a false-positive magnet for Windows
-  Defender. The unused-Qt-module trimming stays.
+- The launcher is back to the full-size executable topology shipped since
+  v2.0. This did not sign the executable or resolve SmartScreen publisher
+  reputation; the unused-Qt-module trimming stays.
 
 ## [2.2.0] — 2026-08-30 (WITHDRAWN — do not use)
 

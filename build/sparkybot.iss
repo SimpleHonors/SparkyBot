@@ -2,12 +2,16 @@
 ;
 ; Build order:
 ;   1. Run build\build_windows.bat first (produces dist\SparkyBot\)
-;   2. From repo root: iscc build\sparkybot.iss
+;   2. From repo root, inject the canonical version:
+;      iscc /DMyAppVersion=2.2.2 build\sparkybot.iss
 ;
-; AppVersion must track core/version.py — update the literal below on every release.
+; build\release_windows.bat derives this value from core/version.py.
+
+#ifndef MyAppVersion
+  #error MyAppVersion is required. Use build\release_windows.bat.
+#endif
 
 #define MyAppName "SparkyBot"
-#define MyAppVersion "2.0.2"
 #define MyAppPublisher "SimpleHonors"
 #define MyAppURL "https://github.com/SimpleHonors/SparkyBot"
 #define MyAppExeName "SparkyBot.exe"
@@ -28,8 +32,8 @@ DefaultDirName={sd}\{#MyAppName}
 ; existing installs must move to C:\SparkyBot on upgrade.
 UsePreviousAppDir=no
 PrivilegesRequired=admin
-OutputDir=..\dist
-OutputBaseFilename=SparkyBot-v{#MyAppVersion}-setup
+OutputDir=..\dist\release
+OutputBaseFilename=SparkyBot-v{#MyAppVersion}-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
