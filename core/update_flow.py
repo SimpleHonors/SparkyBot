@@ -199,7 +199,9 @@ class UpdateFlow(QObject):
                 ei = EIUpdater(invoker.get_gw2ei_folder())
                 available, version, url = ei.check_for_update()
                 if available and url:
-                    current = ei.get_current_version() or "unknown"
+                    current = ei.get_current_version()
+                    if not current:
+                        return
                     self.sig_ei_launch_available.emit(current, version, url)
 
         except Exception as e:

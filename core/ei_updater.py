@@ -62,6 +62,9 @@ class EIUpdater:
 
             # Get current version
             current_version = self.get_current_version()
+            if not current_version:
+                logger.info("Elite Insights is not installed; update prompt suppressed")
+                return False, latest_version, ""
             if current_version and self._compare_versions(latest_version, current_version) <= 0:
                 logger.info(f"Already on latest version: {current_version}")
                 self._save_version(current_version)  # Ensure version file exists for future reads

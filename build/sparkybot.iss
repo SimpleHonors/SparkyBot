@@ -54,7 +54,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\SparkyBot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; release_windows.bat creates this tree through package_release.py's privacy filter.
+Source: "..\dist\release-staging\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

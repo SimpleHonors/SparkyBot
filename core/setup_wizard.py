@@ -1187,13 +1187,16 @@ class GW2EIPage(QWizardPage):
             invoker = GW2EIInvoker(self.config)
             updater = EIUpdater(invoker.get_gw2ei_folder())
             has_update, latest_version, _ = updater.check_for_update()
-            current = updater.get_current_version() or "unknown"
+            current = updater.get_current_version()
 
-            if has_update:
+            if has_update and current:
                 msg = f"⬆ Update available: v{current} → v{latest_version}"
                 btn = "Update GW2 Elite Insights"
             else:
-                msg = f"GW2EI v{current} is up to date"
+                msg = (
+                    f"GW2EI v{current} is up to date"
+                    if current else "GW2EI is installed (version unavailable)"
+                )
                 btn = "Re-download GW2 Elite Insights"
 
             self.sig_version_status.emit(msg, btn)

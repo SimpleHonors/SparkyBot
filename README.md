@@ -94,7 +94,7 @@ Discord gets color-coded code blocks with configurable guild icons; Twitch gets 
 
 ### Install
 
-1. Download `SparkyBot-v2.0.2-setup.exe` from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases).
+1. Download `SparkyBot-v2.2.2-Setup.exe` from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases).
 2. Double-click it.
 3. Launch SparkyBot.
 

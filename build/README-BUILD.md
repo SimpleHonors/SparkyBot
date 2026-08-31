@@ -11,7 +11,8 @@ checks all three executables for Authenticode signatures.
 - Inno Setup 6 with `iscc.exe` on `PATH`.
 - Internet access for the first locked dependency install.
 - A clean checkout whose `HEAD` is tagged `v<core/version.py VERSION>`.
-- A code-signing certificate and signing step before a public release.
+- A code-signing command before a public release. Set `SPARKYBOT_SIGN_COMMAND`
+  to a command that accepts one PE file path and fails if signing fails.
 
 Do not install UPX. Both specs explicitly disable it so the same source and
 lock file cannot silently produce different bytes on different build hosts.
@@ -35,13 +36,17 @@ Outputs are written to `dist\release\`:
 - `SparkyBot-vX.Y.Z-Setup.exe`
 - `SHA256SUMS`
 
-`SHA256SUMS` is finalized only after Inno Setup succeeds. It must contain an
+`SHA256SUMS` is finalized only after signing and Authenticode verification. It must contain an
 exact digest for the ZIP, manifest, and installer; a missing, extra, or changed
 artifact fails the release gate.
 
 `GW2EI` is downloaded by SparkyBot after the user opts in. It is never copied
 into a release. Config files, logs, `.evtc`/`.zevtc` files, caches, and other
 runtime state are also excluded.
+
+The ZIP and installer are both built from `dist\release-staging`, which is
+created by the same privacy filter. Do not point Inno Setup back at the raw
+PyInstaller output.
 
 ## Internal unsigned candidate
 

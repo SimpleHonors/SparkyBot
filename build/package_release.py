@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 from collections.abc import Iterable
 from typing import Any
 import zipfile
@@ -27,18 +28,25 @@ _EXCLUDED_DIRS = {
     "logs",
     "player-data",
     "player_data",
+    "cache",
+    "caches",
+    "session-history",
+    "session_history",
 }
 _EXCLUDED_NAMES = {
     ".env",
     "config.properties",
     "config.properties.bak",
+    ".update_pending",
 }
 _EXCLUDED_SUFFIXES = {
     ".evtc",
     ".zevtc",
     ".log",
     ".pyc",
+    ".jsonl",
 }
+_RUNTIME_NAME_MARKERS = ("calibration", "cooldown", "session", "vocabulary")
 
 
 @dataclass(frozen=True)
@@ -85,12 +93,14 @@ def write_checksums(paths: Iterable[Path], checksums_path: Path) -> dict[str, st
     return digests
 
 
-def _is_runtime_state(relative: Path) -> bool:
+def is_runtime_state(relative: Path) -> bool:
     lowered_parts = tuple(part.casefold() for part in relative.parts)
     if any(part in _EXCLUDED_DIRS for part in lowered_parts[:-1]):
         return True
     name = lowered_parts[-1]
     if name in _EXCLUDED_NAMES:
+        return True
+    if any(marker in name for marker in _RUNTIME_NAME_MARKERS) and name.endswith(".json"):
         return True
     return any(name.endswith(suffix) for suffix in _EXCLUDED_SUFFIXES)
 
@@ -101,7 +111,7 @@ def _source_files(dist_dir: Path) -> list[tuple[Path, PurePosixPath]]:
         relative = source.relative_to(dist_dir)
         if source.is_symlink():
             raise ValueError(f"release input contains a symbolic link: {relative}")
-        if not source.is_file() or _is_runtime_state(relative):
+        if not source.is_file() or is_runtime_state(relative):
             continue
         archive_name = PurePosixPath("SparkyBot", *relative.parts)
         files.append((source, archive_name))
@@ -122,6 +132,7 @@ def create_release(
     dist_dir: Path,
     output_dir: Path,
     version: str,
+    staging_dir: Path | None = None,
 ) -> ReleaseArtifacts:
     """Package *dist_dir* and return paths plus a content manifest."""
     dist_dir = Path(dist_dir).resolve()
@@ -136,6 +147,17 @@ def create_release(
         raise ValueError(f"PyInstaller output contains no packageable files: {dist_dir}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    if staging_dir is not None:
+        staging_dir = Path(staging_dir).resolve()
+        if staging_dir == dist_dir or dist_dir in staging_dir.parents:
+            raise ValueError("staging directory must be outside the release input")
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+        for source, archive_name in sources:
+            relative = Path(*archive_name.parts[1:])
+            destination = staging_dir / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
     archive_path = output_dir / f"SparkyBot-v{version}.zip"
     manifest_path = output_dir / f"SparkyBot-v{version}.manifest.json"
     checksums_path = output_dir / "SHA256SUMS"
@@ -207,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dist-dir", type=Path, default=Path("dist/SparkyBot"))
     parser.add_argument("--output-dir", type=Path, default=Path("dist/release"))
     parser.add_argument("--version")
+    parser.add_argument("--staging-dir", type=Path)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     args = parser.parse_args(argv)
 
@@ -215,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         dist_dir=args.dist_dir,
         output_dir=args.output_dir,
         version=version,
+        staging_dir=args.staging_dir,
     )
     print(f"archive={result.archive_path}")
     print(f"manifest={result.manifest_path}")

@@ -16,6 +16,11 @@ import subprocess
 from typing import Any
 import zipfile
 
+try:
+    from build.package_release import is_runtime_state
+except ModuleNotFoundError:
+    from package_release import is_runtime_state
+
 
 _ARCHIVE_RE = re.compile(r"^SparkyBot-v(?P<version>[^/]+)\.zip$")
 _CHANGELOG_RE = re.compile(r"^## \[(?P<version>[^]]+)]", re.MULTILINE)
@@ -269,6 +274,9 @@ def verify_archive(
                 problems.append(f"runtime configuration must not ship: {name}")
             if basename.endswith((".evtc", ".zevtc")):
                 problems.append(f"player log data must not ship: {name}")
+            relative = Path(*path.parts[1:])
+            if is_runtime_state(relative):
+                problems.append(f"runtime state must not ship: {name}")
 
         bad_crc = archive.testzip()
         if bad_crc:

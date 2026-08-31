@@ -10,6 +10,7 @@ import zipfile
 import pytest
 
 from build import finalize_release, package_release, verify_release
+from core.ei_updater import EIUpdater
 
 
 def _write(path: Path, payload: bytes = b"fixture") -> None:
@@ -40,6 +41,13 @@ def test_package_is_reproducible_and_excludes_runtime_state(tmp_path):
     _write(dist / "GW2EI" / "GuildWars2EliteInsights.exe")
     _write(dist / "config.properties", b"private")
     _write(dist / "sample.evtc", b"player data")
+    _write(dist / "session-history" / "turns.json", b"private")
+    _write(dist / "calibration.json", b"private")
+    _write(dist / "state.jsonl", b"private")
+    _write(dist / "vocabulary.json", b"private")
+    _write(dist / "cooldown_state.json", b"private")
+    _write(dist / "cache" / "response.bin", b"private")
+    _write(dist / ".update_pending", b"private")
 
     first = package_release.create_release(
         dist_dir=dist,
@@ -62,6 +70,54 @@ def test_package_is_reproducible_and_excludes_runtime_state(tmp_path):
     assert not any("GW2EI" in name for name in names)
     assert not any(name.endswith("config.properties") for name in names)
     assert not any(name.lower().endswith((".evtc", ".zevtc")) for name in names)
+    forbidden = (
+        "session-history",
+        "calibration",
+        ".jsonl",
+        "vocabulary",
+        "cooldown",
+        "/cache/",
+        ".update_pending",
+    )
+    assert not any(
+        any(marker in name.casefold() for marker in forbidden) for name in names
+    )
+
+
+def test_filtered_staging_tree_matches_archive_inputs(tmp_path):
+    dist = _fake_dist(tmp_path)
+    _write(dist / "session_history" / "private.json")
+    staging = tmp_path / "installer-input"
+    release = package_release.create_release(
+        dist_dir=dist,
+        output_dir=tmp_path / "release",
+        version="9.8.7",
+        staging_dir=staging,
+    )
+
+    staged = sorted(
+        path.relative_to(staging).as_posix()
+        for path in staging.rglob("*")
+        if path.is_file()
+    )
+    archived = sorted(
+        entry["path"].removeprefix("SparkyBot/")
+        for entry in release.manifest["files"]
+    )
+    assert staged == archived
+    assert not (staging / "session_history").exists()
+
+
+def test_missing_elite_insights_install_does_not_offer_update(tmp_path, monkeypatch):
+    class Response:
+        headers = {"Location": "/baaron4/GW2-Elite-Insights-Parser/releases/tag/v3.27.1.0"}
+
+    monkeypatch.setattr(
+        "core.ei_updater.requests.get", lambda *args, **kwargs: Response()
+    )
+    updater = EIUpdater(tmp_path / "GW2EI")
+
+    assert updater.check_for_update() == (False, "3.27.1.0", "")
 
 
 def test_verifier_rejects_dead_qt_dll(tmp_path):
@@ -138,6 +194,15 @@ def test_windows_release_driver_builds_both_artifacts_and_runs_verifier():
     assert "-m pytest" in driver
     assert "--require-tag" in driver
     assert "verify_authenticode.ps1" in driver
+    assert "sparkybot_sign_command" in driver
+    assert "--staging-dir dist\\release-staging" in driver
+    assert driver.index("verify_authenticode.ps1") < driver.index("finalize_release")
+    authenticode = (repo_root / "build/verify_authenticode.ps1").read_text(
+        encoding="utf-8"
+    ).casefold()
+    assert "[switch] $allowunsigned" in authenticode
+    assert "signaturestatus]::notsigned" in authenticode
+    assert "mixed signed and unsigned" in authenticode
     assert "-m build.finalize_release" in driver
     assert "--checksums" in driver
     assert "iscc" in driver and "/dmyappversion=" in driver
