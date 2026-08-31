@@ -1144,6 +1144,12 @@ def main():
         action="store_true",
         help="Save AI analysis prompts to JSON files for debugging"
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Developer mode: unlocks FULL settings export/import "
+             "(secrets included) in the File menu"
+    )
 
     args = parser.parse_args()
     setup_logging(args.verbose)
@@ -1151,6 +1157,9 @@ def main():
     # Set debug flag for AI prompt logging if requested
     if args.debug_ai_prompt:
         os.environ["SPARKY_DEBUG_AI_PROMPT"] = "1"
+
+    if args.dev:
+        os.environ["SPARKY_DEV_MODE"] = "1"
 
     # Load configuration
     config = Config(args.config) if args.config else Config()

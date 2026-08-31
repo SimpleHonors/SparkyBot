@@ -251,6 +251,23 @@ class MainWindow(QMainWindow):
         self.action_export_competitor_config.triggered.connect(
             self._export_competitor_config
         )
+        # Dev-mode-only surface: these actions are ABSENT (not grayed)
+        # unless the app was launched with --dev.
+        from core import dev_settings_transfer
+        if dev_settings_transfer.dev_mode_active():
+            file_menu.addSeparator()
+            self.action_dev_export_full = file_menu.addAction(
+                "Export FULL Settings (dev — includes secrets)..."
+            )
+            self.action_dev_export_full.triggered.connect(
+                self._dev_export_full_settings
+            )
+            self.action_dev_import_full = file_menu.addAction(
+                "Import FULL Settings (dev)..."
+            )
+            self.action_dev_import_full.triggered.connect(
+                self._dev_import_full_settings
+            )
         file_menu.addSeparator()
         self.action_settings_dialog = file_menu.addAction("&Settings...")
         self.action_settings_dialog.setShortcut(QKeySequence("Ctrl+,"))
@@ -291,6 +308,82 @@ class MainWindow(QMainWindow):
         )
         self.action_about = help_menu.addAction("&About SparkyBot")
         self.action_about.triggered.connect(self._show_about)
+
+    def _dev_export_full_settings(self, checked=False):
+        """Dev-only: dump the complete config, secrets and all."""
+        from core import dev_settings_transfer as devst
+        proceed = QMessageBox.warning(
+            self,
+            "Export EVERYTHING — including secrets?",
+            "This file will contain your complete setup in plain text:\n"
+            "Discord webhook URLs, API keys, and tokens included.\n\n"
+            "Anyone holding it can post to your Discord and spend your "
+            "API credits. Keep it private, and delete it when done.\n\n"
+            "To share settings with another guild, use "
+            "“Create Guild Setup File” instead — it strips "
+            "secrets on purpose.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if proceed != QMessageBox.StandardButton.Yes:
+            return
+        documents = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DocumentsLocation
+        )
+        start_dir = Path(documents) if documents else Path.home()
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export FULL Settings (includes secrets)",
+            str(start_dir / devst.SUGGESTED_FILENAME),
+            "SparkyBot Full Settings (*.ini)",
+        )
+        if not path:
+            return
+        try:
+            target = devst.export_full_settings(self.config, Path(path))
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Failed", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Full Settings Exported",
+            f"Written to {target}.\n\nThis file contains secrets — "
+            "keep it private and delete it when you're done with it.",
+        )
+
+    def _dev_import_full_settings(self, checked=False):
+        """Dev-only: replace the complete config from a full export."""
+        from core import dev_settings_transfer as devst
+        proceed = QMessageBox.warning(
+            self,
+            "Replace ALL settings — including secrets?",
+            "This replaces your entire setup with the file's contents: "
+            "Discord webhooks, API keys, tokens, everything.\n\n"
+            "Only import a file you exported yourself. There is no undo.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if proceed != QMessageBox.StandardButton.Yes:
+            return
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Import FULL Settings",
+            "",
+            "SparkyBot Full Settings (*.ini);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            applied = devst.import_full_settings(self.config, Path(path))
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Full Settings Not Imported", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Full Settings Imported",
+            f"{applied} settings applied and saved.\n\n"
+            "Restart SparkyBot so every part of the app picks them up.",
+        )
 
     def _import_guild_config(self, checked=False):
         """Validate and apply a deliberately limited guild config bundle."""
