@@ -312,3 +312,44 @@ def test_exact_tag_gate_rejects_a_dirty_checkout(tmp_path):
             require_tag=True,
             allow_untracked=True,
         )
+
+
+def test_exact_tag_gate_accepts_only_explicit_versioned_candidate_tag(tmp_path):
+    git = verify_release.find_git_executable()
+    repo = tmp_path / "repo"
+    _write(repo / "core/version.py", b'VERSION = "9.8.7"\n')
+    _write(repo / "CHANGELOG.md", b"## [9.8.7] - test\n")
+    _write(
+        repo / "build/sparkybot.iss",
+        b"#ifndef MyAppVersion\n#error inject version\n#endif\n",
+    )
+    subprocess.run([git, "init", "-q", repo], check=True)
+    subprocess.run([git, "-C", repo, "add", "."], check=True)
+    subprocess.run(
+        [
+            git,
+            "-C",
+            repo,
+            "-c",
+            "user.name=Release Test",
+            "-c",
+            "user.email=release@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    subprocess.run([git, "-C", repo, "tag", "v9.8.7-build9"], check=True)
+
+    assert verify_release.verify_repository_version(
+        repo,
+        require_tag=True,
+        release_tag="v9.8.7-build9",
+    ) == "9.8.7"
+    with pytest.raises(verify_release.ReleaseVerificationError, match="candidate tag"):
+        verify_release.verify_repository_version(
+            repo,
+            require_tag=True,
+            release_tag="v9.8.7-rc1",
+        )

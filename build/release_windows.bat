@@ -1,9 +1,11 @@
 @echo off
 setlocal EnableExtensions
 pushd "%~dp0\.."
+set "RELEASE_TAG_ARG="
+if defined SPARKYBOT_RELEASE_TAG set "RELEASE_TAG_ARG=--release-tag %SPARKYBOT_RELEASE_TAG%"
 
 echo [1/10] Verifying a clean exact release tag before generating outputs...
-py -3.12 build\verify_release.py --repo-root . --require-tag --repo-only
+py -3.12 build\verify_release.py --repo-root . --require-tag %RELEASE_TAG_ARG% --repo-only
 if errorlevel 1 goto :fail
 
 echo [2/10] Building the locked PyInstaller runtime...
@@ -80,6 +82,7 @@ build\venv\Scripts\python.exe build\verify_release.py ^
     --repo-root . ^
     --version %APP_VERSION% ^
     --require-tag ^
+    %RELEASE_TAG_ARG% ^
     --allow-untracked ^
     --archive dist\release\SparkyBot-v%APP_VERSION%.zip ^
     --manifest dist\release\SparkyBot-v%APP_VERSION%.manifest.json ^

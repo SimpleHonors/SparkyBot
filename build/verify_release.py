@@ -129,6 +129,7 @@ def verify_repository_version(
     expected_version: str | None = None,
     require_tag: bool = False,
     allow_untracked: bool = False,
+    release_tag: str | None = None,
 ) -> str:
     repo_root = Path(repo_root).resolve()
     source_version = _source_version(repo_root / "core/version.py")
@@ -184,7 +185,13 @@ def verify_repository_version(
             text=True,
         )
         tags = set(completed.stdout.split())
-        expected_tag = f"v{source_version}"
+        expected_tag = release_tag or f"v{source_version}"
+        if release_tag and not re.fullmatch(
+            rf"v{re.escape(source_version)}-build[1-9][0-9]*", release_tag
+        ):
+            problems.append(
+                f"candidate tag must match v{source_version}-buildN: {release_tag!r}"
+            )
         if expected_tag not in tags:
             problems.append(
                 f"HEAD is not tagged {expected_tag}; tags at HEAD: {sorted(tags)}"
@@ -370,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version")
     parser.add_argument("--require-tag", action="store_true")
     parser.add_argument("--allow-untracked", action="store_true")
+    parser.add_argument("--release-tag")
     parser.add_argument("--repo-only", action="store_true")
     parser.add_argument("--previous-manifest", type=Path)
     parser.add_argument("--diff-output", type=Path)
@@ -380,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_version=args.version,
         require_tag=args.require_tag,
         allow_untracked=args.allow_untracked,
+        release_tag=args.release_tag,
     )
     if args.repo_only:
         print(f"PASS clean-tag-version={version}")

@@ -58,6 +58,7 @@ For a clearly labelled internal test candidate only:
 
 ```bat
 set SPARKYBOT_ALLOW_UNSIGNED_CANDIDATE=1
+set SPARKYBOT_RELEASE_TAG=vX.Y.Z-buildN
 build\release_windows.bat
 ```
 
