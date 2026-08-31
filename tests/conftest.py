@@ -21,7 +21,6 @@ _SESSION_QT_APP = None
 def _keep_qt_application_alive():
     global _SESSION_QT_APP
     try:
-        from PySide6.QtCore import QCoreApplication, QEvent
         from PySide6.QtWidgets import QApplication
     except ImportError:
         yield
@@ -30,5 +29,4 @@ def _keep_qt_application_alive():
     _SESSION_QT_APP = QApplication.instance() or QApplication([])
     yield
 
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     _SESSION_QT_APP.processEvents()

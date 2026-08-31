@@ -5,6 +5,7 @@ deliberately-blocked slow dependency (log-folder scan on a network share,
 pip install) finishes on a worker thread and lands via signal.
 """
 
+import gc
 import os
 import threading
 import time
@@ -89,7 +90,10 @@ def test_raid_report_tab_constructs_before_slow_discover_completes(qt_app):
         assert len(tab.selected_logs()) == len(logs)
     finally:
         release.set()
-        tab.deleteLater()
+        tab.hide()
+        del tab
+        gc.collect()
+        qt_app.processEvents()
 
 
 def test_raid_report_tab_rescan_returns_before_scan_and_preserves_ticks(qt_app):
@@ -119,7 +123,10 @@ def test_raid_report_tab_rescan_returns_before_scan_and_preserves_ticks(qt_app):
                            {l.path for l in tab.selected_logs()} == checked_before)
     finally:
         release.set()
-        tab.deleteLater()
+        tab.hide()
+        del tab
+        gc.collect()
+        qt_app.processEvents()
 
 
 def test_run_counter_refresh_returns_before_slow_folder_scan(qt_app, tmp_path):
@@ -164,7 +171,10 @@ def test_run_counter_refresh_returns_before_slow_folder_scan(qt_app, tmp_path):
         assert window._run_scan_inflight is False
     finally:
         release.set()
-        window.deleteLater()
+        window.hide()
+        del window
+        gc.collect()
+        qt_app.processEvents()
 
 
 class _FakeRunSession:
@@ -217,7 +227,10 @@ def test_end_run_click_returns_before_slow_selection_scan(qt_app, tmp_path):
         assert window.run_status_label.text() == "No run in progress."
     finally:
         release.set()
-        window.deleteLater()
+        window.hide()
+        del window
+        gc.collect()
+        qt_app.processEvents()
 
 
 def test_get_log_folders_exists_check_is_ttl_cached(tmp_path, monkeypatch):
@@ -290,4 +303,7 @@ def test_wizard_pip_install_runs_off_gui_thread(qt_app, monkeypatch):
         assert "fakepkg" in page.details_label.text()
     finally:
         release.set()
-        page.deleteLater()
+        page.hide()
+        del page
+        gc.collect()
+        qt_app.processEvents()

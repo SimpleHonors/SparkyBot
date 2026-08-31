@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 
 import pytest
@@ -41,4 +42,7 @@ def test_found_count_is_not_clipped_at_packaged_default_width(qt_app):
         f"found-count label is clipped: {tab._found_label.width()}px available, "
         f"{needed}px needed"
     )
-    tab.close()
+    tab.hide()
+    del tab
+    gc.collect()
+    qt_app.processEvents()
