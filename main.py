@@ -340,8 +340,36 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                 icon_filename=icon_path  # guild icon for thumbnail
             )
 
+            # Optional dps.report link (additive; a failed upload never
+            # blocks or breaks the fight post).
+            from core import dpsreport
+            dpsreport_active = dpsreport.links_active(config)
+
+            if (dpsreport_active
+                    and config.dpsreport_timing == dpsreport.TIMING_TOGETHER):
+                # User explicitly chose the slower wait-and-post-together
+                # mode: upload first, bake the link into the fight post.
+                permalink = dpsreport.upload_log(file_path)
+                if permalink and embeds:
+                    embeds[0].setdefault('fields', []).append({
+                        'name': 'dps.report',
+                        'value': permalink,
+                        'inline': False,
+                    })
+
             # Send fight report immediately — no waiting on AI
             success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
+
+            if (dpsreport_active and success_count
+                    and config.dpsreport_timing == dpsreport.TIMING_LINK_LATER):
+                # Post-now-link-later mode: fight post is already out;
+                # follow up with the link once the upload finishes (same
+                # deferred-post pattern as the AI commentary embed below).
+                permalink = dpsreport.upload_log(file_path)
+                if permalink:
+                    discord.send_to_all(
+                        message=f"dps.report — {report.zone}: {permalink}")
+                    _emit_event('report', "dps.report link posted")
 
         # AI analysis runs AFTER report is already posted
         ai_text = None

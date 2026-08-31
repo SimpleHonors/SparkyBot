@@ -768,6 +768,46 @@ class SettingsWindow(QWidget):
         form.addRow("", self.large_upload_after)
 
         layout.addWidget(group)
+
+        # dps.report links — self-contained group box so the real Settings
+        # dialog can borrow it wholesale (same pattern as theme_group_box).
+        self.dpsreport_group_box = QGroupBox("dps.report links")
+        dr_layout = QVBoxLayout(self.dpsreport_group_box)
+        self.dpsreport_enabled = QCheckBox(
+            "Add a dps.report link to each fight post")
+        self.dpsreport_enabled.setToolTip(
+            "Uploads each fight's combat log to the public dps.report "
+            "website and shares the resulting page link on Discord. "
+            "SparkyBot's own stats are unaffected either way."
+        )
+        dr_layout.addWidget(self.dpsreport_enabled)
+        self.dpsreport_link_later = QRadioButton(
+            "Post fights right away — the link follows in a second message "
+            "when the upload finishes")
+        self.dpsreport_link_later.setToolTip(
+            "Fight posts stay as fast as they are now. The dps.report link "
+            "arrives in its own follow-up message."
+        )
+        self.dpsreport_together = QRadioButton(
+            "Wait for the upload and post everything together — fight posts "
+            "will arrive noticeably later")
+        self.dpsreport_together.setToolTip(
+            "The link is part of the fight post itself, but every post "
+            "waits for the dps.report upload to finish first."
+        )
+        self._dpsreport_timing_group = QButtonGroup(self.dpsreport_group_box)
+        self._dpsreport_timing_group.addButton(self.dpsreport_link_later)
+        self._dpsreport_timing_group.addButton(self.dpsreport_together)
+        dr_layout.addWidget(self.dpsreport_link_later)
+        dr_layout.addWidget(self.dpsreport_together)
+        # Neither timing is pre-picked: enabling the feature requires the
+        # user to choose one, enforced at save time.
+        for rb in (self.dpsreport_link_later, self.dpsreport_together):
+            rb.setEnabled(False)
+        self.dpsreport_enabled.toggled.connect(
+            lambda on: [rb.setEnabled(on) for rb in
+                        (self.dpsreport_link_later, self.dpsreport_together)])
+        layout.addWidget(self.dpsreport_group_box)
         layout.addStretch()
 
         scroll.setWidget(widget)
@@ -2976,6 +3016,14 @@ class SettingsWindow(QWidget):
         self.max_upload.setValue(self.config.max_upload_size)
         self.large_upload_after.setChecked(self.config.upload_large_after_parse)
 
+        # dps.report links
+        self.dpsreport_enabled.setChecked(self.config.dpsreport_links_enabled)
+        from core import dpsreport as _dpsreport
+        self.dpsreport_link_later.setChecked(
+            self.config.dpsreport_timing == _dpsreport.TIMING_LINK_LATER)
+        self.dpsreport_together.setChecked(
+            self.config.dpsreport_timing == _dpsreport.TIMING_TOGETHER)
+
         # Display
         self.show_quick_report.setChecked(self.config.show_quick_report)
         self.show_damage.setChecked(self.config.show_damage)
@@ -3145,6 +3193,16 @@ class SettingsWindow(QWidget):
             )
             return False, False
 
+        if (self.dpsreport_enabled.isChecked()
+                and not self.dpsreport_link_later.isChecked()
+                and not self.dpsreport_together.isChecked()):
+            self._last_save_error = (
+                "dps.report links need a timing choice. Pick whether the "
+                "link should follow in a second message, or fight posts "
+                "should wait for the upload."
+            )
+            return False, False
+
         self._last_save_error = ""
         self.discord_webhook.setText(normalized[0])
         self.discord_webhook2.setText(normalized[1])
@@ -3177,6 +3235,17 @@ class SettingsWindow(QWidget):
         cfg('Thresholds', 'minFightTotalDmg', str(self.min_damage.value()))
         cfg('Thresholds', 'maxUploadSize', str(self.max_upload.value()))
         cfg('Thresholds', 'uploadLargeAfterParse', str(self.large_upload_after.isChecked()))
+
+        # dps.report links
+        from core import dpsreport as _dpsreport
+        if self.dpsreport_link_later.isChecked():
+            _timing = _dpsreport.TIMING_LINK_LATER
+        elif self.dpsreport_together.isChecked():
+            _timing = _dpsreport.TIMING_TOGETHER
+        else:
+            _timing = ''
+        cfg('DpsReport', 'dpsReportLinks', str(self.dpsreport_enabled.isChecked()))
+        cfg('DpsReport', 'dpsReportTiming', _timing)
 
         # Display settings
         cfg('UI', 'showQuickReport', str(self.show_quick_report.isChecked()))

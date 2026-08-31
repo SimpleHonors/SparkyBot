@@ -52,6 +52,12 @@ class Config:
             'maxUploadSize': '50',
             'uploadLargeAfterParse': 'false',
         },
+        'DpsReport': {
+            # Off by default; turning it on is only honored once the user
+            # has also picked a timing mode ('link_later' or 'together').
+            'dpsReportLinks': 'false',
+            'dpsReportTiming': '',
+        },
         'UI': {
             'showDamage': 'true',
             'showHeals': 'true',
@@ -238,6 +244,10 @@ class Config:
         self.min_fight_total_dmg = self._config.getint('Thresholds', 'minFightTotalDmg')
         self.max_upload_size = self._config.getint('Thresholds', 'maxUploadSize')
         self.upload_large_after_parse = self._config.getboolean('Thresholds', 'uploadLargeAfterParse')
+
+        # dps.report links (optional, off by default)
+        self.dpsreport_links_enabled = self._config.getboolean('DpsReport', 'dpsReportLinks')
+        self.dpsreport_timing = self._config.get('DpsReport', 'dpsReportTiming').strip()
 
         # UI / Display settings
         self.show_damage = self._config.getboolean('UI', 'showDamage')
