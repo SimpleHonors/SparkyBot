@@ -398,9 +398,13 @@ def test_json_secondary_adapters(
     target_dir = tmp_path / expected_app.replace(" ", "-")
     target_dir.mkdir()
     target = target_dir / filename
-    target.write_text(
-        json.dumps(payload).replace("{logs}", str(logs)), encoding="utf-8"
+    # Replace the complete JSON string token, not its unescaped contents.
+    # A Windows tmp_path contains backslashes; replacing after json.dumps with
+    # raw path text creates invalid JSON such as "C:\Windows\Temp".
+    encoded_payload = json.dumps(payload).replace(
+        json.dumps("{logs}"), json.dumps(str(logs))
     )
+    target.write_text(encoded_payload, encoding="utf-8")
 
     finding = parse_competitor_config(target)
 
@@ -448,9 +452,15 @@ def test_text_and_xml_adapters_only_read_allowlisted_path_fields(tmp_path):
         encoding="utf-8",
     )
     arclog = tmp_path / "config.toml"
-    arclog.write_text(f'logpath = "{logs}"\nusertoken = "secret"\n', encoding="utf-8")
+    arclog.write_text(
+        f"logpath = {json.dumps(str(logs))}\nusertoken = \"secret\"\n",
+        encoding="utf-8",
+    )
     toxic = tmp_path / "config.yml"
-    toxic.write_text(f'arcdps_logs: "{logs}"\nbot_token: secret\n', encoding="utf-8")
+    toxic.write_text(
+        f"arcdps_logs: {json.dumps(str(logs))}\nbot_token: secret\n",
+        encoding="utf-8",
+    )
     xml = tmp_path / "user.config"
     xml.write_text(
         "<configuration><userSettings><Settings>"
