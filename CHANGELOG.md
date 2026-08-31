@@ -2,7 +2,25 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
-## [2.2.0] — 2026-08-30
+## [2.2.1] — 2026-08-30
+
+v2.2.0 was pulled before publication: a real machine's Windows Defender
+blocked its slimmed-down launcher, and the Setup Wizard shipped broken.
+
+### Fixed
+
+- Setup Wizard renders correctly again. The new Help "?" was registered as
+  a wizard button without enabling the wizard's custom-button slot, so it
+  painted as a loose question mark in the middle of the page and wrecked
+  the layout.
+- Help "?" buttons are absent from this build. They pointed at help pages
+  that are not published yet, so every click opened a 404. They return
+  only once the pages are live (guarded by a shipped-default test).
+- The launcher is back to the proven full-size executable shipped since
+  v2.0; the v2.2.0 slim launcher was a false-positive magnet for Windows
+  Defender. The unused-Qt-module trimming stays.
+
+## [2.2.0] — 2026-08-30 (WITHDRAWN — do not use)
 
 ### Added
 

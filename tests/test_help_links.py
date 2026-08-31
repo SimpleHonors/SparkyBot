@@ -34,6 +34,15 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _live_help(monkeypatch):
+    """The behavior tests below exercise the wired help buttons, so they
+    run with the live-gate open. The gate tests at the bottom close it
+    again explicitly. Shipping default stays False until docs/help is
+    actually published (v2.2.0 P0: a shipped ? that 404'd)."""
+    monkeypatch.setattr(helplinks, "HELP_LINKS_LIVE", True)
+
+
 def _make(app, holder, factory, *args, **kwargs):
     holder["w"] = factory(*args, **kwargs)
     return holder["w"]
@@ -221,5 +230,67 @@ def test_wizard_help_opens_current_page(
         assert wizard.currentId() == page_id
         wizard.help_button.click()
         assert opened == [helplinks.HELP_BASE + expected_slug]
+    finally:
+        _dispose(app, holder)
+
+
+# ----------------------------------------------------------------------
+# the live gate (operator rule: URLs resolve today, or the ? is ABSENT)
+# ----------------------------------------------------------------------
+
+def test_shipping_default_is_gated_off_until_docs_are_published():
+    """Pin of the 2026-08-30 P0 ruling: docs/help/ has never been pushed,
+    so shipped builds must not show a "?" that 404s. Flip HELP_LINKS_LIVE
+    only after the pages are live — and update this test in the same
+    commit, as proof the flip was deliberate."""
+    import importlib
+    fresh = importlib.reload(helplinks)
+    try:
+        assert fresh.HELP_LINKS_LIVE is False
+    finally:
+        importlib.reload(helplinks)
+
+
+def test_main_window_has_no_help_button_when_gate_closed(
+    app, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(helplinks, "HELP_LINKS_LIVE", False)
+    holder = {}
+    window = _make(app, holder, _make_main_window, app, tmp_path)
+    try:
+        assert not hasattr(window, "help_button")
+    finally:
+        _dispose(app, holder)
+
+
+def test_wizard_has_no_help_button_and_no_custom_button_when_gate_closed(
+    app, tmp_path, monkeypatch
+):
+    from PySide6.QtWidgets import QWizard
+
+    monkeypatch.setattr(helplinks, "HELP_LINKS_LIVE", False)
+    holder = {}
+    wizard = _make(app, holder, _make_wizard, app, tmp_path, monkeypatch)
+    try:
+        assert not hasattr(wizard, "help_button")
+        assert not wizard.testOption(QWizard.WizardOption.HaveCustomButton1)
+    finally:
+        _dispose(app, holder)
+
+
+def test_wizard_gate_open_places_button_in_the_button_row(
+    app, tmp_path, monkeypatch
+):
+    """The v2.2.0 defect was setButton() without HaveCustomButton1: the
+    button painted as a loose child mid-page. With the option enabled the
+    wizard owns and places it."""
+    from PySide6.QtWidgets import QWizard
+
+    holder = {}
+    wizard = _make(app, holder, _make_wizard, app, tmp_path, monkeypatch)
+    try:
+        assert wizard.testOption(QWizard.WizardOption.HaveCustomButton1)
+        assert wizard.button(QWizard.WizardButton.CustomButton1) \
+            is wizard.help_button
     finally:
         _dispose(app, holder)

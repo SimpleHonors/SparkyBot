@@ -52,6 +52,7 @@ from core.competitor_migration_ui import (
     show_interop_catalog,
 )
 from core.gui_settings import ProcessFilesWidget, SettingsWindow
+from core import helplinks
 from core.helplinks import help_url as _help_url
 from core.raid_session import discover_logs
 # Stage-weighted progress shares the Raid Report page's weights — the run
@@ -558,15 +559,18 @@ class MainWindow(QMainWindow):
         bar_layout = QHBoxLayout(bar_column)
         bar_layout.setContentsMargins(6, 4, 6, 4)
         bar_layout.setSpacing(0)
-        self.help_button = QToolButton(autoRaise=True)
-        self.help_button.setText("?")
-        self.help_button.setToolTip(
-            "Open the help page for this screen"
-            "<br><br>Opens the matching SparkyBot help page on GitHub in "
-            "your browser."
-        )
-        self.help_button.clicked.connect(self._on_help_clicked)
-        bar_layout.addWidget(self.help_button)
+        # Help "?" only exists while the online help pages actually resolve
+        # (absent, not grayed — the v2.2.0 P0 shipped a ? that 404'd).
+        if helplinks.HELP_LINKS_LIVE:
+            self.help_button = QToolButton(autoRaise=True)
+            self.help_button.setText("?")
+            self.help_button.setToolTip(
+                "Open the help page for this screen"
+                "<br><br>Opens the matching SparkyBot help page on GitHub in "
+                "your browser."
+            )
+            self.help_button.clicked.connect(self._on_help_clicked)
+            bar_layout.addWidget(self.help_button)
         bar_layout.addStretch(1)
         sidebar_column = QWidget()
         sidebar_column_layout = QVBoxLayout(sidebar_column)

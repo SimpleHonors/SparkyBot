@@ -74,15 +74,19 @@ a.binaries = [
 
 pyz = PYZ(a.pure)
 
-# Onedir build: the EXE must be a thin bootloader only.  Passing a.binaries
-# / a.datas positionally to EXE embeds a second copy of every DLL (full Qt
-# set included) inside SparkyBot.exe while COLLECT ships them again in
-# _internal/.  exclude_binaries=True keeps binaries solely in COLLECT's
-# _internal/ output.
+# v2.2.1: the thin-bootloader exe (exclude_binaries=True) is REVERTED.
+# A real user's Windows Defender blocked the v2.2.0 thin stub — the small
+# unsigned bootloader-only exe is a classic Defender false-positive shape —
+# while the fat exe layout below is exactly what v2.0.x/v2.1.0 shipped and
+# ran clean on that same machine. It double-ships the DLLs (exe + _internal)
+# and costs ~60MB; do not re-thin without proving the artifact launches
+# under Defender + SmartScreen on the operator's actual machine.
 exe = EXE(
     pyz,
     a.scripts,
-    exclude_binaries=True,
+    a.binaries,
+    a.datas,
+    [],
     name='SparkyBot',
     debug=False,
     bootloader_ignore_signals=False,

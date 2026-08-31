@@ -16,6 +16,14 @@ back to README.md, so a Help button can never dead-end.
 
 from pathlib import Path
 
+# LIVE GATE (operator rule, 2026-08-30): help "?" buttons may only exist in
+# a build whose URLs resolve TODAY. docs/help/ is committed locally but has
+# never been published (github.com/.../docs/help/README.md is a 404), so
+# this stays False and every help button is ABSENT (not grayed). Flip to
+# True only AFTER the docs are pushed AND the URLs are verified live —
+# shipping a "?" that 404s is the v2.2.0 P0 defect.
+HELP_LINKS_LIVE = False
+
 HELP_BASE = "https://github.com/SimpleHonors/SparkyBot/blob/main/docs/help/"
 
 README_SLUG = "README.md"

@@ -37,6 +37,7 @@ from core.competitor_migration_ui import (
 from core.shareable_config import (
     GuildConfigBundle, GuildConfigError, apply_guild_config, load_guild_config,
 )
+from core import helplinks
 from core.helplinks import help_url as _help_url
 
 # Explicit page IDs. The default flow is ID order; declining AI on the
@@ -102,15 +103,21 @@ class SetupWizard(QWizard):
 
         # Help control beside the wizard buttons: opens the help page for
         # the CURRENT page (openUrl only — the browser handles offline).
-        self.help_button = QToolButton(autoRaise=True)
-        self.help_button.setText("?")
-        self.help_button.setToolTip(
-            "Open the help page for this setup screen"
-            "<br><br>Opens the matching SparkyBot help page on GitHub in "
-            "your browser."
-        )
-        self.setButton(QWizard.WizardButton.CustomButton1, self.help_button)
-        self.help_button.clicked.connect(self._on_help_clicked)
+        # Only while the online pages actually resolve (absent, not grayed).
+        # HaveCustomButton1 must be enabled BEFORE setButton, or the wizard
+        # never places the button and it paints as a loose child in the
+        # middle of the page — the v2.2.0 "big question mark" P0 defect.
+        if helplinks.HELP_LINKS_LIVE:
+            self.setOption(QWizard.WizardOption.HaveCustomButton1, True)
+            self.help_button = QToolButton(autoRaise=True)
+            self.help_button.setText("?")
+            self.help_button.setToolTip(
+                "Open the help page for this setup screen"
+                "<br><br>Opens the matching SparkyBot help page on GitHub in "
+                "your browser."
+            )
+            self.setButton(QWizard.WizardButton.CustomButton1, self.help_button)
+            self.help_button.clicked.connect(self._on_help_clicked)
 
     def _on_help_clicked(self, checked=False):
         """Per-page Help: the slug map keys on the wizard page id; an
