@@ -35,6 +35,10 @@ Outputs are written to `dist\release\`:
 - `SparkyBot-vX.Y.Z-Setup.exe`
 - `SHA256SUMS`
 
+`SHA256SUMS` is finalized only after Inno Setup succeeds. It must contain an
+exact digest for the ZIP, manifest, and installer; a missing, extra, or changed
+artifact fails the release gate.
+
 `GW2EI` is downloaded by SparkyBot after the user opts in. It is never copied
 into a release. Config files, logs, `.evtc`/`.zevtc` files, caches, and other
 runtime state are also excluded.

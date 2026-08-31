@@ -9,7 +9,7 @@ import zipfile
 
 import pytest
 
-from build import package_release, verify_release
+from build import finalize_release, package_release, verify_release
 
 
 def _write(path: Path, payload: bytes = b"fixture") -> None:
@@ -138,6 +138,8 @@ def test_windows_release_driver_builds_both_artifacts_and_runs_verifier():
     assert "-m pytest" in driver
     assert "--require-tag" in driver
     assert "verify_authenticode.ps1" in driver
+    assert "-m build.finalize_release" in driver
+    assert "--checksums" in driver
     assert "iscc" in driver and "/dmyappversion=" in driver
     assert "sparkybot-v%app_version%-setup.exe" in driver
     assert "xcopy gw2ei" not in build_driver
@@ -178,6 +180,32 @@ def test_written_manifest_matches_verified_archive(tmp_path):
     assert stored == release.manifest
     assert report.file_count == len(stored["files"])
     assert stored["archive"]["sha256"] == release.archive_sha256
+
+
+def test_final_checksums_cover_installer_and_detect_tampering(tmp_path):
+    dist = _fake_dist(tmp_path)
+    output_dir = tmp_path / "release"
+    release = package_release.create_release(
+        dist_dir=dist,
+        output_dir=output_dir,
+        version="9.8.7",
+    )
+    installer = output_dir / "SparkyBot-v9.8.7-Setup.exe"
+    _write(installer, b"installer")
+
+    checksums_path, digests = finalize_release.finalize_release(
+        output_dir, "9.8.7"
+    )
+    artifacts = [release.archive_path, release.manifest_path, installer]
+    assert set(digests) == {path.name for path in artifacts}
+    verify_release.verify_checksums(checksums_path, artifacts)
+
+    installer.write_bytes(b"tampered")
+    with pytest.raises(
+        verify_release.ReleaseVerificationError,
+        match="digest mismatch",
+    ):
+        verify_release.verify_checksums(checksums_path, artifacts)
 
 
 def test_exact_tag_gate_rejects_a_dirty_checkout(tmp_path):

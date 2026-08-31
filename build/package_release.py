@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
+from collections.abc import Iterable
 from typing import Any
 import zipfile
 
@@ -55,6 +56,33 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_checksums(paths: Iterable[Path], checksums_path: Path) -> dict[str, str]:
+    """Write deterministic GNU-style SHA-256 lines for regular release files."""
+    candidates = [Path(path) for path in paths]
+    if not candidates:
+        raise ValueError("at least one release artifact is required")
+
+    names = [path.name for path in candidates]
+    if len(names) != len({name.casefold() for name in names}):
+        raise ValueError("release artifact filenames must be unique")
+
+    for path in candidates:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"release artifact is not a regular file: {path}")
+
+    digests = {
+        path.name: _sha256_file(path)
+        for path in sorted(candidates, key=lambda item: item.name.casefold())
+    }
+    checksums_path = Path(checksums_path)
+    checksums_path.write_text(
+        "".join(f"{digest}  {name}\n" for name, digest in digests.items()),
+        encoding="ascii",
+        newline="\n",
+    )
+    return digests
 
 
 def _is_runtime_state(relative: Path) -> bool:
@@ -150,13 +178,7 @@ def create_release(
         encoding="utf-8",
         newline="\n",
     )
-    manifest_sha256 = _sha256_file(manifest_path)
-    checksums_path.write_text(
-        f"{archive_sha256}  {archive_path.name}\n"
-        f"{manifest_sha256}  {manifest_path.name}\n",
-        encoding="ascii",
-        newline="\n",
-    )
+    write_checksums((archive_path, manifest_path), checksums_path)
     return ReleaseArtifacts(
         archive_path=archive_path,
         manifest_path=manifest_path,

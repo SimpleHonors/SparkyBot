@@ -51,6 +51,9 @@ _FORBIDDEN_NAMES = {
     ".env",
     "config.properties",
 }
+_CHECKSUM_LINE_RE = re.compile(
+    r"^(?P<digest>[0-9a-f]{64})  (?P<name>[^/\\]+)$"
+)
 
 
 class ReleaseVerificationError(RuntimeError):
@@ -297,6 +300,44 @@ def verify_archive(
     )
 
 
+def verify_checksums(checksums_path: Path, artifact_paths: list[Path]) -> None:
+    """Require an exact, tamper-evident checksum set for release artifacts."""
+    checksums_path = Path(checksums_path).resolve()
+    expected_paths = [Path(path) for path in artifact_paths]
+    problems: list[str] = []
+    if not checksums_path.is_file():
+        problems.append(f"checksums file is missing: {checksums_path}")
+        _fail(problems)
+
+    recorded: dict[str, str] = {}
+    for line_number, line in enumerate(
+        checksums_path.read_text(encoding="ascii").splitlines(), start=1
+    ):
+        match = _CHECKSUM_LINE_RE.fullmatch(line)
+        if not match:
+            problems.append(f"invalid SHA256SUMS line {line_number}: {line!r}")
+            continue
+        name = match.group("name")
+        if name.casefold() in {item.casefold() for item in recorded}:
+            problems.append(f"duplicate SHA256SUMS entry: {name}")
+            continue
+        recorded[name] = match.group("digest")
+
+    expected_names = {path.name for path in expected_paths}
+    if set(recorded) != expected_names:
+        problems.append(
+            "SHA256SUMS artifact set differs: "
+            f"recorded={sorted(recorded)}, expected={sorted(expected_names)}"
+        )
+    for path in expected_paths:
+        if path.is_symlink() or not path.is_file():
+            problems.append(f"release artifact is not a regular file: {path}")
+            continue
+        if recorded.get(path.name) != _sha256_file(path):
+            problems.append(f"SHA256SUMS digest mismatch: {path.name}")
+    _fail(problems)
+
+
 def compare_manifests(previous_path: Path, current_path: Path) -> dict[str, Any]:
     previous = json.loads(Path(previous_path).read_text(encoding="utf-8"))
     current = json.loads(Path(current_path).read_text(encoding="utf-8"))
@@ -315,6 +356,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--checksums", type=Path)
+    parser.add_argument("--installer", type=Path)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--version")
     parser.add_argument("--require-tag", action="store_true")
@@ -340,6 +383,16 @@ def main(argv: list[str] | None = None) -> int:
         version,
         manifest_path=args.manifest,
     )
+    if bool(args.checksums) != bool(args.installer):
+        parser.error("--checksums and --installer must be supplied together")
+    if args.checksums:
+        if not args.manifest:
+            parser.error("--checksums requires --manifest")
+        verify_checksums(
+            args.checksums,
+            [args.archive, args.manifest, args.installer],
+        )
+        print("PASS checksums=3")
     print(f"PASS version={report.version}")
     print(f"PASS files={report.file_count}")
     print(f"PASS sha256={report.archive_sha256}")

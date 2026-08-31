@@ -6,8 +6,8 @@ Use synthetic fixture paths/data only.
 
 ## 1. Identity and Windows trust
 
-- Match the archive SHA-256 to `SHA256SUMS` at build, share-write, and
-  share-read locations.
+- Match the ZIP, manifest, and installer SHA-256 values to `SHA256SUMS` at
+  build, share-write, and share-read locations.
 - Confirm `Get-AuthenticodeSignature` is `Valid` for the app, updater, and
   installer before publication.
 - Exercise an Internet-marked download. A source-widget screenshot or locally
