@@ -17,6 +17,15 @@ def test_installer_version_matches_runtime_version():
     assert match.group(1) == VERSION
 
 
+def test_clean_windows_build_creates_writable_gw2ei_folder():
+    script = (
+        Path(__file__).parents[1] / "build" / "build_windows.bat"
+    ).read_text(encoding="utf-8")
+
+    assert "if exist GW2EI (" in script
+    assert "mkdir dist\\SparkyBot\\GW2EI" in script
+
+
 class UpdateHelperTests(unittest.TestCase):
     def test_apply_pending_tree_replaces_runtime_and_preserves_user_data(self):
         from core.update_helper import apply_pending_tree

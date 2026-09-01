@@ -77,7 +77,13 @@ REM --- Copy GW2EI next to the exe (writable, outside _internal) ---
 echo.
 echo Copying GW2EI to dist\SparkyBot\GW2EI...
 if exist dist\SparkyBot\GW2EI rmdir /s /q dist\SparkyBot\GW2EI
-xcopy GW2EI dist\SparkyBot\GW2EI\ /E /I /Q /H >nul
+if exist GW2EI (
+    xcopy GW2EI dist\SparkyBot\GW2EI\ /E /I /Q /H >nul
+) else (
+    REM GW2EI is intentionally git-ignored. A clean release clone still needs
+    REM the writable destination so first-run setup can install Elite Insights.
+    mkdir dist\SparkyBot\GW2EI
+)
 
 echo.
 echo ============================================================
