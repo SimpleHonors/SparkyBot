@@ -54,15 +54,27 @@ def _pressure_tiddlers():
                 "| Outgoing Pulls |c",
             ]),
         },
+        {
+            "title": "night-Defenses-Summary",
+            "text": "\n".join([
+                '<$reveal stateTitle="$:/temp/detailed_state" default="Total" stateField="category_radio" type="match" text="Total">',
+                "|thead-dark table-caption-top table-hover sortable|k",
+                "|!Party |!Name |!Prof |!{{FightTime}} |!{{damageTaken}} |!{{damageTaken}}{Hits |!{{conditionDamageTaken}} |!{{conditionDamageTaken}}{Hits |!{{powerDamageTaken}} |!{{powerDamageTaken}}{Hits |!{{downedDamageTaken}} |!{{downedDamageTaken}}{Hits |!{{damageBarrier}} |!{{damageBarrier}}{Hits |!{{blockedCount}} |!{{evadedCount}} |!{{missedCount}} |!{{dodgeCount}} |!{{invulnedCount}} |!{{interruptedCount}} |!{{stunBreak}} |!{{downCount}} |!{{deadCount}} |!{{boonStrips}} |!{{conditionCleanses}} |!{{receivedCrowdControl}} |h",
+                "|1|Alice|{{Firebrand}}|100|1,000|10|250|4|750|6|0|0|0|0|0|0|0|0|0|0|0|0|0|12|0|10|",
+                "|1|Bob|{{Reaper}}|100|3,000|30|1,500|15|1,500|15|0|0|0|0|0|0|0|0|0|0|0|0|0|8|0|20|",
+                "| Total - Defenses Table|c",
+                "</$reveal>",
+            ]),
+        },
     ]
 
 
 def _model():
     fights = [
-        {"index": 1, "rgb": {"r": 0, "g": 25, "b": 0}},
-        {"index": 2, "rgb": {"r": 5, "g": 10, "b": 0}},
+        {"index": 1, "duration": "02m 00s 000ms", "rgb": {"r": 0, "g": 25, "b": 0}},
+        {"index": 2, "duration": "03m 00s 000ms", "rgb": {"r": 5, "g": 10, "b": 0}},
         # Ten professions identified out of twelve enemies.
-        {"index": 3, "rgb": {"r": 0, "g": 12, "b": 0}},
+        {"index": 3, "duration": "05m 00s 000ms", "rgb": {"r": 0, "g": 12, "b": 0}},
     ]
     tiddlers = [{"title": "night-Squad-Composition", "text": _composition_text()}]
     tiddlers.extend(_pressure_tiddlers())
@@ -114,6 +126,33 @@ def test_estimated_parties_preserve_counts_and_spread_support_anchors():
     assert all(member["evidence"] == "inferred" for member in members)
 
 
+def test_slots_include_metric_backed_tactical_role_inference():
+    fight = next(
+        row for row in _model()["fights"]
+        if row["index"] == 1 and row["color"] == "green"
+    )
+    members = [member for party in fight["estimated_subgroups"] for member in party["members"]]
+    by_profession = {member["profession"]: member for member in members}
+
+    reaper = by_profession["Reaper"]
+    assert reaper["role"] == "DPS"
+    assert reaper["role_tags"] == ["DPS", "Boon Strip", "Crowd Control"]
+    assert reaper["role_family"] == "DPS"
+    assert reaper["role_inference"]["qualifier"] == "Likely"
+    assert reaper["role_inference"]["confidence"] == "medium"
+    assert "scores" not in reaper["role_inference"]
+    assert any("Soul Spiral" in item for item in reaper["role_inference"]["evidence"])
+    assert any("Grasping Darkness" in item for item in reaper["role_inference"]["evidence"])
+
+    assert by_profession["Druid"]["role"] == "Healer"
+    assert by_profession["Firebrand"]["role"] == "Boon Support"
+    assert by_profession["Firebrand"]["role_tags"] == ["Boon Support"]
+    assert all(
+        any("observed in this fight/color" in item for item in member["role_inference"]["evidence"])
+        for member in members
+    )
+
+
 def test_unknown_enemies_are_distinct_from_partial_party_open_slots():
     fight = next(
         row for row in _model()["fights"]
@@ -135,11 +174,24 @@ def test_session_pressure_is_observed_but_not_falsely_color_attributed():
     assert pressure["conditions_in"][0] == {
         "effect": "Bleeding",
         "uptime_percent": 8.5,
+        "uptime_unit": "percent_of_squad_active_time",
         "evidence": "observed",
         "source_scope": "session",
     }
     assert {row["effect"] for row in pressure["cc"]} == {"Daze", "Stun"}
-    assert pressure["incoming_strips"][0]["effect"] == "Boon Strip"
+    assert pressure["incoming_strips"] == [{
+        "effect": "Boon Strip",
+        "count": 20,
+        "count_unit": "boons_removed_from_squad",
+        "rate_per_combat_second": 0.03,
+        "rate_per_combat_minute": 2.0,
+        "rate_unit": "aggregate_squad_boon_strips_per_combat_time",
+        "evidence": "observed",
+        "source_scope": "session_all_opponents",
+        "measurement": "boons_removed_from_squad",
+        "source": "Defenses-Summary",
+        "attribution": "enemy_profession_not_attributed",
+    }]
     pull_counts = {row["skill"]: row["count"] for row in pressure["pulls"]}
     assert pull_counts["Gravity Well"] == 5
     assert pull_counts["Grasping Darkness"] == 5
@@ -147,7 +199,50 @@ def test_session_pressure_is_observed_but_not_falsely_color_attributed():
         not scope["aggregate"]["top_damage_skills"]
         for scope in model["scopes"]
     )
-    assert pressure["damage_profile"]["status"] == "not_available_from_combiner_summary"
+    assert pressure["damage_profile"] == {
+        "total_incoming_damage": 4000,
+        "direct_damage": 2250,
+        "condition_damage": 1750,
+        "combat_seconds": 600.0,
+        "total_damage_per_second": 6.67,
+        "direct_damage_per_second": 3.75,
+        "condition_damage_per_second": 2.92,
+        "direct_percent": 56.25,
+        "condition_percent": 43.75,
+        "classification": "Mixed Damage",
+        "status": "observed",
+        "evidence": "observed",
+        "damage_unit": "hit_point_damage",
+        "rate_unit": "aggregate_squad_damage_per_combat_second",
+        "combat_time_unit": "seconds",
+        "source_scope": "session_all_opponents",
+        "source": "Defenses-Summary",
+        "attribution": "enemy_profession_not_attributed",
+    }
+    assert pressure["control_profile"] == [{
+        "effect": "Incoming Crowd Control",
+        "count": 30,
+        "count_unit": "received_crowd_control_events",
+        "rate_per_combat_second": 0.05,
+        "rate_per_combat_minute": 3.0,
+        "rate_unit": "aggregate_squad_events_per_combat_time",
+        "evidence": "observed",
+        "source_scope": "session_all_opponents",
+        "measurement": "received_crowd_control_events",
+        "source": "Defenses-Summary",
+        "attribution": "enemy_profession_not_attributed",
+    }]
+    condition_profile = pressure["condition_profile"]
+    assert condition_profile["status"] == "observed"
+    assert condition_profile["dominant_condition"] == "Bleeding"
+    assert condition_profile["damaging_condition_uptime_index"] == 10.75
+    assert condition_profile["normalized"][0] == {
+        "effect": "Bleeding",
+        "uptime_percent": 8.5,
+        "uptime_unit": "percent_of_squad_active_time",
+        "pressure_share_percent": 79.07,
+        "evidence": "observed",
+    }
 
 
 def test_methodology_does_not_claim_exact_builds():

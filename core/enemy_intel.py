@@ -49,6 +49,34 @@ _ROLE_FAMILIES = {
 }
 _ROLE_ORDER = ("primary_support", "healer", "utility_support", "hybrid", "dps")
 
+# Skill ownership is used only to connect session-wide observed pressure to a
+# profession archetype.  It never identifies the individual enemy who used it.
+_DAMAGE_SKILL_PROFESSIONS = {
+    "Soul Spiral": {"Reaper"},
+    "Gravedigger": {"Reaper"},
+    "Grasping Darkness": {"Reaper"},
+    "Well of Suffering": {"Necromancer", "Reaper", "Scourge"},
+    "Unholy Feast": {"Necromancer", "Reaper", "Scourge"},
+    "Epidemic": {"Necromancer", "Scourge"},
+    "Ghastly Breach": {"Scourge"},
+    "Gravity Well": {"Chronomancer"},
+    "Procession of Blades": {"Dragonhunter"},
+    "True Shot": {"Dragonhunter"},
+    "Coalescence of Ruin": {"Herald", "Renegade", "Revenant", "Vindicator"},
+}
+_PULL_SKILL_PROFESSIONS = {
+    "Gravity Well": {"Chronomancer"},
+    "Grasping Darkness": {"Reaper"},
+    "Spectral Grasp": {"Necromancer", "Reaper", "Scourge"},
+    "Chapter 3: Heated Rebuke": {"Firebrand"},
+    "Magnetic Bomb": {"Engineer", "Holosmith", "Scrapper"},
+}
+_STRIP_CAPABLE_PROFESSIONS = {
+    "Chronomancer", "Harbinger", "Mesmer", "Mirage", "Necromancer",
+    "Reaper", "Scourge", "Spellbreaker", "Virtuoso",
+}
+_DAMAGING_CONDITIONS = {"Bleeding", "Burning", "Confusion", "Poison", "Torment"}
+
 
 PRO_NAVIGATION = [
     {"id": "overview", "label": "Overview", "subviews": ["night-summary", "fight-timeline"]},
@@ -122,7 +150,108 @@ def _confidence(observed_count, enemy_count):
     }
 
 
-def estimate_enemy_subgroups(professions, enemy_count):
+def _dps_term(damage_profile, has_damage):
+    if not has_damage:
+        return "DPS"
+    classification = (damage_profile or {}).get("classification")
+    if classification == "Power Damage":
+        return "Power DPS"
+    if classification == "Condition Damage":
+        return "Condition DPS"
+    return "DPS"
+
+
+def _role_labels(role_family, has_damage, has_control, has_strips, damage_profile):
+    if role_family == "healer":
+        return "Healer", ["Healer"]
+    if role_family == "primary_support":
+        tags = ["Boon Support"]
+        if has_strips:
+            tags.append("Boon Strip")
+        if has_control:
+            tags.append("Crowd Control")
+        return "Boon Support", tags
+    if role_family == "utility_support":
+        tags = []
+        if has_strips:
+            tags.append("Boon Strip")
+        if has_damage:
+            tags.append(_dps_term(damage_profile, has_damage))
+        if has_control:
+            tags.append("Crowd Control")
+        if not tags:
+            tags.append("Boon Support")
+        return tags[0], tags
+    if role_family == "dps":
+        tags = [_dps_term(damage_profile, has_damage)]
+        if has_strips:
+            tags.append("Boon Strip")
+        if has_control:
+            tags.append("Crowd Control")
+        return tags[0], tags
+    return "Hybrid", ["Hybrid"]
+
+
+def _infer_tactical_role(profession, observed_frequency, role_context):
+    role_family = _role_for(profession)
+    evidence = [f"{observed_frequency} {profession} observed in this fight/color"]
+    context = role_context or {}
+    damage_rows = context.get("damage_by_profession", {}).get(profession, [])
+    pull_rows = context.get("pulls_by_profession", {}).get(profession, [])
+
+    for row in damage_rows:
+        share = row.get("percent")
+        evidence.append(
+            f"{row['skill']}: {int(row['damage']):,} enemy damage"
+            + (f" ({share:g}% of session enemy damage)" if share is not None else "")
+        )
+    for row in pull_rows:
+        evidence.append(f"{row['skill']}: {row['count']:g} connected incoming pulls")
+
+    strip_count = context.get("incoming_strip_count")
+    has_strips = profession in _STRIP_CAPABLE_PROFESSIONS and strip_count is not None
+    if has_strips:
+        evidence.append(
+            f"enemy team removed {strip_count:,} squad boons; source profession not attributable"
+        )
+
+    profile = context.get("damage_profile") or {}
+    if profile.get("status") in {"observed", "inferred"}:
+        evidence.append(
+            f"session incoming profile {profile.get('direct_percent', 0):g}% direct / "
+            f"{profile.get('condition_percent', 0):g}% condition; not profession-attributed"
+        )
+
+    has_metric_evidence = bool(damage_rows or pull_rows)
+    label, tags = _role_labels(
+        role_family,
+        bool(damage_rows),
+        bool(pull_rows),
+        has_strips,
+        profile,
+    )
+    return {
+        "label": label,
+        "tags": tags,
+        "family": {
+            "primary_support": "Support",
+            "healer": "Healer",
+            "utility_support": "Support",
+            "dps": "DPS",
+            "hybrid": "Hybrid",
+        }[role_family],
+        "qualifier": "Likely" if has_metric_evidence else "Inferred",
+        "confidence": "medium" if has_metric_evidence else "low",
+        "evidence": evidence,
+        "source_scope": "fight_color_composition_plus_session_all_opponents",
+        "limitation": (
+            "profession frequency is observed; individual build, healing, strip source, "
+            "and party position are inferred"
+        ),
+    }
+
+
+def estimate_enemy_subgroups(professions, enemy_count, role_context=None):
     """Return a deterministic role-aware five-player party estimate.
 
     ``professions`` is a list of observed ``{profession, count}`` rows.
@@ -141,16 +270,22 @@ def estimate_enemy_subgroups(professions, enemy_count):
 
     rows = []
     for row in professions:
-        profession = str(row.get("profession") or "Unknown").strip() or "Unknown"
+        profession = str(row.get("profession") or "Unidentified").strip() or "Unidentified"
         count = max(int(row.get("count", 0)), 0)
-        rows.append((profession, count, _role_for(profession)))
+        family = _role_for(profession)
+        rows.append((
+            profession,
+            count,
+            family,
+            _infer_tactical_role(profession, count, role_context),
+        ))
 
     for role in _ROLE_ORDER:
         role_rows = sorted(
             (row for row in rows if row[2] == role),
             key=lambda row: (-row[1], row[0].casefold()),
         )
-        for profession, count, _ in role_rows:
+        for profession, count, family, inference in role_rows:
             for _copy in range(count):
                 candidates = [i for i, party in enumerate(parties) if len(party) < 5]
                 if not candidates:
@@ -159,19 +294,26 @@ def estimate_enemy_subgroups(professions, enemy_count):
                     candidates,
                     key=lambda i: (
                         profession_counts[i][profession],
-                        role_counts[i][role],
+                        role_counts[i][family],
                         len(parties[i]),
                         i,
                     ),
                 )
                 parties[chosen].append({
                     "profession": profession,
-                    "role": role,
+                    "role": inference["label"],
+                    "role_tags": inference["tags"],
+                    "role_family": inference["family"],
                     "evidence": "inferred",
-                    "role_evidence": "inferred_from_profession_family",
+                    "role_evidence": (
+                        "observed_metrics_and_profession_archetype"
+                        if inference["confidence"] == "medium"
+                        else "profession_archetype_with_observed_frequency"
+                    ),
+                    "role_inference": inference,
                 })
                 profession_counts[chosen][profession] += 1
-                role_counts[chosen][role] += 1
+                role_counts[chosen][family] += 1
 
     unknown_slots = max(int(enemy_count or 0) - observed_count, 0)
     for _ in range(unknown_slots):
@@ -181,15 +323,27 @@ def estimate_enemy_subgroups(professions, enemy_count):
         chosen = min(candidates, key=lambda i: (len(parties[i]), i))
         parties[chosen].append({
             "profession": None,
-            "role": "unknown",
-            "evidence": "unknown",
-            "role_evidence": "unknown",
+            "role": "Unidentified",
+            "role_tags": [],
+            "role_family": "Unidentified",
+            "evidence": "not_observed",
+            "role_evidence": "not_observed",
+            "role_inference": {
+                "label": "Unidentified",
+                "tags": [],
+                "family": "Unidentified",
+                "qualifier": "Unresolved",
+                "confidence": "unresolved",
+                "evidence": ["enemy identity and profession were not present in the report"],
+                "source_scope": "fight_color_composition",
+                "limitation": "no profession evidence",
+            },
         })
 
     confidence = _confidence(observed_count, int(enemy_count or 0))
     result = []
     for index, members in enumerate(parties, 1):
-        party_unknown = sum(1 for member in members if member["evidence"] == "unknown")
+        party_unknown = sum(1 for member in members if member["profession"] is None)
         result.append({
             "party": index,
             "members": members,
@@ -201,7 +355,7 @@ def estimate_enemy_subgroups(professions, enemy_count):
     return result, unknown_slots, confidence
 
 
-def _composition_snapshots(tiddlers, fight_rows):
+def _composition_snapshots(tiddlers, fight_rows, role_context=None):
     tiddler = _find_tiddler(tiddlers, "-Squad-Composition")
     if not tiddler or not tiddler.get("text"):
         return []
@@ -242,7 +396,7 @@ def _composition_snapshots(tiddlers, fight_rows):
             )
         ]
         parties, unknown_slots, confidence = estimate_enemy_subgroups(
-            professions, enemy_count
+            professions, enemy_count, role_context=role_context
         )
         output.append({
             "index": snapshot["index"],
@@ -293,9 +447,11 @@ def _enemy_damage_skills(tiddlers):
         rows.append({
             "skill": skill,
             "damage": damage,
+            "damage_unit": "hit_point_damage",
             "total_casts": _number(values.get("total_casts", "")),
             "connected_hits": _number(values.get("connected_hits", "")),
             "percent": _number(values.get("%_of_total", "")),
+            "percent_unit": "percent_of_session_enemy_damage",
             "evidence": "observed",
             "source_scope": "session",
         })
@@ -321,6 +477,7 @@ def _squad_average_table(tiddlers, suffix):
             output.append({
                 "effect": label,
                 "uptime_percent": float(value),
+                "uptime_unit": "percent_of_squad_active_time",
                 "evidence": "observed",
                 "source_scope": "session",
             })
@@ -368,6 +525,278 @@ def _incoming_pulls(tiddlers):
         for skill, count in sorted(totals.items(), key=lambda item: (-item[1], item[0].casefold()))
         if count > 0
     ]
+
+
+def _combat_seconds(fight_rows):
+    total = 0.0
+    for fight in fight_rows:
+        if fight.get("duration_seconds") is not None:
+            total += float(fight["duration_seconds"])
+            continue
+        duration = str(fight.get("duration") or "")
+        minutes = re.search(r"(\d+)m", duration)
+        seconds = re.search(r"(\d+(?:\.\d+)?)s", duration)
+        milliseconds = re.search(r"(\d+)ms", duration)
+        total += int(minutes.group(1)) * 60 if minutes else 0
+        total += float(seconds.group(1)) if seconds else 0
+        total += int(milliseconds.group(1)) / 1000 if milliseconds else 0
+    return total
+
+
+def _defense_pressure(tiddlers):
+    """Aggregate exact incoming damage and strip totals from the Total table."""
+    tiddler = _find_tiddler(tiddlers, "-Defenses-Summary")
+    if not tiddler or not tiddler.get("text"):
+        return {"available": False}
+    lines = tiddler["text"].splitlines()
+    header_index = next(
+        (
+            i for i, line in enumerate(lines)
+            if line.strip().endswith("|h")
+            and "conditionDamageTaken" in line
+            and "powerDamageTaken" in line
+            and "boonStrips" in line
+        ),
+        None,
+    )
+    if header_index is None:
+        return {"available": False}
+
+    headers = [_label(cell) for cell in _cells(lines[header_index])]
+    indexes = {
+        name: next((i for i, value in enumerate(headers) if value == name), None)
+        for name in (
+            "conditionDamageTaken", "powerDamageTaken", "boonStrips",
+            "receivedCrowdControl",
+        )
+    }
+    if any(index is None for index in indexes.values()):
+        return {"available": False}
+
+    totals = Counter()
+    row_count = 0
+    for raw_line in lines[header_index + 1:]:
+        line = raw_line.strip()
+        if line.endswith("|c") or line.startswith("</$reveal"):
+            break
+        if not line.startswith("|") or line.endswith(("|h", "|k", "|f")):
+            continue
+        cells = _cells(raw_line)
+        if len(cells) <= max(indexes.values()):
+            continue
+        row_count += 1
+        for name, index in indexes.items():
+            totals[name] += _number(cells[index]) or 0
+
+    return {
+        "available": row_count > 0,
+        "row_count": row_count,
+        "condition_damage": totals["conditionDamageTaken"],
+        "direct_damage": totals["powerDamageTaken"],
+        "incoming_strips": totals["boonStrips"],
+        "incoming_crowd_control": totals["receivedCrowdControl"],
+    }
+
+
+def _damage_profile(defense_pressure, damage_skills, combat_seconds):
+    if defense_pressure.get("available"):
+        direct = defense_pressure["direct_damage"]
+        condition = defense_pressure["condition_damage"]
+        total = direct + condition
+        direct_percent = round((direct / total) * 100, 2) if total else 0.0
+        condition_percent = round((condition / total) * 100, 2) if total else 0.0
+        classification = (
+            "Condition Damage" if condition_percent >= 55
+            else "Power Damage" if condition_percent <= 20
+            else "Mixed Damage"
+        )
+        return {
+            "total_incoming_damage": total,
+            "direct_damage": direct,
+            "condition_damage": condition,
+            "combat_seconds": round(combat_seconds, 3),
+            "total_damage_per_second": round(total / combat_seconds, 2) if combat_seconds else None,
+            "direct_damage_per_second": round(direct / combat_seconds, 2) if combat_seconds else None,
+            "condition_damage_per_second": round(condition / combat_seconds, 2) if combat_seconds else None,
+            "direct_percent": direct_percent,
+            "condition_percent": condition_percent,
+            "classification": classification,
+            "status": "observed",
+            "evidence": "observed",
+            "damage_unit": "hit_point_damage",
+            "rate_unit": "aggregate_squad_damage_per_combat_second",
+            "combat_time_unit": "seconds",
+            "source_scope": "session_all_opponents",
+            "source": "Defenses-Summary",
+            "attribution": "enemy_profession_not_attributed",
+        }
+
+    # Fallback for older stores: condition-effect rows in the enemy skill table
+    # provide a partial but concrete session-wide damage mix instead of Unknown.
+    sample_total = sum(row["damage"] for row in damage_skills)
+    if not sample_total:
+        return {
+            "status": "not_observed",
+            "evidence": "not_observed",
+            "source_scope": "session_all_opponents",
+            "source": "Top-Damage-By-Skill",
+        }
+    condition = sum(
+        row["damage"] for row in damage_skills if row["skill"] in _DAMAGING_CONDITIONS
+    )
+    direct = max(sample_total - condition, 0)
+    condition_percent = round((condition / sample_total) * 100, 2) if sample_total else 0.0
+    direct_percent = round(100 - condition_percent, 2) if sample_total else 0.0
+    return {
+        "total_incoming_damage": sample_total,
+        "direct_damage": direct,
+        "condition_damage": condition,
+        "combat_seconds": round(combat_seconds, 3),
+        "total_damage_per_second": round(sample_total / combat_seconds, 2) if combat_seconds else None,
+        "direct_damage_per_second": round(direct / combat_seconds, 2) if combat_seconds else None,
+        "condition_damage_per_second": round(condition / combat_seconds, 2) if combat_seconds else None,
+        "direct_percent": direct_percent,
+        "condition_percent": condition_percent,
+        "classification": (
+            "Condition Damage" if condition_percent >= 55
+            else "Power Damage" if condition_percent <= 20
+            else "Mixed Damage"
+        ),
+        "status": "inferred",
+        "evidence": "inferred",
+        "damage_unit": "hit_point_damage",
+        "rate_unit": "aggregate_squad_damage_per_combat_second",
+        "combat_time_unit": "seconds",
+        "source_scope": "session_all_opponents",
+        "source": "Top-Damage-By-Skill sample",
+        "attribution": "enemy_profession_not_attributed",
+    }
+
+
+def _condition_profile(conditions):
+    if not conditions:
+        return {
+            "status": "not_observed",
+            "source_scope": "session_all_opponents",
+            "source": "Conditions-In",
+        }
+    damaging = [row for row in conditions if row["effect"] in _DAMAGING_CONDITIONS]
+    total = sum(row["uptime_percent"] for row in damaging)
+    normalized = [
+        {
+            "effect": row["effect"],
+            "uptime_percent": row["uptime_percent"],
+            "uptime_unit": "percent_of_squad_active_time",
+            "pressure_share_percent": round((row["uptime_percent"] / total) * 100, 2) if total else 0.0,
+            "evidence": "observed",
+        }
+        for row in damaging
+    ]
+    return {
+        "status": "observed",
+        "measurement": "normalized_squad_average_uptime",
+        "damaging_condition_uptime_index": round(total, 3),
+        "dominant_condition": normalized[0]["effect"] if normalized else None,
+        "normalized": normalized,
+        "source_scope": "session_all_opponents",
+        "source": "Conditions-In",
+        "attribution": "enemy_profession_not_attributed",
+    }
+
+
+def _incoming_strip_profile(defense_pressure, debuff_strips, snapshots, combat_seconds):
+    if defense_pressure.get("available"):
+        count = defense_pressure["incoming_strips"]
+        return [{
+            "effect": "Boon Strip",
+            "count": count,
+            "count_unit": "boons_removed_from_squad",
+            "rate_per_combat_second": round(count / combat_seconds, 2) if combat_seconds else None,
+            "rate_per_combat_minute": (
+                round(count / (combat_seconds / 60), 2) if combat_seconds else None
+            ),
+            "rate_unit": "aggregate_squad_boon_strips_per_combat_time",
+            "evidence": "observed",
+            "source_scope": "session_all_opponents",
+            "measurement": "boons_removed_from_squad",
+            "source": "Defenses-Summary",
+            "attribution": "enemy_profession_not_attributed",
+        }]
+    if debuff_strips:
+        return debuff_strips
+
+    capable = Counter()
+    for snapshot in snapshots:
+        for row in snapshot["professions"]:
+            if row["profession"] in _STRIP_CAPABLE_PROFESSIONS:
+                capable[row["profession"]] += row["count"]
+    if not capable:
+        return []
+    return [{
+        "effect": "Boon Strip",
+        "evidence": "inferred" if capable else "not_observed",
+        "source_scope": "session_all_opponents",
+        "measurement": "composition_capability",
+        "source": "enemy profession composition",
+        "attribution": "capability_only_not_observed_usage",
+        "capable_professions": [
+            {"profession": profession, "snapshot_appearances": count}
+            for profession, count in sorted(capable.items(), key=lambda item: (-item[1], item[0]))
+        ],
+    }]
+
+
+def _control_profile(defense_pressure, combat_seconds):
+    if not defense_pressure.get("available"):
+        return []
+    count = defense_pressure["incoming_crowd_control"]
+    return [{
+        "effect": "Incoming Crowd Control",
+        "count": count,
+        "count_unit": "received_crowd_control_events",
+        "rate_per_combat_second": round(count / combat_seconds, 2) if combat_seconds else None,
+        "rate_per_combat_minute": round(count / (combat_seconds / 60), 2) if combat_seconds else None,
+        "rate_unit": "aggregate_squad_events_per_combat_time",
+        "evidence": "observed",
+        "source_scope": "session_all_opponents",
+        "measurement": "received_crowd_control_events",
+        "source": "Defenses-Summary",
+        "attribution": "enemy_profession_not_attributed",
+    }]
+
+
+def _pull_rates(pulls, combat_seconds):
+    return [
+        {
+            **row,
+            "count_unit": "connected_pull_hits",
+            "rate_per_combat_second": round(row["count"] / combat_seconds, 3) if combat_seconds else None,
+            "rate_per_combat_minute": round(row["count"] / (combat_seconds / 60), 2) if combat_seconds else None,
+            "rate_unit": "aggregate_squad_connected_pulls_per_combat_time",
+        }
+        for row in pulls
+    ]
+
+
+def _role_context(damage_skills, pulls, incoming_strips, damage_profile):
+    damage_by_profession = {}
+    for row in damage_skills:
+        for profession in _DAMAGE_SKILL_PROFESSIONS.get(row["skill"], set()):
+            damage_by_profession.setdefault(profession, []).append(row)
+    pulls_by_profession = {}
+    for row in pulls:
+        for profession in _PULL_SKILL_PROFESSIONS.get(row["skill"], set()):
+            pulls_by_profession.setdefault(profession, []).append(row)
+    exact_strip = next(
+        (row.get("count") for row in incoming_strips if row.get("evidence") == "observed"),
+        None,
+    )
+    return {
+        "damage_by_profession": damage_by_profession,
+        "pulls_by_profession": pulls_by_profession,
+        "incoming_strip_count": exact_strip,
+        "damage_profile": damage_profile,
+    }
 
 
 def _scope_aggregate(color, snapshots):
@@ -420,12 +849,6 @@ def build_enemy_intel(
     tiddlers, fight_rows, selected_fights=None, reported_fights=None
 ):
     """Build the deterministic Enemy Intel section for a night model."""
-    snapshots = _composition_snapshots(tiddlers, fight_rows)
-    colors = sorted({snapshot["color"] for snapshot in snapshots})
-    scopes = [
-        _scope_aggregate(color, [s for s in snapshots if s["color"] == color])
-        for color in colors
-    ]
     damage_skills = _enemy_damage_skills(tiddlers)
     conditions = _squad_average_table(tiddlers, "-Conditions-In")
     debuffs = _squad_average_table(tiddlers, "-Debuffs-In")
@@ -433,8 +856,30 @@ def build_enemy_intel(
     strip_effects = {
         "boon removal", "boon strip", "boon strips", "corrupt boon", "corrupt boons"
     }
-    incoming_strips = [row for row in debuffs if row["effect"].casefold() in strip_effects]
-    pulls = _incoming_pulls(tiddlers)
+    debuff_strips = [row for row in debuffs if row["effect"].casefold() in strip_effects]
+    combat_seconds = _combat_seconds(fight_rows)
+    pulls = _pull_rates(_incoming_pulls(tiddlers), combat_seconds)
+    defense_pressure = _defense_pressure(tiddlers)
+    damage_profile = _damage_profile(defense_pressure, damage_skills, combat_seconds)
+    # Composition must be parsed once before the fallback strip capability can
+    # be generalized, then enriched once with the complete numerical context.
+    base_snapshots = _composition_snapshots(tiddlers, fight_rows)
+    incoming_strips = _incoming_strip_profile(
+        defense_pressure,
+        debuff_strips,
+        base_snapshots,
+        combat_seconds,
+    )
+    snapshots = _composition_snapshots(
+        tiddlers,
+        fight_rows,
+        role_context=_role_context(damage_skills, pulls, incoming_strips, damage_profile),
+    )
+    colors = sorted({snapshot["color"] for snapshot in snapshots})
+    scopes = [
+        _scope_aggregate(color, [s for s in snapshots if s["color"] == color])
+        for color in colors
+    ]
     modeled_fights = len(fight_rows)
     selected = int(selected_fights) if selected_fights is not None else None
     reported = int(reported_fights) if reported_fights is not None else modeled_fights
@@ -444,7 +889,8 @@ def build_enemy_intel(
         "conditions_in": {"available": bool(conditions), "scope": "session"},
         "incoming_strips": {
             "available": bool(incoming_strips),
-            "scope": "session" if incoming_strips else "not_available",
+            "scope": "session",
+            "evidence": incoming_strips[0]["evidence"] if incoming_strips else "not_observed",
         },
         "cc": {"available": bool(cc), "scope": "session"},
         "pulls": {"available": bool(pulls), "scope": "session"},
@@ -482,20 +928,18 @@ def build_enemy_intel(
             "source_scope": "session_all_opponents",
             "top_damage_skills": damage_skills,
             "conditions_in": conditions,
+            "condition_profile": _condition_profile(conditions),
             "debuffs_in": debuffs,
             "incoming_strips": incoming_strips,
             "cc": cc,
+            "control_profile": _control_profile(defense_pressure, combat_seconds),
             "pulls": pulls,
-            "damage_profile": {
-                "direct_percent": None,
-                "condition_percent": None,
-                "status": "not_available_from_combiner_summary",
-            },
+            "damage_profile": damage_profile,
         },
         "methodology": {
             "profession_counts": "observed",
             "party_placement": "inferred",
-            "roles": "inferred_from_profession_family",
+            "roles": "inferred_from_observed_frequency_session_pressure_and_profession_archetype",
             "exact_builds": "not_available",
             "all_scope": "comparison_only_never_blended",
         },
