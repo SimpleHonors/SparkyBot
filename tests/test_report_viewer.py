@@ -71,6 +71,102 @@ def test_invalid_default_view_falls_back_to_sparky():
     assert '"defaultView":"sparky"' in report
 
 
+def test_pro_viewer_exposes_navigation_subviews_and_persistent_themes():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert 'data-view="sparky">Pro<' in report
+    for label in (
+        "Overview",
+        "DPS",
+        "Support",
+        "Healing",
+        "High Scores",
+        "Enemy Intel",
+        "Details / Fights",
+        "Night Summary",
+        "Fight Timeline",
+        "Strips & CC",
+    ):
+        assert label in report
+    assert 'value="graphite">Graphite<' in report
+    assert 'value="midnight">Midnight<' in report
+    assert 'value="studio-light">Studio Light<' in report
+    assert "sparkybot-report-theme" in report
+    assert "prefers-reduced-motion" in report
+
+
+def test_enemy_intel_is_comparison_only_for_all_and_labels_estimates():
+    model = build_night_model(_tiddlers())
+    model["enemy_intel"] = {
+        "coverage": {
+            "selected_fights": 31,
+            "reported_fights": 23,
+            "composition_snapshots": 30,
+            "colors": ["Green", "Red"],
+        },
+        "scopes": [
+            {
+                "id": "green",
+                "label": "Green",
+                "color": "Green",
+                "fight_indexes": [1],
+                "aggregate": {"professions": []},
+                "groups": [],
+            }
+        ],
+        "fights": [
+            {
+                "index": 1,
+                "color": "Green",
+                "enemy_count": 5,
+                "estimated_subgroups": [
+                    {
+                        "party": 1,
+                        "members": [
+                            {
+                                "profession": "Firebrand",
+                                "role": "Support",
+                                "evidence": "inferred",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "all": {"mode": "comparison_only", "estimated_subgroups": None},
+        "session_pressure": {},
+        "ai_analysis": None,
+    }
+
+    report = build_switchable_report(
+        "<html><title>Report</title></html>", model
+    )
+
+    assert "All opponents is comparison-only" in report
+    assert "never blended into one fake party grid" in report
+    assert "Estimated Enemy Group Comp" in report
+    assert "Observed profession" in report
+    assert "Inferred placement" in report
+    assert "Unknown" in report
+    assert "AI Enemy Read" in report
+    assert "fetch(" not in report
+
+
+def test_poison_pressure_is_visible_in_overview_and_dps_conditions():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert report.count("poisonSpotlight()") >= 3
+    assert "Poison Pressure" in report
+    assert "Demon Queen" in report
+    assert "do not prove which applications triggered" in report
+
+
 def test_convert_file_unpacks_upstream_loader_and_replaces_it_atomically(tmp_path):
     classic = "<html><head><title>Night</title></head><body>sentinel</body></html>"
     path = tmp_path / "night.html"

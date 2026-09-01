@@ -325,82 +325,359 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           rows + "</tbody></table></article>";
       }).join("") + "</div>";
   }
+  function boardsFor(terms) {
+    if (!terms || !terms.length) return allBoards();
+    return allBoards().filter(function (board) {
+      var key = (String(board.stat || "") + " " +
+        String(board.caption || "") + " " + String(board.value_label || "")).toLowerCase();
+      return terms.some(function (term) { return key.indexOf(term) >= 0; });
+    });
+  }
+  function boardGrid(terms, limit, emptyText) {
+    var boards = boardsFor(terms);
+    return boards.length ? "<div class=\"boards\">" + boards.map(function (board) {
+      return boardCard(board, limit || 10);
+    }).join("") + "</div>" : "<p class=\"empty\">" + esc(emptyText ||
+      "No matching source table was available for this report.") + "</p>";
+  }
+  function sectionHead(kicker, title, text) {
+    return "<div class=\"section-head\"><div><span class=\"eyebrow\">" +
+      esc(kicker) + "</span><h2>" + esc(title) + "</h2></div><p>" +
+      esc(text) + "</p></div>";
+  }
+  function subnav(group, items) {
+    return "<nav class=\"subtabs\" aria-label=\"" + esc(titleCase(group)) +
+      " views\" data-subnav=\"" + esc(group) + "\">" + items.map(function (item, i) {
+        return "<button type=\"button\" role=\"tab\" aria-selected=\"" +
+          (i ? "false" : "true") + "\" class=\"" + (i ? "" : "selected") +
+          "\" data-subtab=\"" + esc(item[0]) + "\">" + esc(item[1]) + "</button>";
+      }).join("") + "</nav>";
+  }
+  function subpanel(group, id, content, hidden) {
+    return "<div role=\"tabpanel\" data-subsection=\"" + esc(group) +
+      "\" data-subview=\"" + esc(id) + "\"" + (hidden ? " hidden" : "") +
+      ">" + content + "</div>";
+  }
+  function fightPulse() {
+    var fights = model.fights || [];
+    if (!fights.length) return "<p class=\"empty\">No fight timeline was available.</p>";
+    var width = Math.max(560, fights.length * 25), height = 150;
+    var max = Math.max.apply(null, fights.map(function (f) {
+      return Number(f.kills || f.downs || 0);
+    }).concat([1]));
+    var points = fights.map(function (f, i) {
+      var x = 15 + i * ((width - 30) / Math.max(1, fights.length - 1));
+      var y = height - 22 - (Number(f.kills || f.downs || 0) / max) * 105;
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return "<div class=\"chart-card\"><div class=\"chart-title\"><b>Fight pulse</b>" +
+      "<span>Enemy kills by fight</span></div><div class=\"svg-scroll\"><svg " +
+      "viewBox=\"0 0 " + width + " " + height + "\" role=\"img\" " +
+      "aria-label=\"Enemy kills across the night\"><line x1=\"15\" y1=\"128\" " +
+      "x2=\"" + (width - 15) + "\" y2=\"128\" class=\"axis\"></line>" +
+      "<polyline points=\"" + points + "\" class=\"trend\"></polyline>" +
+      fights.map(function (f, i) {
+        var x = 15 + i * ((width - 30) / Math.max(1, fights.length - 1));
+        var y = height - 22 - (Number(f.kills || f.downs || 0) / max) * 105;
+        return "<circle cx=\"" + x.toFixed(1) + "\" cy=\"" + y.toFixed(1) +
+          "\" r=\"4\"><title>Fight " + esc(f.index || i + 1) + ": " +
+          esc(f.kills || f.downs || 0) + "</title></circle>";
+      }).join("") + "</svg></div></div>";
+  }
+  function poisonSpotlight() {
+    var rows = (model.poison || []).slice().sort(function (a, b) {
+      return Number(b.apps_per_min || 0) - Number(a.apps_per_min || 0);
+    });
+    var top = rows[0] || {};
+    var apps = rows.reduce(function (sum, row) { return sum + Number(row.apps || 0); }, 0);
+    return "<article class=\"spotlight poison\"><div><span class=\"eyebrow\">" +
+      "Signature pressure</span><h2>Poison Pressure</h2><p>Front-and-center because " +
+      "Demon Queen squads care about healing denial and sustained poison coverage.</p>" +
+      "<p class=\"accuracy\"><b>Accuracy:</b> logs show poison output and applications; " +
+      "they do not prove which applications triggered Demon Queen Relic.</p></div>" +
+      "<div class=\"spot-metrics\"><div><strong>" + fmt(apps) +
+      "</strong><span>applications</span></div><div><strong>" +
+      esc(top.name || "—") + "</strong><span>top pressure · " +
+      fmt(top.apps_per_min) + " apps/min</span></div></div></article>";
+  }
+  function highScoreGrid(terms) {
+    var blocks = model.high_scores && model.high_scores.blocks || [];
+    if (terms && terms.length) blocks = blocks.filter(function (block) {
+      var key = String(block.caption || "").toLowerCase();
+      return terms.some(function (term) { return key.indexOf(term) >= 0; });
+    });
+    if (!blocks.length) return "<p class=\"empty\">No matching high-score blocks were found.</p>";
+    return "<div class=\"boards\">" + blocks.map(function (block) {
+      var rows = (block.rows || []).map(function (row, i) {
+        return "<tr><td class=\"rank\">" + (i + 1) + "</td><td>" +
+          esc((row.cells || []).join(" · ")) + "</td><td class=\"number\">" +
+          fmt(row.score) + "</td></tr>";
+      }).join("");
+      return "<article class=\"board\"><h3>" + esc(block.caption || "High score") +
+        "</h3><div class=\"table-wrap\"><table><tbody>" + rows +
+        "</tbody></table></div></article>";
+    }).join("") + "</div>";
+  }
+  function chips(rows, labelKey, valueKey, limit) {
+    rows = (rows || []).slice(0, limit || 12);
+    if (!rows.length) return "<span class=\"muted\">Unavailable</span>";
+    return "<div class=\"chips\">" + rows.map(function (row) {
+      var label = typeof row === "string" ? row :
+        (row[labelKey] || row.name || row.skill || row.profession || "Unknown");
+      var value = typeof row === "string" ? "" :
+        (row[valueKey] != null ? row[valueKey] : (row.count != null ? row.count : row.damage));
+      return "<span><b>" + esc(label) + "</b>" +
+        (value == null || value === "" ? "" : " · " + fmt(value)) + "</span>";
+    }).join("") + "</div>";
+  }
+  function enemyScopes() {
+    return model.enemy_intel && model.enemy_intel.scopes || [];
+  }
+  function enemyCoverage() {
+    var c = model.enemy_intel && model.enemy_intel.coverage || {};
+    var selected = c.selected_fights == null ? "—" : c.selected_fights;
+    var reported = c.reported_fights == null ? (c.modeled_fights == null ? "—" : c.modeled_fights) : c.reported_fights;
+    return "<div class=\"coverage\"><span><b>" + fmt(selected) + "</b> selected</span>" +
+      "<span><b>" + fmt(reported) + "</b> parsed</span><span><b>" +
+      fmt(c.composition_snapshots) + "</b> composition snapshots</span><span><b>" +
+      fmt((c.colors || []).join ? c.colors.join(" / ") : c.colors) +
+      "</b> enemy colors</span></div>";
+  }
+  function pressurePanels(scope) {
+    var intel = model.enemy_intel || {};
+    var pressure = scope && scope.aggregate || intel.session_pressure || {};
+    var sessionOnly = pressure.pressure_scope === "session_only" ||
+      pressure.source_scope === "session_only" || (scope && !(scope.aggregate || {}).top_damage_skills);
+    if (scope && sessionOnly) pressure = intel.session_pressure || pressure;
+    return "<p class=\"scope-note\">" + (scope && sessionOnly ?
+      "All opponents / unavailable by color" : "Observed for this scope") + "</p>" +
+      "<div class=\"intel-grid\"><article class=\"intel-card\"><h3>Incoming damage skills</h3>" +
+      chips(pressure.top_damage_skills, "skill", "damage", 10) + "</article>" +
+      "<article class=\"intel-card\"><h3>Conditions and damage profile</h3>" +
+      chips((pressure.conditions_in || []).concat(pressure.debuffs_in || []), "name", "count", 10) +
+      (pressure.damage_profile ? chips([pressure.damage_profile], "label", "value", 2) : "") +
+      "</article><article class=\"intel-card\"><h3>Incoming strips</h3>" +
+      chips(pressure.incoming_strips, "skill", "count", 10) + "</article>" +
+      "<article class=\"intel-card\"><h3>Control and pulls</h3>" +
+      chips((pressure.cc || []).concat(pressure.pulls || []), "skill", "count", 10) +
+      "</article></div>";
+  }
+  function scopeSummary(scope) {
+    var a = scope && scope.aggregate || {};
+    return "<div class=\"intel-kpis\"><div><strong>" + fmt(a.enemy_size_avg) +
+      "</strong><span>average enemy size</span></div><div><strong>" +
+      fmt(a.enemy_size_max) + "</strong><span>largest observed</span></div><div><strong>" +
+      fmt((scope && scope.fight_indexes || []).length) + "</strong><span>fight snapshots</span></div></div>" +
+      "<article class=\"intel-card wide\"><h3>Observed professions</h3>" +
+      chips(a.professions, "profession", "count", 30) + "</article>" + pressurePanels(scope);
+  }
+  function comparisonView() {
+    var intel = model.enemy_intel || {};
+    var comparisons = intel.all && intel.all.comparisons || [];
+    var scopes = enemyScopes();
+    if (!comparisons.length) comparisons = scopes.map(function (scope) {
+      return {label:scope.label || scope.color, color:scope.color,
+        enemy_size_avg:(scope.aggregate || {}).enemy_size_avg,
+        enemy_size_max:(scope.aggregate || {}).enemy_size_max,
+        professions:(scope.aggregate || {}).professions};
+    });
+    return "<div class=\"comparison-banner\"><b>All opponents is comparison-only.</b> " +
+      "Enemy colors and distinct groups are never blended into one fake party grid.</div>" +
+      (comparisons.length ? "<div class=\"comparison-grid\">" + comparisons.map(function (item) {
+        return "<article class=\"intel-card color-card\" data-color=\"" +
+          esc(String(item.color || item.label || "unknown").toLowerCase()) + "\"><h3>" +
+          esc(item.label || item.color || "Opponent") + "</h3><p><b>" +
+          fmt(item.enemy_size_avg) + "</b> average · <b>" + fmt(item.enemy_size_max) +
+          "</b> max</p>" + chips(item.professions, "profession", "count", 8) +
+          "</article>";
+      }).join("") + "</div>" : "<p class=\"empty\">No color comparison was available.</p>") +
+      pressurePanels(null);
+  }
+  function partyGrid(fight) {
+    var groups = fight && fight.estimated_subgroups || [];
+    if (!groups.length) return "<p class=\"empty\">No estimated party reconstruction was available.</p>";
+    return "<div class=\"evidence-key\"><span><i class=\"observed\"></i>Observed profession</span>" +
+      "<span><i class=\"inferred\"></i>Inferred placement</span><span><i class=\"unknown\"></i>Unknown</span></div>" +
+      "<div class=\"party-grid\">" + groups.map(function (party, i) {
+        var members = (party.members || []).map(function (member) {
+          var evidence = member.evidence || (member.observed ? "observed" : "inferred");
+          return "<li class=\"" + esc(evidence) + "\"><b>" +
+            esc(member.profession || "Unknown") + "</b><span>" +
+            esc(member.role || "Role unknown") + "</span><small>" +
+            esc(evidence === "observed" ? "Observed" : "Inferred placement") +
+            "</small></li>";
+        }).join("");
+        var unknown = Number(party.unknown_slots || party.open_slots || 0);
+        while (unknown-- > 0) members += "<li class=\"unknown\"><b>Unknown</b>" +
+          "<span>Unidentified slot</span><small>Unknown</small></li>";
+        return "<article class=\"party\"><header><b>Party " +
+          fmt(party.party || party.index || i + 1) + "</b><span>" +
+          fmt(party.confidence) + " confidence</span></header><ol>" + members +
+          "</ol></article>";
+      }).join("") + "</div><p class=\"accuracy\"><b>Estimated Enemy Group Comp:</b> " +
+      "profession counts are observed where available; five-player party placement and roles " +
+      "are inferred. This is a best-fit reconstruction, not hidden squad data.</p>";
+  }
+  function enemyIntelShell() {
+    var scopes = enemyScopes();
+    var options = scopes.map(function (scope) {
+      return "<option value=\"" + esc(scope.id || scope.color) + "\">" +
+        esc(scope.label || scope.color) + "</option>";
+    }).join("");
+    var ai = model.enemy_intel && model.enemy_intel.ai_analysis;
+    return sectionHead("Opponent analysis", "Enemy Intel",
+      "What they brought, what hit us, and the patterns that worked against us.") +
+      enemyCoverage() + "<div class=\"intel-controls\"><label>Opponent scope<select " +
+      "id=\"enemy-color\"><option value=\"all\">All opponents</option>" + options +
+      "</select></label><label>Group or fight<select id=\"enemy-detail\" disabled>" +
+      "<option value=\"summary\">Color summary</option></select></label></div>" +
+      "<div id=\"enemy-panel\">" + comparisonView() + "</div>" +
+      (ai ? "<article class=\"ai-read\"><span class=\"eyebrow\">Optional analysis</span>" +
+        "<h2>AI Enemy Read</h2><p>" + esc(ai.summary || ai.text || ai) +
+        "</p><small>Embedded when the report was generated. Opening this file makes no model call.</small></article>" : "");
+  }
   function renderSparky() {
     var boards = allBoards();
-    var body = reportHeading("Sparky · the complete guided view") +
-      totalsCards(false) +
-      "<nav class=\"tabs\" aria-label=\"Report sections\">" +
-      "<button class=\"selected\" data-tab=\"overview\">Overview</button>" +
-      "<button data-tab=\"players\">Players</button>" +
-      "<button data-tab=\"fights\">Fights</button>" +
-      "<button data-tab=\"poison\">Poison</button>" +
-      "<button data-tab=\"source\">Every detail</button></nav>" +
-      "<section data-section=\"overview\"><div class=\"section-head\"><div>" +
-      "<span class=\"eyebrow\">Start here</span><h2>What happened tonight</h2>" +
-      "</div><p>Headline performers and the numbers that tell the story.</p></div>" +
-      (boards.length ? "<div class=\"boards\">" +
-        boards.slice(0, 6).map(function (b) { return boardCard(b, 10); }).join("") +
-        "</div>" : "<p class=\"empty\">No overview boards were found.</p>") +
-      highScoreCards() + "</section>" +
-      "<section data-section=\"players\" hidden><div class=\"section-head\"><div>" +
-      "<span class=\"eyebrow\">All boards</span><h2>Player performance</h2></div>" +
-      "<label class=\"search\">Filter <input id=\"player-filter\" " +
-      "placeholder=\"Name, account, class…\"></label></div>" +
-      (boards.length ? "<div id=\"all-boards\" class=\"boards\">" +
-        boards.map(function (b) { return boardCard(b, 50); }).join("") +
-        "</div>" : "<p class=\"empty\">No player tables were found.</p>") +
-      squadCards() + "</section>" +
-      "<section data-section=\"fights\" hidden><div class=\"section-head\"><div>" +
-      "<span class=\"eyebrow\">Fight by fight</span><h2>The night in order</h2>" +
-      "</div><p>One row per parsed combat log.</p></div>" + fightsTable() + "</section>" +
-      "<section data-section=\"poison\" hidden><div class=\"section-head\"><div>" +
-      "<span class=\"eyebrow\">Coverage</span><h2>Poison pressure</h2></div>" +
-      "<p>Applications normalized by active fight time.</p></div>" +
-      poisonTable() + "</section>" +
-      "<section data-section=\"source\" hidden><div class=\"source-callout\">" +
-      "<span class=\"eyebrow\">Nothing hidden</span><h2>Need every original " +
-      "table and chart?</h2><p>Classic is the byte-for-byte upstream report " +
-      "inside this same file.</p><button id=\"open-classic\">Open Classic</button>" +
-      "</div></section>";
+    var overview = subnav("overview", [["summary","Night Summary"],["timeline","Fight Timeline"]]) +
+      subpanel("overview", "summary", poisonSpotlight() +
+        sectionHead("Command view", "The important things", "Performance, pressure, and standout players without the table hunt.") +
+        boardGrid([], 8, "No overview boards were found."), false) +
+      subpanel("overview", "timeline", sectionHead("Fight by fight", "Night timeline", "Follow momentum and open the detailed rows below.") +
+        fightPulse() + fightsTable(), true);
+    var dps = subnav("dps", [["overview","Overview"],["direct","Direct"],["conditions","Conditions"],["skills","Skills"],["pressure","Pressure"]]) +
+      subpanel("dps", "overview", sectionHead("Damage", "DPS overview", "Output, burst, downs, and kills.") + boardGrid(["damage","dps","burst","kill","down"], 12), false) +
+      subpanel("dps", "direct", sectionHead("Power", "Direct damage", "Power pressure and burst output.") + boardGrid(["power","direct","burst"], 15), true) +
+      subpanel("dps", "conditions", poisonSpotlight() + sectionHead("Condition pressure", "Conditions", "Poison gets its full breakdown here alongside condition output.") + poisonTable() + boardGrid(["condition","condi"], 15), true) +
+      subpanel("dps", "skills", sectionHead("Execution", "Damage by skill", "Which abilities actually produced the output.") + boardGrid(["skill","ability"], 20), true) +
+      subpanel("dps", "pressure", sectionHead("Conversion", "Downs and pressure", "Damage that converted into downs and kills.") + boardGrid(["down","kill","pressure"], 20), true);
+    var support = subnav("support", [["overview","Overview"],["cleanses","Cleanses"],["strips","Strips & CC"],["boons","Boons"],["res","Resurrects"]]) +
+      subpanel("support", "overview", sectionHead("Squad utility", "Support overview", "The players who kept the squad functional.") + boardGrid(["cleanse","strip","boon","support","res","cc"], 12), false) +
+      subpanel("support", "cleanses", boardGrid(["cleanse"], 20), true) +
+      subpanel("support", "strips", boardGrid(["strip","cc","control"], 20), true) +
+      subpanel("support", "boons", boardGrid(["boon","quickness","stability","alacrity"], 20), true) +
+      subpanel("support", "res", boardGrid(["res","revive","rally"], 20), true);
+    var healing = subnav("healing", [["overview","Overview"],["barrier","Healing & Barrier"],["profiles","Profiles"],["skills","By Skill / Target"]]) +
+      subpanel("healing", "overview", sectionHead("Sustain", "Healing overview", "Healing, barrier, and survival impact.") + boardGrid(["heal","barrier","shield"], 15), false) +
+      subpanel("healing", "barrier", boardGrid(["heal","barrier","shield"], 25), true) +
+      subpanel("healing", "profiles", boardGrid(["hps","heal","support"], 25), true) +
+      subpanel("healing", "skills", boardGrid(["heal skill","healing skill","target"], 25), true);
+    var scores = subnav("scores", [["all","All"],["offense","Offense"],["support","Support"],["healing","Healing"],["defense","Defense"]]) +
+      subpanel("scores", "all", highScoreGrid([]), false) +
+      subpanel("scores", "offense", highScoreGrid(["damage","dps","kill","down","burst"]), true) +
+      subpanel("scores", "support", highScoreGrid(["cleanse","strip","boon","cc","res"]), true) +
+      subpanel("scores", "healing", highScoreGrid(["heal","barrier"]), true) +
+      subpanel("scores", "defense", highScoreGrid(["defense","damage taken","death","survival"]), true);
+    var details = subnav("details", [["fights","Fights"],["players","Players"],["attendance","Attendance"],["composition","Composition"],["tables","All Tables"]]) +
+      subpanel("details", "fights", fightsTable(), false) +
+      subpanel("details", "players", "<label class=\"search\">Filter players<input id=\"player-filter\" placeholder=\"Name, account, class…\"></label>" + boardGrid([], 50), true) +
+      subpanel("details", "attendance", boardGrid(["attendance","fight attendance"], 50), true) +
+      subpanel("details", "composition", squadCards() || "<p class=\"empty\">No squad composition was found.</p>", true) +
+      subpanel("details", "tables", "<div id=\"all-boards\">" + boardGrid([], 100) + "</div>" + highScoreGrid([]) + poisonTable(), true);
+    var body = "<div class=\"session-strip\"><b>Sparky Pro</b><span>" +
+      esc((model.session || {}).date || "Night report") + "</span><span>" +
+      esc(humanDuration((model.session || {}).total_duration) || "Duration unavailable") +
+      "</span><span>Offline · deterministic</span></div>" +
+      reportHeading("Pro · command analytics") + totalsCards(false) +
+      "<nav class=\"tabs\" aria-label=\"Pro report views\" role=\"tablist\">" +
+      [["overview","Overview"],["dps","DPS"],["support","Support"],["healing","Healing"],
+       ["scores","High Scores"],["enemy","Enemy Intel"],["details","Details / Fights"]].map(function (item, i) {
+        return "<button type=\"button\" role=\"tab\" aria-selected=\"" +
+          (i ? "false" : "true") + "\" class=\"" + (i ? "" : "selected") +
+          "\" data-tab=\"" + item[0] + "\">" + item[1] + "</button>";
+      }).join("") + "</nav>" +
+      "<section data-section=\"overview\">" + overview + "</section>" +
+      "<section data-section=\"dps\" hidden>" + dps + "</section>" +
+      "<section data-section=\"support\" hidden>" + support + "</section>" +
+      "<section data-section=\"healing\" hidden>" + healing + "</section>" +
+      "<section data-section=\"scores\" hidden>" + scores + "</section>" +
+      "<section data-section=\"enemy\" hidden>" + enemyIntelShell() + "</section>" +
+      "<section data-section=\"details\" hidden>" + details +
+      "<div class=\"source-callout\"><b>Need the untouched upstream report?</b>" +
+      "<button id=\"open-classic\">Open Classic</button></div></section>";
     var extraCss = [
-      ".tabs{position:sticky;top:0;z-index:2;display:flex;gap:7px;margin:24px 0;",
-      "padding:8px;border:1px solid #29443b;border-radius:14px;background:#0e1916ee;",
-      "backdrop-filter:blur(12px)}.tabs button,.source-callout button{border:0;",
-      "border-radius:9px;padding:9px 14px;background:transparent;color:#a9beb7;",
-      "font:inherit;font-weight:700;cursor:pointer}.tabs button.selected,",
-      ".source-callout button{background:#48dda5;color:#07140f}",
-      ".section-head{display:flex;align-items:end;justify-content:space-between;",
-      "gap:20px;margin:30px 0 14px}.section-head h2{font-size:24px;margin:4px 0 0}",
-      ".section-head p{color:#8ca59c;max-width:420px}.table-panel{border:1px solid #273f37;",
-      "border-radius:14px;background:#111c19}.search{color:#8ca59c}.search input{",
-      "display:block;margin-top:5px;min-width:240px;border:1px solid #315247;",
-      "border-radius:9px;padding:9px 11px;background:#0b1411;color:#edf8f4}",
-      ".squad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}",
-      ".squad{border:1px solid #273f37;border-radius:12px;padding:12px;background:#111c19}",
-      ".squad h3{margin:0 0 8px}.squad span{display:block;color:#a9beb7;font-size:12px}",
-      ".source-callout{text-align:center;padding:60px 20px;border:1px solid #2c4d42;",
-      "border-radius:18px;background:linear-gradient(135deg,#13251f,#0d1714)}",
-      ".source-callout h2{font-size:32px;margin:8px 0}.source-callout p{color:#9db3ab}",
-      ".source-callout button{padding:11px 24px;margin-top:10px}",
-      "@media(max-width:700px){.tabs{overflow:auto}.section-head{display:block}",
-      ".squad-grid{grid-template-columns:1fr}.search input{min-width:0;width:100%}}"
+      ".session-strip{position:sticky;top:0;z-index:5;display:flex;gap:18px;align-items:center;",
+      "padding:9px 14px;margin:-30px -24px 24px;background:var(--surface);border-bottom:1px solid var(--line);",
+      "color:var(--muted);font-size:12px}.session-strip b{color:var(--text)}",
+      ".tabs{position:sticky;top:36px;z-index:4;display:flex;gap:4px;margin:24px 0 16px;",
+      "padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}",
+      ".tabs button,.subtabs button,.source-callout button{border:1px solid transparent;border-radius:7px;",
+      "padding:9px 12px;background:transparent;color:var(--muted);font:inherit;font-weight:700;cursor:pointer}",
+      ".tabs button:hover,.subtabs button:hover{color:var(--text);border-color:var(--line)}",
+      ".tabs button.selected{background:var(--accent);color:var(--on-accent)}",
+      ".subtabs{display:flex;gap:6px;overflow:auto;margin:0 0 20px;border-bottom:1px solid var(--line);padding:0 0 8px}",
+      ".subtabs button.selected{color:var(--accent);background:var(--panel);border-color:var(--line)}",
+      ".section-head{display:flex;align-items:end;justify-content:space-between;gap:20px;margin:28px 0 14px}",
+      ".section-head h2{font-size:24px;margin:4px 0 0}.section-head p{color:var(--muted);max-width:520px;margin:0}",
+      ".table-panel{border:1px solid var(--line);border-radius:10px;background:var(--panel)}",
+      ".search{display:block;color:var(--muted);margin:12px 0}.search input,.intel-controls select{display:block;",
+      "margin-top:5px;min-width:240px;border:1px solid var(--line);border-radius:7px;padding:9px 11px;",
+      "background:var(--panel);color:var(--text);font:inherit}",
+      ".squad-grid,.intel-grid,.comparison-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}",
+      ".squad,.intel-card,.chart-card,.ai-read{border:1px solid var(--line);border-radius:10px;padding:15px;background:var(--panel)}",
+      ".squad h3,.intel-card h3{margin:0 0 10px}.squad span{display:block;color:var(--muted);font-size:12px}",
+      ".spotlight{display:grid;grid-template-columns:1.6fr 1fr;gap:20px;padding:22px;border:1px solid var(--line);",
+      "border-left:4px solid var(--good);border-radius:10px;background:var(--panel);margin:18px 0}",
+      ".spotlight h2{font-size:28px;margin:5px 0}.spotlight p{color:var(--muted)}.spot-metrics{display:grid;gap:10px}",
+      ".spot-metrics div,.intel-kpis div{padding:13px;background:var(--panel-2);border-radius:8px}",
+      ".spot-metrics strong,.intel-kpis strong{display:block;font-size:22px;color:var(--accent)}",
+      ".spot-metrics span,.intel-kpis span{color:var(--muted);font-size:12px}.accuracy{font-size:12px;color:var(--muted)}",
+      ".chart-title{display:flex;justify-content:space-between;color:var(--muted)}.chart-title b{color:var(--text)}",
+      ".svg-scroll{overflow:auto}.chart-card svg{width:100%;min-width:560px;height:150px}.axis{stroke:var(--line)}",
+      ".trend{fill:none;stroke:var(--accent);stroke-width:3;stroke-linejoin:round}.chart-card circle{fill:var(--accent-2);stroke:var(--bg);stroke-width:2}",
+      ".coverage,.intel-controls,.intel-kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.coverage span{padding:9px 12px;",
+      "border:1px solid var(--line);border-radius:999px;color:var(--muted)}.coverage b{color:var(--text)}",
+      ".intel-controls label{color:var(--muted);font-size:12px}.intel-kpis{display:grid;grid-template-columns:repeat(3,1fr)}",
+      ".wide{margin:12px 0}.chips{display:flex;flex-wrap:wrap;gap:7px}.chips span{padding:6px 9px;background:var(--panel-2);",
+      "border:1px solid var(--line-soft);border-radius:999px;color:var(--muted);font-size:12px}.chips b{color:var(--text)}",
+      ".scope-note,.muted{color:var(--muted)}.comparison-banner{padding:13px;border-left:4px solid var(--accent-2);",
+      "background:var(--panel);margin:12px 0}.party-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}",
+      ".party{border:1px dashed var(--line);border-radius:10px;background:var(--panel);overflow:hidden}.party header{display:flex;",
+      "justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line)}.party header span{color:var(--muted);font-size:11px}",
+      ".party ol{list-style:none;margin:0;padding:8px}.party li{position:relative;padding:8px 9px 8px 13px;border-bottom:1px solid var(--line-soft)}",
+      ".party li:last-child{border:0}.party li:before{content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;background:var(--good)}",
+      ".party li.inferred:before{background:var(--accent-2)}.party li.unknown:before{background:var(--faint)}.party li span,.party li small{display:block;color:var(--muted);font-size:11px}",
+      ".evidence-key{display:flex;gap:14px;color:var(--muted);font-size:12px;margin:12px 0}.evidence-key i{display:inline-block;width:8px;height:8px;",
+      "border-radius:50%;margin-right:5px;background:var(--good)}.evidence-key i.inferred{background:var(--accent-2)}.evidence-key i.unknown{background:var(--faint)}",
+      ".ai-read{margin-top:18px;border-left:4px solid var(--purple)}.ai-read small{color:var(--muted)}",
+      ".source-callout{display:flex;justify-content:space-between;align-items:center;padding:18px;margin-top:22px;border:1px solid var(--line);",
+      "border-radius:10px;background:var(--panel)}.source-callout button{background:var(--accent);color:var(--on-accent)}",
+      "@media(max-width:800px){.tabs{overflow:auto}.section-head,.spotlight{display:block}.party-grid{grid-template-columns:repeat(2,1fr)}}",
+      "@media(max-width:600px){.session-strip{margin:-18px -12px 18px;overflow:auto}.tabs{top:34px}.intel-grid,.comparison-grid,.squad-grid,",
+      ".party-grid,.intel-kpis{grid-template-columns:1fr}.search input,.intel-controls select{min-width:0;width:100%}}",
+      "@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}"
     ].join("");
-    return "<!doctype html><html><head><meta charset=\"utf-8\">" +
-      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-      "<title>Sparky report</title><style>" + commonCss + extraCss +
-      "</style></head><body><main class=\"wrap\">" + body +
-      "</main></body></html>";
+    return "<!doctype html><html data-theme=\"" + esc(currentTheme) +
+      "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+      "<title>Sparky Pro report</title><style>" + commonCss + extraCss +
+      "</style></head><body><main class=\"wrap\">" + body + "</main></body></html>";
   }
   function wireSparky(doc) {
     Array.from(doc.querySelectorAll("[data-tab]")).forEach(function (button) {
       button.addEventListener("click", function () {
         Array.from(doc.querySelectorAll("[data-tab]")).forEach(function (b) {
           b.classList.toggle("selected", b === button);
+          b.setAttribute("aria-selected", b === button ? "true" : "false");
         });
         Array.from(doc.querySelectorAll("[data-section]")).forEach(function (s) {
           s.hidden = s.getAttribute("data-section") !== button.getAttribute("data-tab");
         });
         doc.defaultView.scrollTo(0, 0);
+      });
+    });
+    Array.from(doc.querySelectorAll("[data-subnav]")).forEach(function (nav) {
+      var group = nav.getAttribute("data-subnav");
+      Array.from(nav.querySelectorAll("[data-subtab]")).forEach(function (button) {
+        button.addEventListener("click", function () {
+          Array.from(nav.querySelectorAll("[data-subtab]")).forEach(function (b) {
+            b.classList.toggle("selected", b === button);
+            b.setAttribute("aria-selected", b === button ? "true" : "false");
+          });
+          Array.from(doc.querySelectorAll("[data-subsection=\"" + group + "\"]"))
+            .forEach(function (section) {
+              section.hidden = section.getAttribute("data-subview") !==
+                button.getAttribute("data-subtab");
+            });
+        });
       });
     });
     var openClassic = doc.getElementById("open-classic");
@@ -410,10 +687,96 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var filter = doc.getElementById("player-filter");
     if (filter) filter.addEventListener("input", function () {
       var wanted = filter.value.toLowerCase();
-      Array.from(doc.querySelectorAll("#all-boards tbody tr")).forEach(function (row) {
+      Array.from(doc.querySelectorAll("[data-subview=players] tbody tr"))
+        .forEach(function (row) {
         row.hidden = wanted && row.textContent.toLowerCase().indexOf(wanted) < 0;
       });
     });
+    var colorSelect = doc.getElementById("enemy-color");
+    var detailSelect = doc.getElementById("enemy-detail");
+    var panel = doc.getElementById("enemy-panel");
+    function selectedEnemyScope() {
+      return enemyScopes().filter(function (scope) {
+        return String(scope.id || scope.color) === colorSelect.value;
+      })[0];
+    }
+    function fillEnemyDetails(scope) {
+      detailSelect.innerHTML = "<option value=\"summary\">Color summary</option>";
+      (scope.groups || []).forEach(function (group) {
+        var option = doc.createElement("option");
+        option.value = "group:" + String(group.id || group.label);
+        option.textContent = group.label || group.id || "Detected group";
+        detailSelect.appendChild(option);
+      });
+      var indexes = scope.fight_indexes || [];
+      (model.enemy_intel && model.enemy_intel.fights || []).filter(function (fight) {
+        return String(fight.color || "").toLowerCase() ===
+          String(scope.color || "").toLowerCase() &&
+          (!indexes.length || indexes.indexOf(fight.index) >= 0);
+      }).forEach(function (fight) {
+        var option = doc.createElement("option");
+        option.value = "fight:" + String(fight.index);
+        option.textContent = "Fight " + String(fight.index) + " · " +
+          String(fight.enemy_count || "?") + " enemies";
+        detailSelect.appendChild(option);
+      });
+    }
+    function drawEnemy() {
+      if (!panel || !colorSelect || !detailSelect) return;
+      if (colorSelect.value === "all") {
+        detailSelect.disabled = true;
+        panel.innerHTML = comparisonView();
+        return;
+      }
+      var scope = selectedEnemyScope();
+      if (!scope) {
+        panel.innerHTML = "<p class=\"empty\">This opponent scope was unavailable.</p>";
+        return;
+      }
+      detailSelect.disabled = false;
+      var value = detailSelect.value;
+      if (value === "summary") {
+        panel.innerHTML = scopeSummary(scope);
+      } else if (value.indexOf("group:") === 0) {
+        var id = value.slice(6);
+        var group = (scope.groups || []).filter(function (item) {
+          return String(item.id || item.label) === id;
+        })[0] || {};
+        panel.innerHTML = "<div class=\"comparison-banner\"><b>" +
+          esc(group.label || "Detected group") + "</b> · fights " +
+          esc((group.fight_indexes || []).join(", ") || "unavailable") +
+          "</div><p class=\"accuracy\">Grouping method: " +
+          esc(group.grouping_method || group.cohort_status || "best available evidence") +
+          ". Party estimates remain fight-specific until a recurring cohort is proven.</p>" +
+          scopeSummary(scope);
+      } else {
+        var index = value.slice(6);
+        var fight = (model.enemy_intel && model.enemy_intel.fights || []).filter(function (item) {
+          return String(item.index) === index && String(item.color || "").toLowerCase() ===
+            String(scope.color || "").toLowerCase();
+        })[0];
+        panel.innerHTML = fight ? "<div class=\"intel-kpis\"><div><strong>" +
+          fmt(fight.enemy_count) + "</strong><span>observed enemy count</span></div>" +
+          "<div><strong>" + fmt(fight.observed_profession_count) +
+          "</strong><span>identified professions</span></div><div><strong>" +
+          fmt(fight.confidence) + "</strong><span>reconstruction confidence</span></div></div>" +
+          "<article class=\"intel-card wide\"><h3>Observed composition</h3>" +
+          chips(fight.professions, "profession", "count", 40) + "</article>" +
+          partyGrid(fight) + pressurePanels(scope) :
+          "<p class=\"empty\">Fight composition was unavailable.</p>";
+      }
+    }
+    if (colorSelect && detailSelect && panel) {
+      colorSelect.addEventListener("change", function () {
+        if (colorSelect.value === "all") {
+          detailSelect.innerHTML = "<option value=\"summary\">Comparison only</option>";
+        } else {
+          fillEnemyDetails(selectedEnemyScope() || {});
+        }
+        drawEnemy();
+      });
+      detailSelect.addEventListener("change", drawEnemy);
+    }
   }
   function documentFor(view) {
     if (!docs[view]) {
