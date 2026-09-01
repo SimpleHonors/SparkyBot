@@ -86,6 +86,10 @@ _PROF_TIDDEL_RE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z ]*?)\s*\}\}")
 _LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
 _PIPE_LINK_RE = re.compile(r"\[\[([^\]|]*)\|([^\]]+)\]\]")
 _NUM_RE = re.compile(r"^-?[\d,]+(?:\.\d+)?%?$")
+_NUMBER_WITH_RATE_RE = re.compile(
+    r"^\s*(-?[\d,]+(?:\.\d+)?)\s*(/(?:sec|min))\s*$",
+    re.IGNORECASE,
+)
 # sentinel standing in for the '|' inside [[link|target]] during cell split
 _PIPE = "\x1f"
 
@@ -103,7 +107,51 @@ _STAT_TABLE_SUFFIXES = [
     "Pull-Skills",
     "Attendance",
     "Combat-Resurrect",
+    "Support-Summary",
+    "Offensive-Summary",
 ]
+
+
+_STAT_PROFILES = {
+    "Damage": {
+        "total_key": "targetdamage", "total_label": "Damage",
+        "total_unit": "damage", "rate_key": "targetdamageps",
+        "rate_label": "DPS", "rate_unit": "per_second",
+    },
+    "Heal-Stats": {
+        "total_key": "healing", "total_label": "Healing",
+        "total_unit": "healing", "rate_key": "healingps",
+        "rate_label": "Healing / sec", "rate_unit": "per_second",
+    },
+    "Uptimes": {
+        "rate_key": "might", "rate_label": "Might Uptime",
+        "rate_unit": "percent",
+    },
+    "Conditions-Out": {
+        "total_key": "count", "total_label": "Conditions Applied",
+        "total_unit": "applications", "rate_label": "Conditions / min",
+        "rate_unit": "per_minute", "derive_rate": True,
+    },
+    "Debuffs-Out": {
+        "total_key": "count", "total_label": "Debuffs Applied",
+        "total_unit": "applications", "rate_label": "Debuffs / min",
+        "rate_unit": "per_minute", "derive_rate": True,
+    },
+    "Mechanics": {
+        "total_key": "kllngblwplayer", "total_label": "Killing Blows",
+        "total_unit": "count", "rate_label": "Killing Blows / min",
+        "rate_unit": "per_minute", "derive_rate": True,
+    },
+    "Attendance": {
+        "total_key": "numfights", "total_label": "Fights",
+        "total_unit": "fights",
+    },
+    "Offensive-Summary": {
+        "total_key": "totaldmg", "total_label": "Damage",
+        "total_unit": "damage", "rate_label": "DPS",
+        "rate_unit": "per_second", "derive_rate": True,
+    },
+}
 
 
 def _plain(cell):
@@ -154,6 +202,19 @@ def _num(cell):
     return float(cell.replace(",", "").rstrip("%")) if (
         "." in cell or cell.endswith("%")) else int(
         cell.replace(",", "").rstrip("%"))
+
+
+def _number_and_unit(cell):
+    """Return a source number and its explicit rate unit, if present."""
+    value = _num(cell)
+    if value is not None:
+        return value, "percent" if cell.strip().endswith("%") else None
+    match = _NUMBER_WITH_RATE_RE.match(cell)
+    if not match:
+        return None, None
+    value_text, suffix = match.groups()
+    value = float(value_text.replace(",", ""))
+    return value, "per_second" if suffix.lower() == "/sec" else "per_minute"
 
 
 def _find_tiddler(tiddlers, suffix):
@@ -360,6 +421,20 @@ def _metric_key(value):
     return re.sub(r"[^a-z0-9]+", "", _plain(value).lstrip("!").lower())
 
 
+def _header_keys(line):
+    """Make header keys stable without collapsing e.g. value and value %."""
+    keys = []
+    seen = set()
+    for cell in _cells(line):
+        plain = _plain(cell).lstrip("!").strip()
+        key = _metric_key(cell)
+        if key and key in seen:
+            key += "pct" if "%" in plain else "2"
+        seen.add(key)
+        keys.append(key)
+    return keys
+
+
 def _parse_board_rows(line_iter, ranked=False, headers=None):
     rows = []
     for line in line_iter:
@@ -426,14 +501,17 @@ def _parse_board_rows(line_iter, ranked=False, headers=None):
         value = None
         nums = []
         metrics = {}
+        metric_units = {}
         for i, c in enumerate(cells):
             if i <= (name_i or 0):
                 continue
-            v = _num(c)
+            v, unit = _number_and_unit(c)
             if v is not None:
                 nums.append(v)
                 if headers and i < len(headers) and headers[i]:
                     metrics[headers[i]] = v
+                    if unit:
+                        metric_units[headers[i]] = unit
                 if value is None:
                     value = v
         row = {"rank": int(rank) if rank is not None else None,
@@ -442,8 +520,55 @@ def _parse_board_rows(line_iter, ranked=False, headers=None):
                "cells": nums}
         if headers is not None:
             row["metrics"] = metrics
+            row["metric_units"] = metric_units
         rows.append(row)
     return rows
+
+
+def _display_words(value):
+    value = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
+    return re.sub(r"[_-]+", " ", value).strip().title()
+
+
+def _rate_label(stat):
+    key = _metric_key(stat)
+    labels = {
+        "damage": "DPS",
+        "damagepersecond": "DPS",
+        "healing": "Healing / sec",
+        "healingpersecond": "Healing / sec",
+        "boonstrips": "Boon Strips / sec",
+        "stripspersecond": "Boon Strips / sec",
+        "cleanses": "Cleanses / sec",
+        "cleansespersecond": "Cleanses / sec",
+        "crowdcontroloutpersecond": "Crowd Control / sec",
+        "downs": "Downs / min",
+        "downspersecond": "Downs / sec",
+        "kills": "Kills / min",
+        "killspersecond": "Kills / sec",
+    }
+    return labels.get(key, _display_words(stat))
+
+
+def _sort_metadata(default_key, total_label=None, rate_label=None,
+                   participation=False, fight_count=False, raids=False):
+    options = []
+    if total_label:
+        options.append({"key": "total", "label": total_label})
+    if rate_label:
+        options.append({"key": "rate", "label": rate_label})
+    if participation:
+        options.append({"key": "participation_time", "label": "Fight Time"})
+    if fight_count:
+        options.append({"key": "fight_count", "label": "Fights"})
+    if raids:
+        options.append({"key": "raids", "label": "Raids"})
+    return {
+        "default_key": default_key,
+        "total_key": "total" if total_label else None,
+        "rate_key": "rate" if rate_label else None,
+        "options": options,
+    }
 
 
 def _parse_explicit_boards(tiddlers):
@@ -460,9 +585,55 @@ def _parse_explicit_boards(tiddlers):
             continue  # menu tiddler "-Leaderboard" carries no stat name
         stat = m.group(2)
         text = t.get("text") or ""
-        rows = _parse_board_rows(text.splitlines(), ranked=True)
+        lines = text.splitlines()
+        header_line = next((line for line in lines if _is_header_row(line)), "")
+        headers = _header_keys(header_line)
+        rows = _parse_board_rows(lines, ranked=True, headers=headers)
         if rows:
-            boards.append({"stat": stat, "rows": rows})
+            is_rating = "glickorating" in headers
+            avg_key = next((key for key in headers if key.startswith("avg")), None)
+            value_key = "value" if "value" in headers else avg_key
+            rate_label = _rate_label(stat)
+            rate_unit = next(
+                (
+                    row.get("metric_units", {}).get(value_key)
+                    for row in rows
+                    if row.get("metric_units", {}).get(value_key)
+                ),
+                None,
+            )
+            if rate_unit is None and "persecond" in _metric_key(stat):
+                rate_unit = "per_second"
+            for row in rows:
+                metrics = row.get("metrics", {})
+                metric_value = metrics.get(value_key) if value_key else None
+                row.update({
+                    "value": metric_value,
+                    "total": None,
+                    "rate": metric_value,
+                    "participation_time": None,
+                    "fight_count": None,
+                    "rating": metrics.get("glickorating"),
+                    "raids": metrics.get("raids"),
+                })
+            boards.append({
+                "stat": stat,
+                "scope": "historical",
+                "source_kind": (
+                    "historical_rating" if is_rating else "historical_record"
+                ),
+                "metric": {
+                    "label": _display_words(stat),
+                    "total_label": None,
+                    "total_unit": None,
+                    "rate_label": rate_label,
+                    "rate_unit": rate_unit,
+                },
+                "sort": _sort_metadata(
+                    "rate", rate_label=rate_label, raids=is_rating
+                ),
+                "rows": rows,
+            })
     return boards
 
 
@@ -506,16 +677,139 @@ def _named_table(lines, caption):
     return lines[header_index], rows
 
 
+def _column_label(key):
+    labels = {
+        "fighttime": "Fight Time",
+        "targetdamage": "Damage",
+        "targetdamageps": "DPS",
+        "targetpower": "Power Damage",
+        "targetpowerps": "Power DPS",
+        "targetcondition": "Condition Damage",
+        "targetconditionps": "Condition DPS",
+        "healing": "Healing",
+        "healingps": "Healing / sec",
+        "boonstrips": "Boon Strips",
+        "condicleanse": "Cleanses",
+        "appliedcrowdcontrol": "Crowd Control",
+        "downcontribution": "Down Contribution",
+        "killed": "Kills",
+        "downed": "Downs",
+        "numfights": "Fights",
+        "activetime": "Fight Time",
+        "resurrects": "Resurrects",
+        "stability": "Stability",
+    }
+    return labels.get(key, _display_words(key))
+
+
+def _parse_stability_generation(tiddlers):
+    """Parse Stability's dedicated Total Gen and Gen/Sec tables."""
+    tiddler = _find_tiddler(tiddlers, "-Boon-Generation-Detailed")
+    if not tiddler or not tiddler.get("text"):
+        return None
+    lines = tiddler["text"].splitlines()
+    heading = next(
+        (
+            index for index, line in enumerate(lines)
+            if line.lstrip().startswith("!") and "Stability" in _plain(line)
+        ),
+        None,
+    )
+    if heading is None:
+        return None
+
+    def table_after(start):
+        header_index = next(
+            (i for i in range(start, len(lines)) if _is_header_row(lines[i])),
+            None,
+        )
+        if header_index is None:
+            return None, [], None
+        caption_index = next(
+            (
+                i for i in range(header_index + 1, len(lines))
+                if _ends(lines[i]) == "|c" and "Stability Table" in lines[i]
+            ),
+            None,
+        )
+        if caption_index is None:
+            return None, [], None
+        headers = _header_keys(lines[header_index])
+        rows = _parse_board_rows(
+            lines[header_index + 1:caption_index], headers=headers
+        )
+        return headers, rows, caption_index + 1
+
+    headers, total_rows, next_index = table_after(heading + 1)
+    if not total_rows or next_index is None:
+        return None
+    _, rate_rows, _ = table_after(next_index)
+    rate_by_account = {
+        row["account"].casefold(): row
+        for row in rate_rows if row.get("account")
+    }
+    rate_by_name = {
+        row["name"].casefold(): row
+        for row in rate_rows if row.get("name")
+    }
+    rows = []
+    for row in total_rows:
+        rate_row = None
+        if row.get("account"):
+            rate_row = rate_by_account.get(row["account"].casefold())
+        if rate_row is None:
+            rate_row = rate_by_name.get(row["name"].casefold())
+        total = row.get("metrics", {}).get("totalgen")
+        if total is None:
+            continue
+        row.update({
+            "total": total,
+            "rate": (
+                rate_row.get("metrics", {}).get("totalgen")
+                if rate_row else None
+            ),
+            "participation_time": row.get("metrics", {}).get("fighttime"),
+            "fight_count": None,
+            "value": total,
+        })
+        rows.append(row)
+    rows.sort(key=lambda row: row["total"], reverse=True)
+    return {
+        "stat": "Stability Generation",
+        "source_key": "Stability-Generation",
+        "source_tiddler": tiddler.get("title"),
+        "scope": "session",
+        "value_label": "Stability Generation",
+        "metric": {
+            "label": "Stability Generation",
+            "total_label": "Stability Generation",
+            "total_unit": "generation",
+            "rate_label": "Stability Generation / sec",
+            "rate_unit": "per_second",
+        },
+        "sort": _sort_metadata(
+            "total", total_label="Stability Generation",
+            rate_label="Stability Generation / sec", participation=True,
+            fight_count=True,
+        ),
+        "columns": [
+            {"key": key, "label": _column_label(key)}
+            for key in (headers or []) if key
+        ],
+        "rows": rows,
+    }
+
+
 def _parse_stat_tables(tiddlers):
     """Parse the standard per-night combiner stat tables."""
-    score_rules = {
-        "Damage": ("Damage / sec", ("targetdamageps",)),
-        "Heal-Stats": ("Healing / sec", ("healingps",)),
-        "Uptimes": ("Might uptime (%)", ("might",)),
-        "Conditions-Out": ("Conditions applied", ("count",)),
-        "Debuffs-Out": ("Control effects", ("count",)),
-        "Mechanics": ("Killing blows", ("kllngblwplayer",)),
-        "Attendance": ("Fights attended", ("numfights",)),
+    legacy_value_labels = {
+        "Damage": "Damage / sec",
+        "Heal-Stats": "Healing / sec",
+        "Uptimes": "Might uptime (%)",
+        "Conditions-Out": "Conditions applied",
+        "Debuffs-Out": "Control effects",
+        "Mechanics": "Killing blows",
+        "Attendance": "Fights attended",
     }
     tables = []
     tag = _session_tag(tiddlers)
@@ -538,7 +832,7 @@ def _parse_stat_tables(tiddlers):
             row_lines = [
                 line for line in text_lines if not _is_header_row(line)
             ]
-        headers = [_metric_key(cell) for cell in _cells(header_line)]
+        headers = _header_keys(header_line)
         rows = _parse_board_rows(
             row_lines,
             headers=headers,
@@ -549,50 +843,228 @@ def _parse_stat_tables(tiddlers):
                 if suffix == "Pull-Skills"
                 else (t.get("caption") or suffix.replace("-", " ")).strip()
             )
-            value_label = None
-            keys = ()
-            if suffix in score_rules:
-                value_label, keys = score_rules[suffix]
+            profile = _STAT_PROFILES.get(suffix, {})
+            total_label = profile.get("total_label")
+            rate_label = profile.get("rate_label")
+            # ``value``/``value_label`` remain the legacy primary column;
+            # Pro consumers use the explicit total/rate/sort fields below.
+            value_label = legacy_value_labels.get(
+                suffix,
+                rate_label if profile.get("rate_key") else total_label,
+            )
             for row in rows:
                 metrics = row.get("metrics", {})
+                participation_time = (
+                    metrics.get("fighttime") or metrics.get("activetime")
+                )
+                total = (
+                    metrics.get(profile.get("total_key"))
+                    if profile.get("total_key") else None
+                )
+                rate = (
+                    metrics.get(profile.get("rate_key"))
+                    if profile.get("rate_key") else None
+                )
                 if suffix == "Pull-Skills":
+                    total_label = "Pulls"
                     value_label = "Outgoing pulls"
-                    row["value"] = sum(
+                    rate_label = "Pulls / min"
+                    total = sum(
                         value for key, value in metrics.items()
                         if key != "fighttime"
                     )
                 elif suffix == "Combat-Resurrect":
+                    total_label = "Combat Resurrect Healing"
                     value_label = "Resurrection output"
-                    row["value"] = sum(
+                    rate_label = "Combat Resurrect Healing / sec"
+                    total = sum(
                         value for key, value in metrics.items()
                         if "resurrect" in key or "naturesrenewal" in key
                     )
-                elif keys:
-                    row["value"] = next(
-                        (metrics[key] for key in keys if key in metrics), None
-                    )
-                else:
-                    row["value"] = None
+                if rate is None and total is not None and participation_time:
+                    if profile.get("derive_rate") or suffix == "Pull-Skills":
+                        rate = total / participation_time * (
+                            60 if (
+                                profile.get("rate_unit") == "per_minute"
+                                or suffix == "Pull-Skills"
+                            ) else 1
+                        )
+                    elif suffix == "Combat-Resurrect":
+                        rate = total / participation_time
+                row.update({
+                    "total": total,
+                    "rate": rate,
+                    "participation_time": participation_time,
+                    "fight_count": (
+                        int(metrics["numfights"])
+                        if metrics.get("numfights") is not None else None
+                    ),
+                    "value": (
+                        rate if profile.get("rate_key") else total
+                    ),
+                })
             if value_label:
                 rows = [row for row in rows if row["value"] is not None]
-                best_by_player = {}
-                for row in rows:
-                    player_key = (
-                        row.get("account")
-                        or f"{row.get('name', '').casefold()}|"
-                        f"{row.get('profession', '').casefold()}"
-                    )
-                    previous = best_by_player.get(player_key)
-                    if previous is None or row["value"] > previous["value"]:
-                        best_by_player[player_key] = row
-                rows = list(best_by_player.values())
+            best_by_player = {}
+            for row in rows:
+                player_key = (
+                    row.get("account")
+                    or f"{row.get('name', '').casefold()}|"
+                    f"{row.get('profession', '').casefold()}"
+                )
+                previous = best_by_player.get(player_key)
+                row_order = (
+                    row.get("value")
+                    if row.get("value") is not None
+                    else row.get("participation_time") or 0
+                )
+                previous_order = (
+                    previous.get("value")
+                    if previous and previous.get("value") is not None
+                    else previous.get("participation_time") or 0
+                    if previous else -1
+                )
+                if previous is None or row_order > previous_order:
+                    best_by_player[player_key] = row
+            rows = list(best_by_player.values())
+            if value_label:
                 rows.sort(key=lambda row: row["value"], reverse=True)
             tables.append({
                 "stat": stat,
+                "source_key": suffix,
+                "source_tiddler": t.get("title"),
+                "scope": "session",
                 "value_label": value_label,
+                "metric": {
+                    "label": total_label or rate_label or stat,
+                    "total_label": total_label,
+                    "total_unit": profile.get("total_unit"),
+                    "rate_label": rate_label,
+                    "rate_unit": (
+                        profile.get("rate_unit")
+                        or ("per_minute" if suffix == "Pull-Skills" else None)
+                        or ("per_second" if suffix == "Combat-Resurrect" else None)
+                    ),
+                },
+                "sort": _sort_metadata(
+                    "total" if total_label else ("rate" if rate_label else None),
+                    total_label=total_label,
+                    rate_label=rate_label,
+                    participation=True,
+                    fight_count=True,
+                ),
+                "columns": [
+                    {"key": key, "label": _column_label(key)}
+                    for key in headers if key
+                ],
                 "rows": rows,
             })
+
+    stability = _parse_stability_generation(tiddlers)
+    if stability:
+        tables.append(stability)
+
+    attendance = next(
+        (table for table in tables if table.get("source_key") == "Attendance"),
+        None,
+    )
+    attendance_rows = attendance.get("rows", []) if attendance else []
+    attendance_by_account = {
+        row["account"].casefold(): row
+        for row in attendance_rows if row.get("account")
+    }
+    attendance_by_name = {
+        row["name"].casefold(): row
+        for row in attendance_rows if row.get("name")
+    }
+    for table in tables:
+        for row in table["rows"]:
+            attended = None
+            if row.get("account"):
+                attended = attendance_by_account.get(row["account"].casefold())
+            if attended is None and row.get("name"):
+                attended = attendance_by_name.get(row["name"].casefold())
+            if attended:
+                row["fight_count"] = attended.get("fight_count")
+                if row.get("participation_time") is None:
+                    row["participation_time"] = attended.get(
+                        "participation_time"
+                    )
     return tables
+
+
+def _build_night_mvps(stat_tables):
+    """Pick evidence-backed session-total winners; never make a composite."""
+    tables = {table.get("source_key"): table for table in stat_tables}
+    awards = []
+
+    def add_award(category, source_key, metric_key, metric_label,
+                  total_unit="count", rate_unit="per_minute",
+                  normalized=False):
+        table = tables.get(source_key)
+        if not table:
+            return
+        candidates = []
+        for row in table.get("rows", []):
+            total = row.get("total") if normalized else row.get(
+                "metrics", {}
+            ).get(metric_key)
+            if total is None:
+                continue
+            candidates.append((total, row))
+        if not candidates:
+            return
+        total, row = max(candidates, key=lambda item: item[0])
+        participation = row.get("participation_time")
+        rate = row.get("rate") if normalized else None
+        if rate is None and participation:
+            rate = total / participation * (
+                60 if rate_unit == "per_minute" else 1
+            )
+        awards.append({
+            "category": category,
+            "metric_label": metric_label,
+            "name": row.get("name"),
+            "account": row.get("account"),
+            "profession": row.get("profession"),
+            "total": total,
+            "total_unit": total_unit,
+            "rate": rate,
+            "rate_unit": rate_unit if rate is not None else None,
+            "participation_time": participation,
+            "fight_count": row.get("fight_count"),
+            "source": {
+                "scope": "session",
+                "table": table.get("stat"),
+                "source_key": source_key,
+                "tiddler": table.get("source_tiddler"),
+            },
+            "evidence": {
+                "metric_key": metric_key,
+                "metrics": copy.deepcopy(row.get("metrics", {})),
+                "total": total,
+                "rate": rate,
+                "participation_time": participation,
+            },
+        })
+
+    add_award("Damage", "Damage", "targetdamage", "Damage",
+              total_unit="damage", rate_unit="per_second", normalized=True)
+    add_award("Healing", "Heal-Stats", "healing", "Healing",
+              total_unit="healing", rate_unit="per_second", normalized=True)
+    add_award("Cleanses", "Support-Summary", "condicleanse", "Cleanses")
+    add_award("Boon Strips", "Support-Summary", "boonstrips", "Boon Strips")
+    add_award("Resurrection", "Support-Summary", "resurrects", "Resurrects")
+    add_award("Crowd Control", "Offensive-Summary", "appliedcrowdcontrol",
+              "Crowd Control")
+    add_award("Fight Impact", "Offensive-Summary", "downcontribution",
+              "Down Contribution", total_unit="damage",
+              rate_unit="per_second")
+    add_award("Pulls", "Pull-Skills", "total", "Pulls", normalized=True)
+    add_award("Stability", "Stability-Generation", "totalgen",
+              "Stability Generation", total_unit="generation",
+              rate_unit="per_second", normalized=True)
+    return awards
 
 
 # ------------------------------------------------------- high scores
@@ -726,6 +1198,7 @@ def build_night_model(tiddlers, selected_fights=None):
         "fights": [],
         "leaderboards": [],
         "stat_tables": [],
+        "night_mvps": [],
         "high_scores": None,
         "squad_composition": None,
         "poison": [],
@@ -758,6 +1231,8 @@ def build_night_model(tiddlers, selected_fights=None):
     except Exception as exc:  # noqa
         warnings.append(f"poison: {type(exc).__name__}: {exc}")
         model["poison"] = []
+
+    model["night_mvps"] = _build_night_mvps(model["stat_tables"])
 
     try:
         reported_fights = (
