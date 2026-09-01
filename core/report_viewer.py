@@ -29,6 +29,7 @@ _PAYLOAD_RE = re.compile(
     r"([A-Za-z0-9+/=]+)</script>"
 )
 _VIEWER_MARKER = 'data-sparkybot-report-viewer="1"'
+_SELECTED_FIGHTS_RE = re.compile(r"\((\d+)\s+fights?\)", re.IGNORECASE)
 
 
 def normalize_report_view(value: str | None) -> str:
@@ -917,9 +918,11 @@ def convert_report_file(
         classic_html = unpack_html(source)
     else:
         classic_html = source
+    selected_match = _SELECTED_FIGHTS_RE.search(path.name)
+    selected_fights = int(selected_match.group(1)) if selected_match else None
     switched = build_switchable_report(
         classic_html,
-        build_night_model(list(tiddlers)),
+        build_night_model(list(tiddlers), selected_fights=selected_fights),
         default_view=default_view,
     )
 

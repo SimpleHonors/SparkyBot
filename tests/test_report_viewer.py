@@ -71,6 +71,16 @@ def test_invalid_default_view_falls_back_to_sparky():
     assert '"defaultView":"sparky"' in report
 
 
+def test_convert_report_carries_selected_log_count_from_filename(tmp_path):
+    path = tmp_path / "Raid Report 2026-08-31 (31 fights).html"
+    path.write_text("<html><title>Report</title></html>", encoding="utf-8")
+
+    convert_report_file(path, _tiddlers())
+
+    report = path.read_text(encoding="utf-8")
+    assert '"selected_fights":31' in report
+
+
 def test_pro_viewer_exposes_navigation_subviews_and_persistent_themes():
     report = build_switchable_report(
         "<html><title>Report</title></html>",
