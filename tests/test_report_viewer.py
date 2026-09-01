@@ -85,7 +85,7 @@ def test_convert_report_carries_selected_log_count_from_filename(tmp_path):
     assert "Modeled fights" in report
     assert "Combat time" in report
     assert "confidenceLabel" in report
-    assert "readableLabel(member.role" in report
+    assert "roleDisplay(role)" in report
 
 
 def test_pro_viewer_exposes_navigation_subviews_and_persistent_themes():
@@ -105,7 +105,7 @@ def test_pro_viewer_exposes_navigation_subviews_and_persistent_themes():
         "Details / Fights",
         "Night Summary",
         "Fight Timeline",
-        "Strips & CC",
+        "Boon Strips & Crowd Control",
     ):
         assert label in report
     assert 'value="graphite">Graphite<' in report
@@ -166,8 +166,8 @@ def test_enemy_intel_is_comparison_only_for_all_and_labels_estimates():
     )
 
     assert "All opponents is comparison-only" in report
-    assert "never blended into one fake party grid" in report
-    assert "Estimated Enemy Group Comp" in report
+    assert "never blended into one fake Subgroup grid" in report
+    assert "Estimated Enemy Squad Composition" in report
     assert "Observed profession" in report
     assert "Inferred placement" in report
     assert "Unknown" in report
@@ -175,16 +175,166 @@ def test_enemy_intel_is_comparison_only_for_all_and_labels_estimates():
     assert "fetch(" not in report
 
 
-def test_poison_pressure_is_visible_in_overview_and_dps_conditions():
+def test_poison_evidence_is_available_only_in_dps_conditions():
     report = build_switchable_report(
         "<html><title>Report</title></html>",
         build_night_model(_tiddlers()),
     )
 
-    assert report.count("poisonSpotlight()") >= 3
-    assert "Poison Pressure" in report
+    assert "poisonSpotlight" not in report
+    assert "poisonContext() + poisonTable()" in report
+    assert "Poison evidence" in report
     assert "Demon Queen" in report
-    assert "do not prove which applications triggered" in report
+    assert "cannot attribute individual applications" in report
+
+
+def test_pro_overview_does_not_promote_poison_as_a_signature_metric():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    # Poison remains available under DPS > Conditions, but it is not a hero card.
+    assert 'subpanel("dps", "conditions", poisonSpotlight()' not in report
+    assert 'subpanel("overview", "summary", enemyCoverage() + poisonSpotlight()' not in report
+    assert "Condition Damage" in report
+    assert "poisonTable()" in report
+
+
+def test_enemy_parties_render_as_five_tactical_profession_slots():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert "function professionGlyph" in report
+    assert "function roleClass" in report
+    assert "while (slots.length < 5)" in report
+    assert "party-slots" in report
+    assert "profession-glyph" in report
+    assert "role-badge role-" in report
+    assert "Subgroup " in report
+    assert "--guardian:" in report
+    assert "--necromancer:" in report
+    assert "--ranger:" in report
+
+
+def test_pro_has_persisted_near_black_theme_and_semantic_color_pop():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert 'value="blackout">Blackout<' in report
+    assert 'data-theme="blackout"' in report
+    assert "--bg:#020305" in report
+    assert "--role-dps:" in report
+    assert "--role-heal:" in report
+    assert "--role-support:" in report
+    assert 'localStorage.setItem("sparkybot-report-theme", theme)' in report
+    assert 'localStorage.getItem("sparkybot-report-theme")' in report
+
+
+def test_pro_items_offer_offline_accessible_drilldown_dialog():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert 'id=\\"drilldown\\"' in report
+    assert 'aria-labelledby=\\"drill-title\\"' in report
+    assert "function openDrilldown" in report
+    assert 'closest("[data-drill]")' in report
+    assert 'event.key === "Escape"' in report
+    assert 'drillAttrs("party-slot"' in report
+    assert 'drillAttrs("leaderboard-row"' in report
+    assert 'drillAttrs("pressure"' in report
+    assert "No network call is made" in report
+
+
+def test_enemy_pressure_fallbacks_are_plain_language_not_unknown_walls():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert "function conditionProfile" in report
+    assert "function stripProfile" in report
+    assert "No per-color breakdown" in report
+    assert "Source total not exported" in report
+    assert "reported or inferred" in report
+
+
+def test_pro_visuals_are_colorful_offline_and_share_drilldown_evidence():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert "function outcomeChart" in report
+    assert "function metricBars" in report
+    assert "function conditionHeatmap" in report
+    assert "function pressureBars" in report
+    assert "Kills" in report and "Enemy downs" in report
+    assert "Our downs" in report and "Our deaths" in report
+    assert 'drillAttrs("chart-bar"' in report
+    assert 'drillAttrs("heatmap-cell"' in report
+    assert "--series-kills:" in report
+    assert "--series-deaths:" in report
+
+
+def test_enemy_slot_prefers_embedded_exact_profession_icon_with_glyph_fallback():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert "model.profession_icons" in report
+    assert "data:image/png;base64," in report
+    assert "profession-icon" in report
+    assert "professionGlyph(profession)" in report
+
+
+def test_category_tables_default_to_top_five_expand_and_sort_real_metrics():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert "var initialLimit = 5" in report
+    assert "Expand all" in report and "Collapse" in report
+    assert "data-expand-board" in report
+    assert "data-sort-key" in report
+    assert "participation_weighted_rate" in report
+    assert "value_per_minute" in report
+    assert 'board.value_label || titleCase(board.stat)' in report
+    assert 'esc(board.value_label || "Score")' not in report
+
+
+def test_pro_separates_tonight_stats_from_history_and_surfaces_night_mvps():
+    report = build_switchable_report(
+        "<html><title>Report</title></html>",
+        build_night_model(_tiddlers()),
+    )
+
+    assert "return (model.stat_tables || [])" in report
+    assert "function longTermLeaderboardGrid" in report
+    assert "Long-term Leaderboards" in report
+    assert "not tonight’s performance totals" in report
+    assert "function nightMvpCards" in report
+    for category in (
+        "damage",
+        "healing",
+        "resurrection",
+        "condition_cleanses",
+        "boon_strips",
+        "stability",
+        "crowd_control",
+        "fight_impact",
+    ):
+        assert f'"{category}"' in report
+    assert "no invented universal score" in report
+    assert 'metricBars(["boon","quickness","stability","alacrity"]' in report
 
 
 def test_convert_file_unpacks_upstream_loader_and_replaces_it_atomically(tmp_path):
