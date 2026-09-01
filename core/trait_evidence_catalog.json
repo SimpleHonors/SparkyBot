@@ -1,0 +1,1975 @@
+{
+  "counts": {
+    "major_traits_scanned": 729,
+    "specializations_scanned": 81,
+    "traits_with_skill_references": 92,
+    "unique_observable_trait_skills": 126
+  },
+  "method": "All current specializations and major traits were enumerated. Only a skill ID referenced by exactly one major trait is retained; runtime use additionally requires Elite Insights isTraitProc.",
+  "schema_version": 1,
+  "skills": {
+    "10356": {
+      "elite": false,
+      "evidence_skill": "Feedback",
+      "evidence_skill_description": "Glamour. Create a dome around you that reflects projectiles.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Inspiration",
+      "specialization_id": 23,
+      "trait": "Medic's Feedback",
+      "trait_description": "Cast Feedback while reviving an ally. Feedback revives allies inside its dome.",
+      "trait_id": 756
+    },
+    "12676": {
+      "elite": false,
+      "evidence_skill": "Twin Darts",
+      "evidence_skill_description": "Fire two shots from your tail that bleed your enemy.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Wilderness Survival",
+      "specialization_id": 33,
+      "trait": "Arachnophobia",
+      "trait_description": "Spider pet's Spit and devourer pet's Twin Darts additionally inflict torment. You and your pet gain expertise; spiders and devourers gain more.",
+      "trait_id": 1099
+    },
+    "12724": {
+      "elite": false,
+      "evidence_skill": "Spit",
+      "evidence_skill_description": "Spit at your foe.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Wilderness Survival",
+      "specialization_id": 33,
+      "trait": "Arachnophobia",
+      "trait_description": "Spider pet's Spit and devourer pet's Twin Darts additionally inflict torment. You and your pet gain expertise; spiders and devourers gain more.",
+      "trait_id": 1099
+    },
+    "13037": {
+      "elite": false,
+      "evidence_skill": "Spider Venom",
+      "evidence_skill_description": "Venom. Poison foes with your next few attacks.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Shadow Arts",
+      "specialization_id": 20,
+      "trait": "Leeching Venoms",
+      "trait_description": "Venom utility skills siphon life from struck foes. Gain stacks of Spider Venom when you enter or exit stealth. Siphoning can only occur once per strike.",
+      "trait_id": 1130
+    },
+    "13334": {
+      "elite": false,
+      "evidence_skill": "Flame Expulsion",
+      "evidence_skill_description": "After a short delay, release a torrent of flame. Allies are granted might, while damage and burning is increased based on might on you.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Fire",
+      "specialization_id": 31,
+      "trait": "Pyromancer's Puissance",
+      "trait_description": "Gain might for using any skill while attuned to fire. When leaving fire attunement or successfully completing a fire overload, unleash a Flame Expulsion.",
+      "trait_id": 294
+    },
+    "13516": {
+      "elite": false,
+      "evidence_skill": "Ally Ward",
+      "evidence_skill_description": "Grant protection to nearby allies.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage",
+        "Defense"
+      ],
+      "specialization": "Inventions",
+      "specialization_id": 47,
+      "trait": "Over Shield",
+      "trait_description": "Shield skills grant protection to nearby allies. Protection on you gains increased damage reduction.",
+      "trait_id": 394
+    },
+    "13552": {
+      "elite": false,
+      "evidence_skill": "Static Discharge",
+      "evidence_skill_description": "Hit multiple foes with arcs of chain lightning. Critical hits with this ability deal increased damage.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Static Discharge",
+      "trait_description": "Discharge a bolt of lightning whenever you use a tool belt skill.",
+      "trait_id": 532
+    },
+    "13684": {
+      "elite": false,
+      "evidence_skill": "Lesser Symbol of Protection",
+      "evidence_skill_description": "Symbol. Create a symbol that gives protection to you and your allies.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support"
+      ],
+      "specialization": "Honor",
+      "specialization_id": 49,
+      "trait": "Protector's Restoration",
+      "trait_description": "Cast Lesser Symbol of Protection when you use a healing skill.",
+      "trait_id": 654
+    },
+    "13688": {
+      "elite": false,
+      "evidence_skill": "Lesser Shield of Absorption",
+      "evidence_skill_description": "Create a dome around you that pushes foes back and absorbs projectiles. After a duration, it detonates, healing nearby allies.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Honor",
+      "specialization_id": 49,
+      "trait": "Protective Reviver",
+      "trait_description": "Cast Lesser Shield of Absorption when you begin reviving an ally. Shield of Absorption revives allies when it detonates.",
+      "trait_id": 559
+    },
+    "13733": {
+      "elite": false,
+      "evidence_skill": "Lesser Chaos Storm",
+      "evidence_skill_description": "Create a magical storm at the target location that applies random conditions to foes and boons to allies.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support"
+      ],
+      "specialization": "Chaos",
+      "specialization_id": 45,
+      "trait": "Method of Madness",
+      "trait_description": "Cast Lesser Chaos Storm when you use a healing skill.",
+      "trait_id": 670
+    },
+    "13849": {
+      "elite": false,
+      "evidence_skill": "Lesser Well of Blood",
+      "evidence_skill_description": "Summon a well of blood to heal nearby allies.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Blood Magic",
+      "specialization_id": 19,
+      "trait": "Ritual of Life",
+      "trait_description": "Cast Lesser Well of Blood when reviving an ally. Wells of Blood revive allies every pulse.",
+      "trait_id": 780
+    },
+    "13906": {
+      "elite": false,
+      "evidence_skill": "Lesser Spinal Shivers",
+      "evidence_skill_description": "Chill your target and remove up to three boons, dealing extra damage based on the number of boons removed.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Spite",
+      "specialization_id": 53,
+      "trait": "Chill of Death",
+      "trait_description": "Cast Lesser Spinal Shivers on a foe when attacking them while their health is below the threshold.",
+      "trait_id": 899
+    },
+    "13907": {
+      "elite": false,
+      "evidence_skill": "Weakening Shroud",
+      "evidence_skill_description": "Bleed and weaken nearby foes.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Curses",
+      "specialization_id": 39,
+      "trait": "Weakening Shroud",
+      "trait_description": "Debilitate nearby enemies when entering shroud. Critical hits inflict weakness.",
+      "trait_id": 813
+    },
+    "13938": {
+      "elite": false,
+      "evidence_skill": "Lesser Muddy Terrain",
+      "evidence_skill_description": "Survival. Use mud to cripple, slow, and immobilize foes.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Control"
+      ],
+      "specialization": "Wilderness Survival",
+      "specialization_id": 33,
+      "trait": "Child of Earth",
+      "trait_description": "Create muddy terrain when you use a healing skill.",
+      "trait_id": 1098
+    },
+    "14136": {
+      "elite": false,
+      "evidence_skill": "Lesser Caltrops",
+      "evidence_skill_description": "Scatter caltrops that cripple and bleed foes.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Trickery",
+      "specialization_id": 44,
+      "trait": "Uncatchable",
+      "trait_description": "Leave behind lesser caltrops when you dodge.",
+      "trait_id": 1159
+    },
+    "14568": {
+      "elite": false,
+      "evidence_skill": "\"Shake It Off!\"",
+      "evidence_skill_description": "Shout. Cure conditions on yourself and nearby allies.",
+      "profession": "Warrior",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Tactics",
+      "specialization_id": 11,
+      "trait": "Shrug It Off",
+      "trait_description": "Use \"Shake It Off!\" when you use a healing skill. Removing a damaging condition from an ally heals them.",
+      "trait_id": 1479
+    },
+    "17810": {
+      "elite": false,
+      "evidence_skill": "Drop Mine",
+      "evidence_skill_description": "Drop a mine that deals damage to enemies that trigger it.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "17811": {
+      "elite": false,
+      "evidence_skill": "Magnetic Bomb",
+      "evidence_skill_description": "Set a timed charge that pulls nearby foes.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "17812": {
+      "elite": false,
+      "evidence_skill": "Superspeed",
+      "evidence_skill_description": "Run at double speed.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "17813": {
+      "elite": false,
+      "evidence_skill": "Fire Shield",
+      "evidence_skill_description": "Activate a fire shield that burns enemies who strike you, granting might for each burn applied.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "17814": {
+      "elite": false,
+      "evidence_skill": "Magnetic Aura",
+      "evidence_skill_description": "Become surrounded in a magnetic shield that reflects projectiles.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "17815": {
+      "elite": false,
+      "evidence_skill": "Glue Trail",
+      "evidence_skill_description": "Leave a trail of glue behind you that hampers enemy movement.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "21813": {
+      "elite": false,
+      "evidence_skill": "Lesser Endure Pain",
+      "evidence_skill_description": "Stance. Take no damage from attacks. You are still susceptible to conditions and control effects.",
+      "profession": "Warrior",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Defense",
+      "specialization_id": 22,
+      "trait": "Defy Pain",
+      "trait_description": "Cast Lesser Endure Pain when you use an elite skill.",
+      "trait_id": 1368
+    },
+    "22499": {
+      "elite": false,
+      "evidence_skill": "Mystic Rebuke",
+      "evidence_skill_description": "Lash out against nearby foes.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Defense"
+      ],
+      "specialization": "Zeal",
+      "specialization_id": 42,
+      "trait": "Shattered Aegis",
+      "trait_description": "When an aegis you applied blocks an attack, it unleashes a Mystic Rebuke.",
+      "trait_id": 637
+    },
+    "22521": {
+      "elite": false,
+      "evidence_skill": "Lesser Cleansing Fire",
+      "evidence_skill_description": "Cantrip. Cure conditions and burn foes. Gain might for each condition removed.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Fire",
+      "specialization_id": 31,
+      "trait": "Burning Fire",
+      "trait_description": "Cast Lesser Cleansing Fire when you have a number of conditions on you.",
+      "trait_id": 335
+    },
+    "24305": {
+      "elite": false,
+      "evidence_skill": "Lightning Rod",
+      "evidence_skill_description": "Call down lightning on a disabled foe.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Air",
+      "specialization_id": 41,
+      "trait": "Lightning Rod",
+      "trait_description": "Cast Lightning Rod when you disable a foe. Disables include stun, daze, knockback, pull, knockdown, sink, float, launch, taunt, and fear.",
+      "trait_id": 1672
+    },
+    "24329": {
+      "elite": false,
+      "evidence_skill": "Bunker Down",
+      "evidence_skill_description": "Detonates when enemies draw near.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Inventions",
+      "specialization_id": 47,
+      "trait": "Bunker Down",
+      "trait_description": "Create a proximity mine at your target's location and a med kit at your location when you disable an enemy.",
+      "trait_id": 1680
+    },
+    "24356": {
+      "elite": false,
+      "evidence_skill": "Poison Nova",
+      "evidence_skill_description": "Corruption. Release a noxious explosion and leave behind a cloud that poisons foes in the area.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Death Magic",
+      "specialization_id": 2,
+      "trait": "Death Nova",
+      "trait_description": "When you or one of your minions is downed, create a Poison Nova. Summon a jagged horror when you kill a foe.",
+      "trait_id": 842
+    },
+    "25513": {
+      "elite": true,
+      "evidence_skill": "Phantasmal Blade",
+      "evidence_skill_description": "Shoots a blade at the phantasm's current target.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Control"
+      ],
+      "specialization": "Virtuoso",
+      "specialization_id": 66,
+      "trait": "Phantasmal Blades",
+      "trait_description": "Phantasms that successfully complete their attack launch a blade at their target and grant you fury when they expire.",
+      "trait_id": 2205
+    },
+    "25579": {
+      "elite": false,
+      "evidence_skill": "Lesser Arcane Shield",
+      "evidence_skill_description": "Arcane. Block attacks with an energy shield. If it blocks three attacks, it explodes.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Defense"
+      ],
+      "specialization": "Arcane",
+      "specialization_id": 37,
+      "trait": "Final Shielding",
+      "trait_description": "Cast Lesser Arcane Shield when you use an elite skill.",
+      "trait_id": 257
+    },
+    "27198": {
+      "elite": false,
+      "evidence_skill": "Dome of the Mists",
+      "evidence_skill_description": "Create an area that blocks projectiles and weakens foes.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Defense"
+      ],
+      "specialization": "Retribution",
+      "specialization_id": 9,
+      "trait": "Planar Protection",
+      "trait_description": "Cast Dome of the Mists when you use a healing skill.",
+      "trait_id": 1811
+    },
+    "29449": {
+      "elite": false,
+      "evidence_skill": "Lesser Call of the Wild",
+      "evidence_skill_description": "Weaken nearby enemies. Grant fury, might, and swiftness to yourself and nearby allies.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Marksmanship",
+      "specialization_id": 8,
+      "trait": "Clarion Bond",
+      "trait_description": "Cast Lesser Call of the Wild when you swap pets.",
+      "trait_id": 986
+    },
+    "29522": {
+      "elite": false,
+      "evidence_skill": "Rocket Boots",
+      "evidence_skill_description": "Gadget. Fly forward, damaging foes with your rocket exhaust. Cures immobilized, crippled, and chilled. Gain superspeed when this skill ends.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Gadgeteer",
+      "trait_description": "Gadget skills are more powerful.",
+      "trait_id": 1679
+    },
+    "29560": {
+      "elite": false,
+      "evidence_skill": "Spiteful Spirit",
+      "evidence_skill_description": "Cripple nearby foes and remove their boons. Gain resolution for each foe you strike. Remove additional boons on foes below the health threshold.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Spite",
+      "specialization_id": 53,
+      "trait": "Spiteful Spirit",
+      "trait_description": "Strike around you when entering shroud.",
+      "trait_id": 903
+    },
+    "29591": {
+      "elite": false,
+      "evidence_skill": "Utility Goggles",
+      "evidence_skill_description": "Gadget. Break out of stun, gaining resistance, clearing blindness, and removing damaging conditions.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Gadgeteer",
+      "trait_description": "Gadget skills are more powerful.",
+      "trait_id": 1679
+    },
+    "29604": {
+      "elite": true,
+      "evidence_skill": "Chilling Nova",
+      "evidence_skill_description": "Create a nova at the target that damages and chills nearby foes.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Reaper",
+      "specialization_id": 34,
+      "trait": "Chilling Nova",
+      "trait_description": "Critical hits against chilled foes cause an explosion that chills adjacent foes.",
+      "trait_id": 2020
+    },
+    "29606": {
+      "elite": false,
+      "evidence_skill": "Invisible Analysis",
+      "evidence_skill_description": "Analyze a stealthed foe, applying vulnerability.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Lock On",
+      "trait_description": "Striking a stealthed foe triggers Invisible Analysis. Disabling a foe triggers Controlled Analysis. Disables include stun, daze, knockback, pull, knockdown, sink, float, launch, taunt, and fear.",
+      "trait_id": 1946
+    },
+    "29812": {
+      "elite": false,
+      "evidence_skill": "Lesser Utility Goggles",
+      "evidence_skill_description": "Gadget. Gain resistance, clear blindness, and remove damaging conditions.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Reactive Lenses",
+      "trait_description": "Activate Lesser Utility Goggles after using a healing skill.",
+      "trait_id": 1997
+    },
+    "29889": {
+      "elite": false,
+      "evidence_skill": "Aim-Assisted Rocket",
+      "evidence_skill_description": "Fire a seeking rocket at your foe.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Explosives",
+      "specialization_id": 6,
+      "trait": "Aim-Assisted Rocket",
+      "trait_description": "Missile hits launch a rocket at your target. After enough rockets have been fired, an orbital strike is called instead. This trait has an internal cooldown.",
+      "trait_id": 482
+    },
+    "29902": {
+      "elite": false,
+      "evidence_skill": "Drop Gunk",
+      "evidence_skill_description": "Drop gunk at your location to inflict a random condition.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Streamlined Kits",
+      "trait_description": "Equipping an Engineering Kit creates an attack or spell and grants you swiftness.",
+      "trait_id": 512
+    },
+    "29977": {
+      "elite": false,
+      "evidence_skill": "Lesser Signet of Might",
+      "evidence_skill_description": "Signet. Your attacks become unblockable.",
+      "profession": "Warrior",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Defense"
+      ],
+      "specialization": "Arms",
+      "specialization_id": 36,
+      "trait": "Signet Mastery",
+      "trait_description": "Signets grant a stacking ferocity boon on use. Cast Lesser Signet of Might when striking a foe below the health threshold.",
+      "trait_id": 1344
+    },
+    "29991": {
+      "elite": false,
+      "evidence_skill": "Personal Battering Ram",
+      "evidence_skill_description": "Gadget. Launch a target foe with a concealed ram head. The ram explodes on contact, burning foes.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Gadgeteer",
+      "trait_description": "Gadget skills are more powerful.",
+      "trait_id": 1679
+    },
+    "30123": {
+      "elite": false,
+      "evidence_skill": "\"Search and Rescue!\"",
+      "evidence_skill_description": "Command. Your pet will seek out and revive a downed ally.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support"
+      ],
+      "specialization": "Nature Magic",
+      "specialization_id": 25,
+      "trait": "Allies' Aid",
+      "trait_description": "Cast \"Search and Rescue!\" when you begin reviving an ally. Moa pets grant barrier to nearby allies with their Beast skill.",
+      "trait_id": 1060
+    },
+    "30142": {
+      "elite": false,
+      "evidence_skill": "Bandage",
+      "evidence_skill_description": "Drop a pack of bandages that provides a little healing.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Control"
+      ],
+      "specialization": "Inventions",
+      "specialization_id": 47,
+      "trait": "Bunker Down",
+      "trait_description": "Create a proximity mine at your target's location and a med kit at your location when you disable an enemy.",
+      "trait_id": 1680
+    },
+    "30239": {
+      "elite": false,
+      "evidence_skill": "Lesser Haste",
+      "evidence_skill_description": "Trick. Gain quickness, fury, and swiftness.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Trickery",
+      "specialization_id": 44,
+      "trait": "Burst of Agility",
+      "trait_description": "Use Lesser Haste when attacking a foe from behind or from the side or when they are defiant.",
+      "trait_id": 1252
+    },
+    "30255": {
+      "elite": false,
+      "evidence_skill": "Lesser Signet of Wrath",
+      "evidence_skill_description": "Signet. Immobilize your target.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Radiance",
+      "specialization_id": 16,
+      "trait": "Wrath of Justice",
+      "trait_description": "Striking an enemy with the damaging effect from Virtue skill 1 casts Lesser Signet of Wrath.",
+      "trait_id": 578
+    },
+    "30337": {
+      "elite": false,
+      "evidence_skill": "Throw Mine",
+      "evidence_skill_description": "Gadget. Throw out a remote-controlled land mine that damages, knocks back, and removes a boon from nearby foes. A second mine is planted at your location after the first lands.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Gadgeteer",
+      "trait_description": "Gadget skills are more powerful.",
+      "trait_id": 1679
+    },
+    "30770": {
+      "elite": true,
+      "evidence_skill": "Pulmonary Impact",
+      "evidence_skill_description": "Physical. Cause a rupture that deals massive damage when this skill ends. This ability cannot critically hit.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Daredevil",
+      "specialization_id": 7,
+      "trait": "Impacting Disruption",
+      "trait_description": "Recharge steal and inflict a pulmonary impact when you interrupt an enemy. This trait can only affect enemies with defiance bars once per interval.",
+      "trait_id": 1975
+    },
+    "30828": {
+      "elite": false,
+      "evidence_skill": "Slick Shoes",
+      "evidence_skill_description": "Gadget. Spray oil behind you, knocking down foes. Break stun and gain stability. If underwater, foes entering the field are blinded and slowed.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Gadgeteer",
+      "trait_description": "Gadget skills are more powerful.",
+      "trait_id": 1679
+    },
+    "30881": {
+      "elite": false,
+      "evidence_skill": "A.E.D.",
+      "evidence_skill_description": "Gadget. Activate your A.E.D., enabling the system to heal you after a brief period of time. If you take lethal damage while A.E.D. is active, it ends and heals you for a large amount, grants shock aura, and removes conditions.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Damage"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Gadgeteer",
+      "trait_description": "Gadget skills are more powerful.",
+      "trait_id": 1679
+    },
+    "31129": {
+      "elite": true,
+      "evidence_skill": "Bound",
+      "evidence_skill_description": "Leap into an area, and deliver a massive blow to enemies.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Defense"
+      ],
+      "specialization": "Daredevil",
+      "specialization_id": 7,
+      "trait": "Bounding Dodger",
+      "trait_description": "Your dodge ability is replaced by Bound, dealing damage to the area after you evade. Gain increased strike damage for a period of time after you dodge.",
+      "trait_id": 2047
+    },
+    "31187": {
+      "elite": true,
+      "evidence_skill": "Dash",
+      "evidence_skill_description": "Remove conditions and gain swiftness, then rush forward and evade attacks.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Defense"
+      ],
+      "specialization": "Daredevil",
+      "specialization_id": 7,
+      "trait": "Unhindered Combatant",
+      "trait_description": "Your dodge ability is replaced by a long-range dash that removes inhibiting conditions and grants swiftness and damage reduction. Removing certain conditions in this way temporarily reduces endurance gain.",
+      "trait_id": 1964
+    },
+    "31267": {
+      "elite": true,
+      "evidence_skill": "Impaling Lotus",
+      "evidence_skill_description": "Evade attacks and hurl damaging daggers, dealing multiple conditions to enemies.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Defense"
+      ],
+      "specialization": "Daredevil",
+      "specialization_id": 7,
+      "trait": "Lotus Training",
+      "trait_description": "Your dodge ability now uses Impaling Lotus, firing daggers at nearby enemies. Gain increased condition damage for a period of time when dodging.",
+      "trait_id": 1833
+    },
+    "31776": {
+      "elite": true,
+      "evidence_skill": "Lesser Seed of Life",
+      "evidence_skill_description": "Celestial Avatar. Summon a seed that heals and cleanses nearby allies of conditions when it blossoms.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support"
+      ],
+      "specialization": "Druid",
+      "specialization_id": 5,
+      "trait": "Cultivated Synergy",
+      "trait_description": "When you use a healing skill, heal around your pet and create a water field attached to them. When you combo a water field with a blast finisher, sprout a Lesser Seed of Life at the location.",
+      "trait_id": 2057
+    },
+    "32588": {
+      "elite": false,
+      "evidence_skill": "Rite of the Great Dwarf",
+      "evidence_skill_description": "Legendary Dwarf. Channel the power of the Rite of the Great Dwarf to turn yourself and nearby allies to stone to reduce incoming damage.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Damage"
+      ],
+      "specialization": "Retribution",
+      "specialization_id": 9,
+      "trait": "Versed in Stone",
+      "trait_description": "Rite of the Great Dwarf reduces damage by an additional amount. When struck below the health threshold, cast Rite of the Great Dwarf. Gain power based on your toughness.",
+      "trait_id": 1770
+    },
+    "41612": {
+      "elite": false,
+      "evidence_skill": "Orbital Command Strike",
+      "evidence_skill_description": "Call down energy from the sky to blast an area.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Explosives",
+      "specialization_id": 6,
+      "trait": "Aim-Assisted Rocket",
+      "trait_description": "Missile hits launch a rocket at your target. After enough rockets have been fired, an orbital strike is called instead. This trait has an internal cooldown.",
+      "trait_id": 482
+    },
+    "41684": {
+      "elite": true,
+      "evidence_skill": "Flash Cutter\u2014Storm",
+      "evidence_skill_description": "Fire two light blades in quick succession.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Holosmith",
+      "specialization_id": 57,
+      "trait": "Crystal Configuration: Storm",
+      "trait_description": "Photon Forge skill 1 now fires explosive projectiles, but generates extra heat.",
+      "trait_id": 2103
+    },
+    "42183": {
+      "elite": true,
+      "evidence_skill": "Reformed Mirage Mirror",
+      "evidence_skill_description": "Your shattered illusion reforms into a mirror. Touching the mirror shatters it, granting mirage cloak to you and weakening foes.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Mirage",
+      "specialization_id": 59,
+      "trait": "Desert Distortion",
+      "trait_description": "Illusions shattered by Distortion become Mirage Mirrors. Ambush skills become available for a short time whenever you grant distortion to yourself.",
+      "trait_id": 2178
+    },
+    "42470": {
+      "elite": false,
+      "evidence_skill": "Lesser Signet of Stone",
+      "evidence_skill_description": "Signet. You and your pet take no damage from attacks. You and your pet are still susceptible to conditions and control effects.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Marksmanship",
+      "specialization_id": 8,
+      "trait": "Stoneform",
+      "trait_description": "Use Lesser Signet of Stone when you use an elite skill. Activating a Signet grants might and fury.",
+      "trait_id": 1021
+    },
+    "42475": {
+      "elite": true,
+      "evidence_skill": "Bright Slash\u2014Storm",
+      "evidence_skill_description": "Launch another arc of light at your target.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Holosmith",
+      "specialization_id": 57,
+      "trait": "Crystal Configuration: Storm",
+      "trait_description": "Photon Forge skill 1 now fires explosive projectiles, but generates extra heat.",
+      "trait_id": 2103
+    },
+    "42863": {
+      "elite": true,
+      "evidence_skill": "Steal Time",
+      "evidence_skill_description": "Grant quickness to allies around you and slow your marked target. Gain stealth if malice is at or above the threshold.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Deadeye",
+      "specialization_id": 58,
+      "trait": "Fire for Effect",
+      "trait_description": "Using a stolen skill grants additional boons to allies around you. Stolen skills will always be Steal Time, regardless of the target's profession.",
+      "trait_id": 2146
+    },
+    "42913": {
+      "elite": true,
+      "evidence_skill": "Lesser Stone Resonance",
+      "evidence_skill_description": "Stance. Enter an earthen state, gaining barrier periodically over the course of the stance.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Weaver",
+      "specialization_id": 56,
+      "trait": "Bolstered Elements",
+      "trait_description": "Gain protection when activating a Stance . Activate Lesser Stone Resonance when using an elite skill.",
+      "trait_id": 2170
+    },
+    "43532": {
+      "elite": true,
+      "evidence_skill": "Magebane Tether",
+      "evidence_skill_description": "Tether yourself to your target. If they move beyond the range threshold, pull them to you. Grants might and reveals your target every second.",
+      "profession": "Warrior",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Control"
+      ],
+      "specialization": "Spellbreaker",
+      "specialization_id": 61,
+      "trait": "Magebane Tether",
+      "trait_description": "Hitting with a burst skill casts Magebane Tether on your target if they are within range.",
+      "trait_id": 2060
+    },
+    "43630": {
+      "elite": true,
+      "evidence_skill": "Vent Exhaust",
+      "evidence_skill_description": "Damage nearby foes and apply conditions to them. Lose heat. This attack activates Heat Therapy if you have not overheated.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Holosmith",
+      "specialization_id": 57,
+      "trait": "Thermal Release Valve",
+      "trait_description": "Dodge rolling vents heat as an attack against nearby foes and grants vigor. (Attack will not occur without heat.)",
+      "trait_id": 2066
+    },
+    "44240": {
+      "elite": false,
+      "evidence_skill": "Lesser Quickening Zephyr",
+      "evidence_skill_description": "Survival. You and your pet gain quickness and superspeed.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Beastmastery",
+      "specialization_id": 32,
+      "trait": "Zephyr's Speed",
+      "trait_description": "Cast Lesser Quickening Zephyr when you swap pets.",
+      "trait_id": 968
+    },
+    "44260": {
+      "elite": true,
+      "evidence_skill": "Light Strike\u2014Storm",
+      "evidence_skill_description": "Launch an arc of light at your foe.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Holosmith",
+      "specialization_id": 57,
+      "trait": "Crystal Configuration: Storm",
+      "trait_description": "Photon Forge skill 1 now fires explosive projectiles, but generates extra heat.",
+      "trait_id": 2103
+    },
+    "45709": {
+      "elite": false,
+      "evidence_skill": "Controlled Analysis",
+      "evidence_skill_description": "Analyze a disabled foe, applying vulnerability.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Tools",
+      "specialization_id": 21,
+      "trait": "Lock On",
+      "trait_description": "Striking a stealthed foe triggers Invisible Analysis. Disabling a foe triggers Controlled Analysis. Disables include stun, daze, knockback, pull, knockdown, sink, float, launch, taunt, and fear.",
+      "trait_id": 1946
+    },
+    "46843": {
+      "elite": false,
+      "evidence_skill": "Call of the Dwarf",
+      "evidence_skill_description": "Strike enemies around you, inflicting weakness, gaining barrier, and gaining additional barrier per target hit.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "46847": {
+      "elite": false,
+      "evidence_skill": "Call of the Centaur",
+      "evidence_skill_description": "Heal yourself and nearby allies.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "46849": {
+      "elite": false,
+      "evidence_skill": "Call of the Renegade",
+      "evidence_skill_description": "Strike enemies around you, inflicting bleeding and gaining Kalla's Fervor. Gain additional fervor stacks for each foe you hit.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "46854": {
+      "elite": false,
+      "evidence_skill": "Call of the Assassin",
+      "evidence_skill_description": "Strike enemies around you, inflicting vulnerability and gaining quickness. Gain additional quickness for each foe you hit.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "46856": {
+      "elite": false,
+      "evidence_skill": "Call of the Demon",
+      "evidence_skill_description": "Strike enemies around you, inflicting conditions on struck foes.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "46857": {
+      "elite": false,
+      "evidence_skill": "Call of the Dragon",
+      "evidence_skill_description": "Strike enemies around you, inflicting multiple conditions.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "50408": {
+      "elite": true,
+      "evidence_skill": "Burst of Shadows",
+      "evidence_skill_description": "Invoke an explosion of shadows at your marked target's location that blinds nearby foes.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Deadeye",
+      "specialization_id": 58,
+      "trait": "Collateral Damage",
+      "trait_description": "Trigger Burst of Shadows at your target's location if it dies while marked.",
+      "trait_id": 2173
+    },
+    "51647": {
+      "elite": false,
+      "evidence_skill": "Devouring Darkness",
+      "evidence_skill_description": "Corrupt boons from enemies around your target. Inflict torment and gain life force for each condition on your initial target up to the threshold. Gain extra life force for each extra foe struck.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Curses",
+      "specialization_id": 39,
+      "trait": "Lingering Curse",
+      "trait_description": "Your condition damage is increased. Conditions inflicted by scepter skills have longer durations, and Feast of Corruption becomes Devouring Darkness.",
+      "trait_id": 801
+    },
+    "53482": {
+      "elite": false,
+      "evidence_skill": "Glacial Blow",
+      "evidence_skill_description": "Crush nearby foes with a chilling slam. If your target has been struck by Banish, teleport to them.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Control"
+      ],
+      "specialization": "Virtues",
+      "specialization_id": 46,
+      "trait": "Glacial Heart",
+      "trait_description": "Mighty Blow becomes Glacial Blow. Heal when you disable, immobilize, or chill a foe. Disables include stun, daze, knockback, pull, knockdown, sink, float, launch, taunt, and fear.",
+      "trait_id": 587
+    },
+    "54870": {
+      "elite": true,
+      "evidence_skill": "Sandstorm Shroud",
+      "evidence_skill_description": "Shade. Enter the final shroud, pulsing barrier to allies around yourself and priming the shroud for a powerful detonation that damages enemies and bolsters allies. Targets can only be affected by the detonation once per activation.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Scourge",
+      "specialization_id": 60,
+      "trait": "Herald of Sorrow",
+      "trait_description": "Desert Shroud becomes Sandstorm Shroud.",
+      "trait_id": 2123
+    },
+    "5782": {
+      "elite": false,
+      "evidence_skill": "Geyser",
+      "evidence_skill_description": "Create a geyser to heal nearby allies.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Arcane",
+      "specialization_id": 37,
+      "trait": "Arcane Resurrection",
+      "trait_description": "Cast Geyser when you begin reviving a downed ally. Geyser now partially revives downed allies. When you begin reviving an ally, you gain an aura based on your attunement.",
+      "trait_id": 265
+    },
+    "5792": {
+      "elite": false,
+      "evidence_skill": "Blinding Flash",
+      "evidence_skill_description": "Blind nearby foes.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Arcane",
+      "specialization_id": 37,
+      "trait": "Evasive Arcana",
+      "trait_description": "Cast a skill when you dodge based on your attunement.",
+      "trait_id": 238
+    },
+    "5793": {
+      "elite": false,
+      "evidence_skill": "Cleansing Wave",
+      "evidence_skill_description": "Heal yourself and nearby allies, curing a condition.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Arcane",
+      "specialization_id": 37,
+      "trait": "Evasive Arcana",
+      "trait_description": "Cast a skill when you dodge based on your attunement.",
+      "trait_id": 238
+    },
+    "5794": {
+      "elite": false,
+      "evidence_skill": "Flame Burst",
+      "evidence_skill_description": "Burn nearby foes.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Arcane",
+      "specialization_id": 37,
+      "trait": "Evasive Arcana",
+      "trait_description": "Cast a skill when you dodge based on your attunement.",
+      "trait_id": 238
+    },
+    "5795": {
+      "elite": false,
+      "evidence_skill": "Shock Wave",
+      "evidence_skill_description": "Create a shock wave that bleeds and cripples nearby foes.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Arcane",
+      "specialization_id": 37,
+      "trait": "Evasive Arcana",
+      "trait_description": "Cast a skill when you dodge based on your attunement.",
+      "trait_id": 238
+    },
+    "6050": {
+      "elite": false,
+      "evidence_skill": "Lesser Grenade Barrage",
+      "evidence_skill_description": "Throw several grenades at once.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Explosives",
+      "specialization_id": 6,
+      "trait": "Grenadier",
+      "trait_description": "Increase the blast radius of grenades. Using a healing skill casts Lesser Grenade Barrage.",
+      "trait_id": 514
+    },
+    "62660": {
+      "elite": true,
+      "evidence_skill": "Cascading Corruption",
+      "evidence_skill_description": "Damage and torment nearby enemies.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Harbinger",
+      "specialization_id": 64,
+      "trait": "Cascading Corruption",
+      "trait_description": "Gain Cascading Corruption stacks when you consume Blight. When you reach the stack threshold, explode necrotic energy and increase your damage for a duration. Stacks can only be gained in combat and are lost upon leaving combat.",
+      "trait_id": 2218
+    },
+    "62689": {
+      "elite": true,
+      "evidence_skill": "Saint's Shield",
+      "evidence_skill_description": "Drop from above, granting barrier and healing to allies in the affected area.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Vindicator",
+      "specialization_id": 69,
+      "trait": "Saint of zu Heltzer",
+      "trait_description": "The affected area of your dodge is increased. You now heal allies in an area when you land instead of dealing damage. Outgoing healing is increased for a period of time upon landing.",
+      "trait_id": 2238
+    },
+    "62693": {
+      "elite": true,
+      "evidence_skill": "Death Drop",
+      "evidence_skill_description": "Drop from above, delivering a massive strike on the focused area.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Vindicator",
+      "specialization_id": 69,
+      "trait": "Forerunner of Death",
+      "trait_description": "Dodging now deals more damage but affects a smaller area. Outgoing strike damage is increased for a period of time upon impact.",
+      "trait_id": 2257
+    },
+    "62705": {
+      "elite": false,
+      "evidence_skill": "Call of the Alliance",
+      "evidence_skill_description": "Gain endurance and strike enemies around you, gaining bonus endurance for each enemy struck.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Invocation",
+      "specialization_id": 3,
+      "trait": "Song of the Mists",
+      "trait_description": "Invoking a legend casts a skill based on the legend you invoked. Invoking Razah casts the skill associated with the legend you have equipped in your other slot instead.",
+      "trait_id": 1749
+    },
+    "62847": {
+      "elite": true,
+      "evidence_skill": "Unseen Sword",
+      "evidence_skill_description": "After a delay, deliver a circular attack to foes around you. Increases flow rate if it hits.",
+      "profession": "Warrior",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Bladesworn",
+      "specialization_id": 68,
+      "trait": "Unseen Sword",
+      "trait_description": "Strike nearby enemies and gain increased flow rate when swapping to the gunsaber.",
+      "trait_id": 2225
+    },
+    "62859": {
+      "elite": true,
+      "evidence_skill": "Imperial Impact",
+      "evidence_skill_description": "Drop from above, delivering a powerful attack to enemies while granting boons to allies.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Vindicator",
+      "specialization_id": 69,
+      "trait": "Vassals of the Empire",
+      "trait_description": "Dodging now grants boons to allies and strikes foes when landing.",
+      "trait_id": 2232
+    },
+    "63121": {
+      "elite": true,
+      "evidence_skill": "Jade Mortar",
+      "evidence_skill_description": "Mech Command. Launch a powerful mortar attack at the target.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Control"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Core: Jade Dynamo",
+      "trait_description": "Unlocks the Mech Command skill Jade Mortar. Mech Command skills grant you quickness when used and have a reduced cooldown.",
+      "trait_id": 2292
+    },
+    "63141": {
+      "elite": true,
+      "evidence_skill": "Barrier Burst",
+      "evidence_skill_description": "Mech Command. Pulse a barrier and boons to all nearby allies. The mech does not count against the target count for this skill.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Core: Barrier Engine",
+      "trait_description": "Unlocks the Mech Command skill Barrier Burst. While in combat, your mech will automatically grant a small barrier each interval to nearby allies. The mech does not count against the target count for this trait.",
+      "trait_id": 2281
+    },
+    "63172": {
+      "elite": true,
+      "evidence_skill": "Aerial Support",
+      "evidence_skill_description": "Gain access to the Mech Command skill Sky Circus. While dismissed or away for repairs, your mech supports you with an occasional aerial bombardment. Signet skills gain improved passive effects and continue to grant their passive bonuses while recharging.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Core: J-Drive",
+      "trait_description": "Gain access to the Mech Command skill Sky Circus. While dismissed or away for repairs, your mech supports you with an occasional aerial bombardment. Signet skills gain improved passive effects and continue to grant their passive bonuses while recharging.",
+      "trait_id": 2298
+    },
+    "63188": {
+      "elite": true,
+      "evidence_skill": "Spark Revolver",
+      "evidence_skill_description": "Mech Command. Fire a rapid volley of jade energy bolts from both arms, piercing through all enemies.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Arms: Jade Cannons",
+      "trait_description": "Melee attacks become ranged, have an increased chance to critically hit, and apply vulnerability. Unlocks the Mech Command skill Spark Revolver.",
+      "trait_id": 2279
+    },
+    "63236": {
+      "elite": true,
+      "evidence_skill": "Sky Circus",
+      "evidence_skill_description": "Mech Command. Your mech jets into the air and fires a missile at each nearby foe before crashing down and dealing additional damage to anything caught underfoot.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Core: J-Drive",
+      "trait_description": "Gain access to the Mech Command skill Sky Circus. While dismissed or away for repairs, your mech supports you with an occasional aerial bombardment. Signet skills gain improved passive effects and continue to grant their passive bonuses while recharging.",
+      "trait_id": 2298
+    },
+    "63293": {
+      "elite": true,
+      "evidence_skill": "Crisis Zone",
+      "evidence_skill_description": "Mech Command. Your mech removes conditions, breaks stuns, and grants boons to itself and nearby allies. The mech does not count against the target count for this skill.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Control"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Frame: Channeling Conduits",
+      "trait_description": "Unlocks the Mech Command skill Crisis Zone. When you or your mech apply barrier, also grant a boon to the affected target. Your mech gains a greater percentage of your own concentration and healing power stats.",
+      "trait_id": 2276
+    },
+    "63334": {
+      "elite": true,
+      "evidence_skill": "Rolling Smash",
+      "evidence_skill_description": "Mech Command. Slam at the target with both cutters, inflicting severe bleeding to enemies in the area.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Arms: Single-Edge Cutters",
+      "trait_description": "Unlocks the Mech Command skill Rolling Smash. Your mech's attacks apply bleeding. This effect may only affect a given target once per interval.",
+      "trait_id": 2282
+    },
+    "63345": {
+      "elite": true,
+      "evidence_skill": "Core Reactor Shot",
+      "evidence_skill_description": "Mech Command. Charge up and then release a powerful ball of jade energy at your target that explodes on contact.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Frame: Variable Mass Distributor",
+      "trait_description": "Unlocks the Mech Command skill Core Reactor Shot. Your mech gains a greater percentage of your own precision stats.",
+      "trait_id": 2294
+    },
+    "63365": {
+      "elite": true,
+      "evidence_skill": "Explosive Knuckle",
+      "evidence_skill_description": "Mech Command. Order your mech to dash at a target, punching with an explosive strike that weakens enemies near the point of impact.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Arms: High-Impact Drivers",
+      "trait_description": "Unlocks the Mech Command skill Explosive Knuckle. Your mech's attacks now generate might for allies within a radius. This effect may only occur once per interval. The mech does not count against the target count for this trait.",
+      "trait_id": 2296
+    },
+    "63367": {
+      "elite": true,
+      "evidence_skill": "Discharge Array",
+      "evidence_skill_description": "Mech Command. Cycle energy into your mech's armor to turn it into a lightning rod. Jade energy strikes nearby foes and inflicts conditions on them.",
+      "profession": "Engineer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Mechanist",
+      "specialization_id": 70,
+      "trait": "Mech Frame: Conductive Alloys",
+      "trait_description": "Unlocks the Mech Command skill Discharge Array. Your mech gains a greater percentage of your own condition damage and expertise stats.",
+      "trait_id": 2270
+    },
+    "69183": {
+      "elite": false,
+      "evidence_skill": "Lesser \"Guard!\"",
+      "evidence_skill_description": "Command. Order your pet to guard nearby allies; your pet takes damage on behalf of those allies. Gain might when your pet receives damage.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Nature Magic",
+      "specialization_id": 25,
+      "trait": "Protective Ward",
+      "trait_description": "Cast Lesser \"Guard!\" when you swap pets.",
+      "trait_id": 1988
+    },
+    "71798": {
+      "elite": false,
+      "evidence_skill": "Lesser Litany of Wrath",
+      "evidence_skill_description": "Meditation. Heal yourself. For a brief time, heal yourself based on a percentage of damage dealt to enemies.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Damage"
+      ],
+      "specialization": "Valor",
+      "specialization_id": 13,
+      "trait": "Redemption",
+      "trait_description": "Cast Lesser Litany of Wrath when you activate Virtue skill 3.",
+      "trait_id": 584
+    },
+    "72369": {
+      "elite": false,
+      "evidence_skill": "Carnivore",
+      "evidence_skill_description": "Steal health from a disabled foe.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Control"
+      ],
+      "specialization": "Wilderness Survival",
+      "specialization_id": 33,
+      "trait": "Carnivore",
+      "trait_description": "Steal health from enemies when you or your pet disable them. Disables include stun, daze, knockback, pull, knockdown, sink, float, launch, taunt, and fear.",
+      "trait_id": 1094
+    },
+    "76497": {
+      "elite": false,
+      "evidence_skill": "Replenishing Despair",
+      "evidence_skill_description": "Siphon health from nearby enemies when you gain a dark aura. Siphon healing is reduced for each target struck beyond the first.",
+      "profession": "Revenant",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Corruption",
+      "specialization_id": 14,
+      "trait": "Replenishing Despair",
+      "trait_description": "Siphon health from nearby enemies when you gain a dark aura. Siphon healing is reduced for each target struck beyond the first.",
+      "trait_id": 1741
+    },
+    "76506": {
+      "elite": false,
+      "evidence_skill": "Lesser Chilblains",
+      "evidence_skill_description": "Mark. Inscribe a mark that inflicts chill and poison on foes when triggered.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Damage"
+      ],
+      "specialization": "Blood Magic",
+      "specialization_id": 19,
+      "trait": "Transfusion",
+      "trait_description": "Marks can be triggered by allies to heal them and provide them with additional benefits. Create Lesser Chilblains at your location when you use your fourth shroud skill.",
+      "trait_id": 778
+    },
+    "76582": {
+      "elite": true,
+      "evidence_skill": "Metal Legion Guitar",
+      "evidence_skill_description": "Offensive Artifact. Rock out with your guitar, damaging and applying conditions to opponents around you, then slam the ground with the guitar, damaging and stunning opponents in the area. For a short time after using this skill, your first weapon skill is replaced with your stealth attack, even when not stealthed.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Control"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "76633": {
+      "elite": true,
+      "evidence_skill": "Forged Surfer Dash",
+      "evidence_skill_description": "Offensive Artifact. Dash to the targeted location while dropping bombs along your path that detonate after a short period of time, dealing damage and burning enemies. More bombs are dropped the farther you travel. For a short time after using this skill, you continue to drop additional bombs at your location.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "76674": {
+      "elite": true,
+      "evidence_skill": "Holo-Dancer Decoy",
+      "evidence_skill_description": "Defensive Artifact. Summon a holo-dancer decoy that taunts enemies and grants boons to nearby allies. It self-destructs if it is not destroyed, dealing damage to enemies in a large area and granting additional boons to allies. For a short time after using this skill, the next utility skill you use has reduced cooldown.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "76689": {
+      "elite": true,
+      "evidence_skill": "Syncopate",
+      "evidence_skill_description": "Deafening Drum releases an additional quick wave after a delay.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Troubadour",
+      "specialization_id": 73,
+      "trait": "Syncopate",
+      "trait_description": "Deafening Drum releases an additional quick wave after a delay. Deal damage to enemies you disable.",
+      "trait_id": 2432
+    },
+    "76702": {
+      "elite": true,
+      "evidence_skill": "Exalted Hammer",
+      "evidence_skill_description": "Defensive Artifact. Leap to the targeted area and slam down with an enchanted exalted hammer, damaging enemies while healing and granting boons to allies in the area. For a short time after using this skill, activating any weapon skill that costs initiative creates an additional healing burst at your location.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "76722": {
+      "elite": true,
+      "evidence_skill": "Pelt",
+      "evidence_skill_description": "Fire a volley of arrows into the air, damaging enemies when they land.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Galeshot",
+      "specialization_id": 78,
+      "trait": "Perilous Skies",
+      "trait_description": "Quarry's Peril is replaced by Pelt.",
+      "trait_id": 2413
+    },
+    "76816": {
+      "elite": true,
+      "evidence_skill": "Chak Shield",
+      "evidence_skill_description": "Defensive Artifact. Place an electrified shield at your position that blocks projectiles, dealing damage to enemies and granting barrier to allies within it. For a short time after using this skill, your weapon skills that cost initiative refund initiative.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage",
+        "Defense"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "76846": {
+      "elite": true,
+      "evidence_skill": "Shrike",
+      "evidence_skill_description": "Conjured arrows strike your target.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Galeshot",
+      "specialization_id": 78,
+      "trait": "Shrike",
+      "trait_description": "After a number of missile hits, release a volley of arrows at your target and gain an arrow. Missiles from this trait do not count toward its next trigger.",
+      "trait_id": 2372
+    },
+    "76895": {
+      "elite": true,
+      "evidence_skill": "Zephyrite Sun Crystal",
+      "evidence_skill_description": "Defensive Artifact. Dash toward your target, damaging and inflicting conditions on enemies and removing conditions from allies around you when you reach your destination. You evade attacks as long as you are still traveling. For a short time after using this skill, whenever you use a weapon skill that costs initiative, remove conditions from yourself.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Defense"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "76905": {
+      "elite": true,
+      "evidence_skill": "Wuthering Wind",
+      "evidence_skill_description": "Damage nearby enemies with a gust of wind.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Galeshot",
+      "specialization_id": 78,
+      "trait": "Wuthering Wind",
+      "trait_description": "After using Bluster, your pet's next attack creates a damaging swell of wind around its target.",
+      "trait_id": 2360
+    },
+    "76966": {
+      "elite": true,
+      "evidence_skill": "Reshuffle",
+      "evidence_skill_description": "Redraw any artifacts you currently have in your skill slots.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Utility / build-specific"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Card Swap",
+      "trait_description": "Gain access to Reshuffle. Remove conditions from yourself whenever you reshuffle your artifacts or use an artifact skill.",
+      "trait_id": 2423
+    },
+    "77164": {
+      "elite": true,
+      "evidence_skill": "Sovereign of Light",
+      "evidence_skill_description": "Your light aura detonates, damaging nearby foes and healing nearby allies.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing"
+      ],
+      "specialization": "Luminary",
+      "specialization_id": 81,
+      "trait": "Sovereign of Light",
+      "trait_description": "Gain light aura when entering Radiant Forge. Luminary skills detonate light aura, damaging enemies and healing allies.",
+      "trait_id": 2328
+    },
+    "77192": {
+      "elite": true,
+      "evidence_skill": "Summon Kryptis Turret",
+      "evidence_skill_description": "Offensive Artifact. Summons a Kryptis turret at your targeted location and fires at the closest foe in range. For a short time after using this skill, you deal increased damage to enemies that were struck by the turret.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "77277": {
+      "elite": true,
+      "evidence_skill": "Mistburn Mortar",
+      "evidence_skill_description": "Offensive Artifact. Shoot an orb that explodes upon impact with the ground, creating a corrupted area that deals damage and applies conditions to enemies. For a short time after using this skill, your strikes additionally inflict burning on enemies.",
+      "profession": "Thief",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Antiquary",
+      "specialization_id": 77,
+      "trait": "Meticulous Custodian",
+      "trait_description": "Your artifacts have increased effectiveness. Beneficial artifact effects last longer.",
+      "trait_id": 2431
+    },
+    "77387": {
+      "elite": true,
+      "evidence_skill": "Electric Enchantment",
+      "evidence_skill_description": "Meditation. Gain endurance and swiftness. Your next few strikes create an arc of chain lightning. If air is your specialized element, this skill breaks stun and grants blur.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage",
+        "Control"
+      ],
+      "specialization": "Evoker",
+      "specialization_id": 80,
+      "trait": "Galvanic Enchantment",
+      "trait_description": "After you use a familiar skill, your next strikes create an arc of chain lightning. Chain lightning created by evoker skills inflicts burning.",
+      "trait_id": 2335
+    },
+    "79336": {
+      "elite": false,
+      "evidence_skill": "Lesser Symbol of Blades",
+      "evidence_skill_description": "Symbol. Create a mystic symbol, damaging foes and granting boons to allies.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Zeal",
+      "specialization_id": 42,
+      "trait": "Furious Focus",
+      "trait_description": "Your strike damage and movement speed are increased while you have fury. Create a Lesser Symbol of Blades when you activate Virtue skill 1.",
+      "trait_id": 2017
+    },
+    "79344": {
+      "elite": false,
+      "evidence_skill": "Lesser Signet of the Locust",
+      "evidence_skill_description": "Signet Active: Strike and remove boons from nearby foes. Heal for each foe you strike and for each boon removed.",
+      "profession": "Necromancer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Spite",
+      "specialization_id": 53,
+      "trait": "Malicious Swarm",
+      "trait_description": "Cast Lesser Signet of the Locust when you use a healing skill.",
+      "trait_id": 916
+    },
+    "79359": {
+      "elite": true,
+      "evidence_skill": "Time Bomb",
+      "evidence_skill_description": "Deal damage to nearby enemies with a temporal explosion.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Chronomancer",
+      "specialization_id": 40,
+      "trait": "Time Bomb",
+      "trait_description": "Enemies struck by Time Sink are affixed with a time bomb. Time bombs increase your strike damage dealt to the target and explode when they expire. Only a certain number of time bombs may be active at once.",
+      "trait_id": 1978
+    },
+    "79371": {
+      "elite": false,
+      "evidence_skill": "Lesser \"Sic 'Em!\"",
+      "evidence_skill_description": "Command. Your pet rushes at your foe, dealing increased damage.",
+      "profession": "Ranger",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Damage"
+      ],
+      "specialization": "Beastmastery",
+      "specialization_id": 32,
+      "trait": "Go for the Throat",
+      "trait_description": "When you strike an enemy with a Beast ability, cast Lesser \"Sic 'Em!\" on the enemy.",
+      "trait_id": 1066
+    },
+    "80210": {
+      "elite": false,
+      "evidence_skill": "Detonate Chaos",
+      "evidence_skill_description": "Command your chaos aura to expand and explode, granting yourself boons as you inflict conditions on enemies.",
+      "profession": "Mesmer",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support"
+      ],
+      "specialization": "Chaos",
+      "specialization_id": 45,
+      "trait": "Shaper of Chaos",
+      "trait_description": "When you grant yourself chaos aura, if you already have chaos aura, detonate your chaos aura to grant yourself boons and inflict conditions on enemies.",
+      "trait_id": 671
+    },
+    "80231": {
+      "elite": true,
+      "evidence_skill": "Unravel",
+      "evidence_skill_description": "Stance. For a period of time, you forego your weaver training, choosing to fully attune to elements instead. Gain boons based on your primary attunement, and reduce all attunement cooldowns.",
+      "profession": "Elementalist",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Weaver",
+      "specialization_id": 56,
+      "trait": "Elements of Rage",
+      "trait_description": "Gain a bonus to all damage dealt for a period of time when attuned to a single element. Gain access to Unravel.",
+      "trait_id": 2131
+    },
+    "9101": {
+      "elite": false,
+      "evidence_skill": "Lesser Smite Condition",
+      "evidence_skill_description": "Meditation. Cure conditions and damage nearby foes. Deal more damage if a condition is cured.",
+      "profession": "Guardian",
+      "proof_rule": "unique_major_trait_skill_and_elite_insights_trait_proc",
+      "roles": [
+        "Healing",
+        "Support",
+        "Damage"
+      ],
+      "specialization": "Valor",
+      "specialization_id": 13,
+      "trait": "Smiter's Boon",
+      "trait_description": "Cast Lesser Smite Condition when you use a healing skill.",
+      "trait_id": 581
+    }
+  },
+  "sources": [
+    "https://api.guildwars2.com/v2/specializations?ids=all",
+    "https://api.guildwars2.com/v2/traits?ids=<major-trait-ids>"
+  ]
+}

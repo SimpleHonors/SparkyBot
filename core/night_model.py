@@ -12,8 +12,8 @@ Schema of ``build_night_model(tiddlers) -> dict``::
       "session": {                     # session meta
         "tag": str | None,             # e.g. "2026-08-10-20:27:05"
         "date": str | None,            # "YYYY-MM-DD" part of the tag
-        "commander": str | None,       # name from the Tag_Stats caption/rows
-        "commander_account": str|None, # account from Tag_Stats tooltip
+        "commander": str | None,       # most fights tagged; combat-time tie
+        "commander_account": str|None, # account from winning Tag_Stats row
         "total_duration": str | None,  # from the Overview totals row
       },
       "totals": {                      # Tag_Stats Totals row
@@ -82,9 +82,18 @@ SCHEMA_VERSION = 2
 _TAG_RE = re.compile(r"(\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2})")
 _IMG_RE = re.compile(r"\[img[^\]]*?\[([^|\]]+)\|[^\]]*?\]\]")
 _TOOLTIP_RE = re.compile(r"data-tooltip=['\"]([^'\"]+)['\"]")
+_HIT_TOOLTIP_RE = re.compile(
+    r"([\d,]+)\s+of\s+([\d,]+)\s+hits\s+-\s+\(([\d.]+)%\)",
+    re.IGNORECASE,
+)
 _PROF_TIDDEL_RE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z ]*?)\s*\}\}")
 _LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
 _PIPE_LINK_RE = re.compile(r"\[\[([^\]|]*)\|([^\]]+)\]\]")
+_HTML_HREF_RE = re.compile(
+    r"<a\b[^>]*\bhref\s*=\s*(['\"])(https?://[^'\"]+)\1",
+    re.IGNORECASE,
+)
+_BARE_HTTP_RE = re.compile(r"https?://[^\s|<>\]\"']+", re.IGNORECASE)
 _NUM_RE = re.compile(r"^-?[\d,]+(?:\.\d+)?%?$")
 _NUMBER_WITH_RATE_RE = re.compile(
     r"^\s*(-?[\d,]+(?:\.\d+)?)\s*(/(?:sec|min))\s*$",
@@ -119,34 +128,43 @@ _STAT_PROFILES = {
         "rate_label": "DPS", "rate_unit": "per_second",
     },
     "Heal-Stats": {
+        "stat_label": "Healing",
         "total_key": "healing", "total_label": "Healing",
         "total_unit": "healing", "rate_key": "healingps",
         "rate_label": "Healing / sec", "rate_unit": "per_second",
     },
     "Uptimes": {
-        "rate_key": "might", "rate_label": "Might Uptime",
+        "stat_label": "Might Uptime",
+        "rate_key": "might", "rate_label": "Might Uptime (%)",
         "rate_unit": "percent",
     },
     "Conditions-Out": {
+        "stat_label": "Condition Applications",
         "total_key": "count", "total_label": "Conditions Applied",
         "total_unit": "applications", "rate_label": "Conditions / min",
         "rate_unit": "per_minute", "derive_rate": True,
     },
     "Debuffs-Out": {
+        "stat_label": "Debuff Applications",
         "total_key": "count", "total_label": "Debuffs Applied",
         "total_unit": "applications", "rate_label": "Debuffs / min",
         "rate_unit": "per_minute", "derive_rate": True,
     },
     "Mechanics": {
+        "stat_label": "Killing Blows",
         "total_key": "kllngblwplayer", "total_label": "Killing Blows",
         "total_unit": "count", "rate_label": "Killing Blows / min",
         "rate_unit": "per_minute", "derive_rate": True,
     },
     "Attendance": {
         "total_key": "numfights", "total_label": "Fights",
-        "total_unit": "fights",
+        "total_unit": "fights", "show_fights_column": False,
+    },
+    "Combat-Resurrect": {
+        "stat_label": "Combat-Resurrection Healing",
     },
     "Offensive-Summary": {
+        "show_as_board": False,
         "total_key": "totaldmg", "total_label": "Damage",
         "total_unit": "damage", "rate_label": "DPS",
         "rate_unit": "per_second", "derive_rate": True,
@@ -230,7 +248,81 @@ def _table_lines(tiddlers, suffix):
 # ---------------------------------------------------------------- meta
 
 
-def _parse_session(tiddlers):
+def _commander_candidates(tiddlers):
+    """Return command-tag rows with their reported fight counts."""
+    lines = _table_lines(tiddlers, "-Tag_Stats") or []
+    header = next(
+        (
+            line for line in lines
+            if _is_header_row(line) and "fights" in line.casefold()
+        ),
+        None,
+    )
+    if not header:
+        return []
+
+    headers = [_plain(cell).casefold() for cell in _cells(header)]
+    try:
+        name_index = headers.index("name")
+        fights_index = headers.index("fights")
+    except ValueError:
+        return []
+
+    candidates = []
+    for order, line in enumerate(lines):
+        if not _is_data_row(line):
+            continue
+        account_match = _TOOLTIP_RE.search(line)
+        if not account_match or "." not in account_match.group(1):
+            continue
+        cells = _cells(line)
+        if max(name_index, fights_index) >= len(cells):
+            continue
+        name = _plain(cells[name_index])
+        fights = _num(cells[fights_index])
+        if not name or not isinstance(fights, (int, float)):
+            continue
+        candidates.append({
+            "name": name,
+            "account": account_match.group(1).strip(),
+            "fights": int(fights),
+            "source_order": order,
+        })
+    return candidates
+
+
+def _commander_combat_time(candidate, stat_tables):
+    """Find the candidate's longest exported session combat-time value."""
+    account = candidate["account"].lstrip(":").casefold()
+    name = candidate["name"].casefold()
+    combat_times = []
+    for table in stat_tables or []:
+        for row in table.get("rows") or []:
+            row_account = str(row.get("account") or "").lstrip(":").casefold()
+            row_name = str(row.get("name") or "").casefold()
+            if row_account != account and row_name != name:
+                continue
+            value = row.get("participation_time")
+            if isinstance(value, (int, float)):
+                combat_times.append(value)
+    return max(combat_times, default=0)
+
+
+def _select_commander(candidates, stat_tables):
+    """Pick most tagged fights, then most combat time, then source order."""
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda candidate: (
+            candidate["fights"],
+            _commander_combat_time(candidate, stat_tables),
+            -candidate["source_order"],
+        ),
+    )
+
+
+def _parse_session(tiddlers, stat_tables=None):
     out = {"tag": None, "date": None, "commander": None,
            "commander_account": None, "total_duration": None}
 
@@ -252,24 +344,22 @@ def _parse_session(tiddlers):
     tag = out["tag"]
     ts = _find_tiddler(tiddlers, "-Tag_Stats") if tag else None
     if ts:
+        winner = _select_commander(
+            _commander_candidates(tiddlers), stat_tables
+        )
+        if winner:
+            out["commander"] = winner["name"]
+            out["commander_account"] = winner["account"]
         caption = (ts.get("caption") or "").strip()
-        # Captions like "Tag Summary" carry no name; any richer caption is
-        # taken as the commander label. Otherwise fall back to the sole
-        # player row of the table (the combined tag is the commander's).
-        if caption and caption.lower() not in ("tag summary",
-                                               "summary by command tag"):
+        # Preserve old one-name captions only when no command-tag row exists.
+        if (
+            not winner
+            and caption
+            and caption.lower() not in (
+                "tag summary", "summary by command tag"
+            )
+        ):
             out["commander"] = caption
-        for line in (ts.get("text") or "").splitlines():
-            if not _is_data_row(line):
-                continue
-            m = _TOOLTIP_RE.search(line)
-            if m and "." in m.group(1):
-                out["commander_account"] = m.group(1).strip()
-                cells = _cells(line)
-                names = [_plain(c) for c in cells[1:3] if _plain(c)]
-                if names and not out["commander"]:
-                    out["commander"] = names[0]
-                break
 
     lines = _table_lines(tiddlers, "-Overview")
     if lines:
@@ -318,6 +408,7 @@ def _parse_totals(tiddlers):
 # --------------------------------------------------------------- fights
 
 _OVERVIEW_FIELDS = (
+    ("report_url", "Fight Link"),
     ("duration", "Duration"),
     ("squad", "Squad"),
     ("allies", "Allies"),
@@ -325,6 +416,8 @@ _OVERVIEW_FIELDS = (
     ("rgb", "R/G/B"),
     ("downs", "DownedEnemy"),
     ("kills", "killed"),
+    ("ally_downs", "DownedAlly"),
+    ("ally_deaths", "DeadAlly"),
     ("rallies", "rallies"),
     ("damage_out", "{{Damage}}"),
     ("damage_in", "Damage Taken"),
@@ -377,15 +470,17 @@ def _parse_fights(tiddlers):
         fight = {"index": int(_num(cells[1])), "time_label": _plain(cells[2]),
                  "duration": None, "squad": None, "allies": None,
                  "enemy": None, "rgb": None, "downs": None,
-                 "kills": None, "rallies": None, "damage_out": None,
+                 "kills": None, "ally_downs": None, "ally_deaths": None,
+                 "rallies": None, "damage_out": None,
                  "damage_in": None, "barrier_out": None,
                  "barrier_out_pct": None, "shield_out": None,
-                 "shield_out_pct": None, "chart": None}
+                 "shield_out_pct": None, "chart": None, "report_url": None}
         for key in ("duration",):
             i = cols.get(key)
             if i is not None and i < len(cells):
                 fight[key] = cells[i]
         for key in ("squad", "allies", "enemy", "downs", "kills",
+                    "ally_downs", "ally_deaths",
                     "rallies", "damage_out", "damage_in", "barrier_out",
                     "shield_out"):
             i = cols.get(key)
@@ -408,6 +503,19 @@ def _parse_fights(tiddlers):
             m = _PIPE_LINK_RE.search(line)
             if m:
                 fight["chart"] = m.group(2).strip()
+        i = cols.get("report_url")
+        if i is not None and i < len(cells):
+            link_cell = cells[i].replace(_PIPE, "|")
+            href = _HTML_HREF_RE.search(link_cell)
+            wiki = _PIPE_LINK_RE.search(link_cell)
+            bare = _BARE_HTTP_RE.search(link_cell)
+            candidate = (
+                href.group(2) if href else
+                wiki.group(2).strip() if wiki and wiki.group(2).strip().lower().startswith(("http://", "https://")) else
+                bare.group(0) if bare else None
+            )
+            if candidate:
+                fight["report_url"] = candidate
         fights.append(fight)
     if not fights:
         raise ValueError("Overview has no fight rows")
@@ -502,6 +610,7 @@ def _parse_board_rows(line_iter, ranked=False, headers=None):
         nums = []
         metrics = {}
         metric_units = {}
+        metric_details = {}
         for i, c in enumerate(cells):
             if i <= (name_i or 0):
                 continue
@@ -512,6 +621,13 @@ def _parse_board_rows(line_iter, ranked=False, headers=None):
                     metrics[headers[i]] = v
                     if unit:
                         metric_units[headers[i]] = unit
+                    hit_detail = _HIT_TOOLTIP_RE.search(raw_cells[i])
+                    if hit_detail:
+                        metric_details[headers[i]] = {
+                            "connected_hits": _num(hit_detail.group(1)),
+                            "logged_hit_events": _num(hit_detail.group(2)),
+                            "connection_rate": _num(hit_detail.group(3)),
+                        }
                 if value is None:
                     value = v
         row = {"rank": int(rank) if rank is not None else None,
@@ -521,6 +637,7 @@ def _parse_board_rows(line_iter, ranked=False, headers=None):
         if headers is not None:
             row["metrics"] = metrics
             row["metric_units"] = metric_units
+            row["metric_details"] = metric_details
         rows.append(row)
     return rows
 
@@ -800,7 +917,7 @@ def _parse_stability_generation(tiddlers):
     }
 
 
-def _parse_stat_tables(tiddlers):
+def _parse_stat_tables(tiddlers, player_skill_evidence=None):
     """Parse the standard per-night combiner stat tables."""
     legacy_value_labels = {
         "Damage": "Damage / sec",
@@ -812,6 +929,15 @@ def _parse_stat_tables(tiddlers):
         "Attendance": "Fights attended",
     }
     tables = []
+    cast_rows = (player_skill_evidence or {}).get("players") or []
+    casts_by_account = {
+        str(item.get("account") or "").strip().lstrip(":").casefold(): item
+        for item in cast_rows if item.get("account")
+    }
+    casts_by_name = {
+        str(name).strip().casefold(): item
+        for item in cast_rows for name in item.get("names") or []
+    }
     tag = _session_tag(tiddlers)
     for suffix in _STAT_TABLE_SUFFIXES:
         exact = f"{tag}-{suffix}" if tag else None
@@ -841,7 +967,11 @@ def _parse_stat_tables(tiddlers):
             stat = (
                 "Outgoing Pulls"
                 if suffix == "Pull-Skills"
-                else (t.get("caption") or suffix.replace("-", " ")).strip()
+                else (
+                    _STAT_PROFILES.get(suffix, {}).get("stat_label")
+                    or t.get("caption")
+                    or suffix.replace("-", " ")
+                ).strip()
             )
             profile = _STAT_PROFILES.get(suffix, {})
             total_label = profile.get("total_label")
@@ -866,13 +996,52 @@ def _parse_stat_tables(tiddlers):
                     if profile.get("rate_key") else None
                 )
                 if suffix == "Pull-Skills":
-                    total_label = "Pulls"
-                    value_label = "Outgoing pulls"
-                    rate_label = "Pulls / min"
+                    total_label = "Pull-skill connected hits"
+                    value_label = "Pull-skill connected hits"
+                    rate_label = "Connected hits / min"
                     total = sum(
                         value for key, value in metrics.items()
                         if key != "fighttime"
                     )
+                    pull_details = row.get("metric_details", {})
+                    logged_hit_events = sum(
+                        detail.get("logged_hit_events") or 0
+                        for key, detail in pull_details.items()
+                        if key != "fighttime"
+                    )
+                    evidence = (
+                        casts_by_account.get(
+                            str(row.get("account") or "").strip()
+                            .lstrip(":").casefold()
+                        )
+                        or casts_by_name.get(
+                            str(row.get("name") or "").strip().casefold()
+                        )
+                    )
+                    cast_metrics = {
+                        _metric_key(name): count
+                        for name, count in (evidence or {}).get(
+                            "skill_casts", {}
+                        ).items()
+                    }
+                    pull_keys = [
+                        key for key in metrics if key != "fighttime"
+                    ]
+                    cast_count = sum(
+                        cast_metrics.get(key, 0) for key in pull_keys
+                    ) if evidence else None
+                    row.update({
+                        "pull_skill_connected_hits": total or None,
+                        "pull_skill_logged_hit_events": logged_hit_events or None,
+                        "pull_skill_connection_rate": (
+                            total / logged_hit_events * 100
+                            if logged_hit_events else None
+                        ),
+                        "pull_skill_casts": cast_count,
+                        "pull_skill_connected_hits_per_cast": (
+                            total / cast_count if cast_count else None
+                        ),
+                    })
                 elif suffix == "Combat-Resurrect":
                     total_label = "Combat Resurrect Healing"
                     value_label = "Resurrection output"
@@ -934,6 +1103,12 @@ def _parse_stat_tables(tiddlers):
                 "source_key": suffix,
                 "source_tiddler": t.get("title"),
                 "scope": "session",
+                "show_as_board": profile.get(
+                    "show_as_board", bool(value_label)
+                ),
+                "show_fights_column": profile.get(
+                    "show_fights_column", True
+                ),
                 "value_label": value_label,
                 "metric": {
                     "label": total_label or rate_label or stat,
@@ -1060,7 +1235,6 @@ def _build_night_mvps(stat_tables):
     add_award("Fight Impact", "Offensive-Summary", "downcontribution",
               "Down Contribution", total_unit="damage",
               rate_unit="per_second")
-    add_award("Pulls", "Pull-Skills", "total", "Pulls", normalized=True)
     add_award("Stability", "Stability-Generation", "totalgen",
               "Stability Generation", total_unit="generation",
               rate_unit="per_second", normalized=True)
@@ -1138,6 +1312,105 @@ def _parse_high_scores(tiddlers):
     return {"blocks": blocks}
 
 
+def _parse_player_skill_damage(tiddlers):
+    """Parse exported per-player ``Damage-By-Skill`` tables.
+
+    The combiner only emits these tiddlers for qualifying players. Absence is
+    therefore "not exported", never zero damage. Repeated display names from
+    distinct skill IDs are combined because the source no longer exposes an
+    operator-meaningful distinction between them.
+    """
+    tag = _session_tag(tiddlers)
+    prefix = f"{tag}-Damage-By-Skill-" if tag else "-Damage-By-Skill-"
+    players = []
+    caption_re = re.compile(
+        r"\|\{\{\s*([^}]+?)\s*\}\}\s*-\s*(.*?)\s*-\s*([^|]+?)\s*\|c"
+    )
+    for tiddler in tiddlers:
+        title = tiddler.get("title", "")
+        if (tag and not title.startswith(prefix)) or (
+            not tag and prefix not in title
+        ):
+            continue
+        text = tiddler.get("text") or ""
+        identity = caption_re.search(text)
+        if not identity:
+            continue
+        profession, name, account = (
+            value.strip() for value in identity.groups()
+        )
+        lines = text.splitlines()
+        header = next(
+            (
+                line for line in lines
+                if _is_header_row(line) and "skill" in line.lower()
+            ),
+            "",
+        )
+        headers = _header_keys(header)
+        if not headers:
+            continue
+        positions = {key: index for index, key in enumerate(headers) if key}
+        combined = {}
+        for line in lines:
+            if not _is_data_row(line):
+                continue
+            cells = [_plain(cell) for cell in _cells(line)]
+            skill_index = positions.get("skillname")
+            if skill_index is None or skill_index >= len(cells):
+                continue
+            skill = re.sub(r"^\{[^}]*\}-", "", cells[skill_index]).strip()
+            if not skill:
+                continue
+
+            def number(key):
+                index = positions.get(key)
+                return _num(cells[index]) if index is not None and index < len(cells) else None
+
+            row = combined.setdefault(
+                skill,
+                {
+                    "skill": skill,
+                    "damage": 0,
+                    "down_contribution": 0,
+                    "hits": 0,
+                    "damage_per_hit": 0,
+                    "max_hit": None,
+                    "percent_of_total": 0,
+                },
+            )
+            row["damage"] += number("damage") or 0
+            row["down_contribution"] += number("downcontrib") or 0
+            row["hits"] += number("hits") or 0
+            max_hit = number("maxhit")
+            if max_hit is not None:
+                row["max_hit"] = max(row["max_hit"] or 0, max_hit)
+            row["percent_of_total"] += number("oftotal") or 0
+        skills = sorted(
+            combined.values(), key=lambda row: row["damage"], reverse=True
+        )
+        for row in skills:
+            row["damage_per_hit"] = (
+                row["damage"] / row["hits"] if row["hits"] else 0
+            )
+        if skills:
+            players.append(
+                {
+                    "name": name,
+                    "account": account,
+                    "profession": profession,
+                    "source_tiddler": title,
+                    "total_damage": sum(row["damage"] for row in skills),
+                    "skills": skills,
+                    "coverage_note": (
+                        "Per-player skill table exported by the combiner; "
+                        "players without a table are not zeroes."
+                    ),
+                }
+            )
+    return sorted(players, key=lambda player: player["total_damage"], reverse=True)
+
+
 # --------------------------------------------------- squad composition
 
 
@@ -1165,15 +1438,22 @@ def _parse_squad_composition(tiddlers):
         cells = _cells(line)
         if len(cells) < 3 or not re.match(r"^\d+$", cells[1].strip()):
             continue
+        party = int(cells[1].strip())
+        slot = 0
         for c in cells[2:]:
             if not c.strip():
                 continue
+            slot += 1
             prof = _prof(c)
             m = _XTOOLTIP_TEXT_RE.search(c)
             name = m.group(1).strip() if m else _plain(c)
             if name:
-                current["players"].append({"profession": prof,
-                                            "name": name})
+                current["players"].append({
+                    "profession": prof,
+                    "name": name,
+                    "party": party,
+                    "slot": slot,
+                })
     if not squads:
         raise ValueError("Squad-Composition has no squads")
     return {"squads": squads}
@@ -1182,7 +1462,12 @@ def _parse_squad_composition(tiddlers):
 # ------------------------------------------------------------------
 
 
-def build_night_model(tiddlers, selected_fights=None):
+def build_night_model(
+    tiddlers,
+    selected_fights=None,
+    enemy_role_evidence=None,
+    player_skill_evidence=None,
+):
     """Parse a combiner tiddler store into one typed night model dict.
 
     ``tiddlers`` is the JSON list of tiddler dicts (the night summary
@@ -1200,6 +1485,8 @@ def build_night_model(tiddlers, selected_fights=None):
         "stat_tables": [],
         "night_mvps": [],
         "high_scores": None,
+        "player_skill_damage": [],
+        "player_skill_evidence": copy.deepcopy(player_skill_evidence),
         "squad_composition": None,
         "poison": [],
         "pro_navigation": copy.deepcopy(PRO_NAVIGATION),
@@ -1208,12 +1495,21 @@ def build_night_model(tiddlers, selected_fights=None):
     }
 
     sections = (
-        ("session", _parse_session, None),
         ("totals", _parse_totals, None),
         ("fights", _parse_fights, []),
         ("leaderboards", _parse_explicit_boards, []),
-        ("stat_tables", _parse_stat_tables, []),
+        (
+            "stat_tables",
+            lambda source: _parse_stat_tables(source, player_skill_evidence),
+            [],
+        ),
+        (
+            "session",
+            lambda source: _parse_session(source, model["stat_tables"]),
+            None,
+        ),
         ("high_scores", _parse_high_scores, None),
+        ("player_skill_damage", _parse_player_skill_damage, []),
         ("squad_composition", _parse_squad_composition, None),
     )
     for name, fn, default in sections:
@@ -1243,6 +1539,7 @@ def build_night_model(tiddlers, selected_fights=None):
             copy.deepcopy(model["fights"]),
             selected_fights=selected_fights,
             reported_fights=reported_fights,
+            actor_role_evidence=enemy_role_evidence,
         )
     except Exception as exc:  # noqa
         warnings.append(f"enemy_intel: {type(exc).__name__}: {exc}")

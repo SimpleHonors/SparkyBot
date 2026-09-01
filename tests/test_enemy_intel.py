@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from core.enemy_intel import PRO_NAVIGATION, build_enemy_intel
+from core.enemy_intel import PRO_NAVIGATION, build_enemy_intel, estimate_enemy_subgroups
 
 
 def _composition_text():
@@ -135,22 +135,56 @@ def test_slots_include_metric_backed_tactical_role_inference():
     by_profession = {member["profession"]: member for member in members}
 
     reaper = by_profession["Reaper"]
-    assert reaper["role"] == "DPS"
-    assert reaper["role_tags"] == ["DPS", "Boon Strip", "Crowd Control"]
+    assert reaper["role"] == "Unknown"
+    assert reaper["role_tags"] == ["DPS", "Crowd Control", "Boon Strip"]
     assert reaper["role_family"] == "DPS"
-    assert reaper["role_inference"]["qualifier"] == "Likely"
-    assert reaper["role_inference"]["confidence"] == "medium"
+    assert reaper["role_inference"]["qualifier"] == "Unresolved"
+    assert reaper["role_inference"]["confidence"] == "unresolved"
+    assert reaper["role_inference"]["candidate_label"] == "DPS"
+    assert reaper["role_inference"]["candidate_qualifier"] == "Likely"
+    levels = {row["role"]: row["level"] for row in reaper["role_inference"]["roles"]}
+    assert levels == {"DPS": "Likely", "Crowd Control": "Likely", "Boon Strip": "Estimated"}
     assert "scores" not in reaper["role_inference"]
     assert any("Soul Spiral" in item for item in reaper["role_inference"]["evidence"])
     assert any("Grasping Darkness" in item for item in reaper["role_inference"]["evidence"])
 
-    assert by_profession["Druid"]["role"] == "Healer"
-    assert by_profession["Firebrand"]["role"] == "Boon Support"
-    assert by_profession["Firebrand"]["role_tags"] == ["Boon Support"]
+    assert by_profession["Druid"]["role"] == "Unknown"
+    assert by_profession["Druid"]["role_inference"]["qualifier"] == "Unresolved"
+    assert by_profession["Firebrand"]["role"] == "Unknown"
+    assert by_profession["Firebrand"]["role_tags"] == []
+    assert by_profession["Firebrand"]["role_inference"]["qualifier"] == "Unresolved"
     assert all(
         any("observed in this fight/color" in item for item in member["role_inference"]["evidence"])
         for member in members
     )
+
+
+def test_tempest_role_signals_remain_candidates_not_per_slot_claims():
+    parties, _, _ = estimate_enemy_subgroups(
+        [{"profession": "Tempest", "count": 1}], 1, role_context={}
+    )
+    tempest = parties[0]["members"][0]
+    assert tempest["role"] == "Unknown"
+    assert tempest["role_tags"] == []
+    assert tempest["role_inference"]["qualifier"] == "Unresolved"
+    assert tempest["role_inference"]["roles"] == []
+
+    parties, _, _ = estimate_enemy_subgroups(
+        [{"profession": "Tempest", "count": 1}], 1,
+        role_context={"actor_role_evidence": {"professions": {"Tempest": {
+            "roles": [{
+                "role": "Support / Healing", "level": "Likely",
+                "evidence": "low DPS plus Overload Water and Wash the Pain Away casts",
+                "source_scope": "detailed_wvw_enemy_targets_across_selected_fights",
+            }],
+        }}}},
+    )
+    tempest = parties[0]["members"][0]
+    assert tempest["role"] == "Unknown"
+    assert tempest["role_inference"]["qualifier"] == "Unresolved"
+    assert tempest["role_inference"]["candidate_label"] == "Support / Healing"
+    assert tempest["role_inference"]["candidate_qualifier"] == "Likely"
+    assert any("Overload Water" in item for item in tempest["role_inference"]["evidence"])
 
 
 def test_unknown_enemies_are_distinct_from_partial_party_open_slots():
@@ -251,5 +285,5 @@ def test_methodology_does_not_claim_exact_builds():
     assert methodology["profession_counts"] == "observed"
     assert methodology["party_placement"] == "inferred"
     assert methodology["exact_builds"] == "not_available"
-    assert methodology["all_scope"] == "comparison_only_never_blended"
+    assert methodology["all_scope"] == "representative_average_across_snapshots"
     assert model["ai_analysis"] is None

@@ -20,6 +20,10 @@ from core.raid_session import (
 )
 from core.report_bake import merge_augmented_tiddlers, summarize_tiddlers
 from core.report_viewer import convert_report_file
+from core.enemy_role_evidence import (
+    collect_enemy_role_evidence,
+    collect_player_skill_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +255,8 @@ class RaidReportRunner:
                 standalone_html,
                 current_tiddlers,
                 default_view=self.report_default_view,
+                enemy_role_evidence=collect_enemy_role_evidence(json_paths),
+                player_skill_evidence=collect_player_skill_evidence(json_paths),
             )
         except Exception as exc:
             logger.error("Report viewer build failed", exc_info=True)

@@ -27,8 +27,9 @@ _COMPOSITION_CAPTION_RE = re.compile(
 _PIPE_SENTINEL = "\x00"
 
 
-# These are intentionally broad role families, not build claims.  Anything
-# absent from the map stays hybrid rather than being forced into a role.
+# These are intentionally broad placement families, not build claims.  They
+# help distribute professions across estimated parties, but never become a
+# displayed role without role-specific output evidence.
 _ROLE_FAMILIES = {
     "primary_support": {
         "Chronomancer", "Firebrand", "Luminary", "Scrapper", "Troubadour",
@@ -161,41 +162,73 @@ def _dps_term(damage_profile, has_damage):
     return "DPS"
 
 
-def _role_labels(role_family, has_damage, has_control, has_strips, damage_profile):
-    if role_family == "healer":
-        return "Healer", ["Healer"]
-    if role_family == "primary_support":
-        tags = ["Boon Support"]
-        if has_strips:
-            tags.append("Boon Strip")
-        if has_control:
-            tags.append("Crowd Control")
-        return "Boon Support", tags
-    if role_family == "utility_support":
-        tags = []
-        if has_strips:
-            tags.append("Boon Strip")
-        if has_damage:
-            tags.append(_dps_term(damage_profile, has_damage))
-        if has_control:
-            tags.append("Crowd Control")
-        if not tags:
-            tags.append("Boon Support")
-        return tags[0], tags
-    if role_family == "dps":
-        tags = [_dps_term(damage_profile, has_damage)]
-        if has_strips:
-            tags.append("Boon Strip")
-        if has_control:
-            tags.append("Crowd Control")
-        return tags[0], tags
-    return "Hybrid", ["Hybrid"]
+_ROLE_LEVELS = {"Estimated": 1, "Likely": 2, "Confirmed": 3}
+_ROLE_PRIORITY = {
+    "Healer": 0, "Support / Healing": 1, "Boon Support": 2,
+    "Power DPS": 3, "Condition DPS": 3, "DPS": 3,
+    "Boon Strip": 4, "Crowd Control": 5, "DPS / Support": 6,
+}
+
+
+def _merge_role(roles, role, level, evidence, source_scope):
+    current = roles.get(role)
+    item = {
+        "role": role,
+        "level": level,
+        "evidence": [evidence],
+        "source_scope": source_scope,
+    }
+    if current is None:
+        roles[role] = item
+    elif _ROLE_LEVELS[level] > _ROLE_LEVELS[current["level"]]:
+        item["evidence"] = current["evidence"] + item["evidence"]
+        roles[role] = item
+    else:
+        current["evidence"].append(evidence)
+
+
+def _archetype_role(role_family):
+    return {
+        "healer": "Support / Healing",
+        "primary_support": "Boon Support",
+        "utility_support": "DPS / Support",
+        "dps": "DPS",
+        "hybrid": "DPS / Support",
+    }[role_family]
 
 
 def _infer_tactical_role(profession, observed_frequency, role_context):
     role_family = _role_for(profession)
     evidence = [f"{observed_frequency} {profession} observed in this fight/color"]
+    roles = {}
     context = role_context or {}
+    actor_profile = (context.get("actor_role_evidence") or {}).get("professions", {}).get(profession, {})
+    build_evidence = []
+    for trait in actor_profile.get("traits", []):
+        detail = (
+            f"Proven trait {trait.get('trait')} ({trait.get('specialization')}): "
+            f"{trait.get('observed_skill')} trait proc observed in "
+            f"{trait.get('actor_appearances', 1)} enemy appearance(s)"
+        )
+        build_evidence.append(detail)
+        evidence.append(detail)
+    for consumable in actor_profile.get("consumables", []):
+        detail = (
+            f"Observed {consumable.get('classification', 'consumable')} "
+            f"{consumable.get('name')} in {consumable.get('actor_appearances', 1)} "
+            "enemy appearance(s)"
+        )
+        build_evidence.append(detail)
+        evidence.append(detail)
+    for signal in actor_profile.get("roles", []):
+        _merge_role(
+            roles,
+            signal["role"],
+            signal.get("level", "Likely"),
+            signal.get("evidence", "role-specific enemy skill pattern observed"),
+            signal.get("source_scope", "detailed_wvw_enemy_targets_across_selected_fights"),
+        )
+        evidence.append(signal.get("evidence", "role-specific enemy skill pattern observed"))
     damage_rows = context.get("damage_by_profession", {}).get(profession, [])
     pull_rows = context.get("pulls_by_profession", {}).get(profession, [])
 
@@ -205,14 +238,42 @@ def _infer_tactical_role(profession, observed_frequency, role_context):
             f"{row['skill']}: {int(row['damage']):,} enemy damage"
             + (f" ({share:g}% of session enemy damage)" if share is not None else "")
         )
+        owners = _DAMAGE_SKILL_PROFESSIONS.get(row["skill"], set())
+        level = "Likely" if len(owners) == 1 else "Estimated"
+        _merge_role(
+            roles,
+            _dps_term(context.get("damage_profile") or {}, True),
+            level,
+            f"{row['skill']} observed across the night"
+            + (" and uniquely identifies this profession" if len(owners) == 1
+               else "; several professions can produce it"),
+            "session_all_opponents",
+        )
     for row in pull_rows:
         evidence.append(f"{row['skill']}: {row['count']:g} connected incoming pulls")
+        owners = _PULL_SKILL_PROFESSIONS.get(row["skill"], set())
+        _merge_role(
+            roles,
+            "Crowd Control",
+            "Likely" if len(owners) == 1 else "Estimated",
+            f"{row['skill']} connected {row['count']:g} times across the night"
+            + (" and uniquely identifies this profession" if len(owners) == 1
+               else "; several professions can produce it"),
+            "session_all_opponents",
+        )
 
     strip_count = context.get("incoming_strip_count")
     has_strips = profession in _STRIP_CAPABLE_PROFESSIONS and strip_count is not None
     if has_strips:
         evidence.append(
             f"enemy team removed {strip_count:,} squad boons; source profession not attributable"
+        )
+        _merge_role(
+            roles,
+            "Boon Strip",
+            "Estimated",
+            f"enemy team removed {strip_count:,} boons, but the source profession is not attributable",
+            "session_all_opponents",
         )
 
     profile = context.get("damage_profile") or {}
@@ -222,17 +283,48 @@ def _infer_tactical_role(profession, observed_frequency, role_context):
             f"{profile.get('condition_percent', 0):g}% condition; not profession-attributed"
         )
 
-    has_metric_evidence = bool(damage_rows or pull_rows)
-    label, tags = _role_labels(
-        role_family,
-        bool(damage_rows),
-        bool(pull_rows),
-        has_strips,
-        profile,
+    role_rows = sorted(
+        roles.values(),
+        key=lambda item: (
+            -_ROLE_LEVELS[item["level"]],
+            _ROLE_PRIORITY.get(item["role"], 99),
+            item["role"],
+        ),
+    )
+    if not role_rows:
+        evidence.append(
+            "No role-specific skill or output evidence was retained; profession alone does not prove a role"
+        )
+        return {
+            "label": "Unknown",
+            "tags": [],
+            "family": {
+                "primary_support": "Support",
+                "healer": "Healer",
+                "utility_support": "Support",
+                "dps": "DPS",
+                "hybrid": "Hybrid",
+            }[role_family],
+            "qualifier": "Unresolved",
+            "confidence": "unresolved",
+            "roles": [],
+            "evidence": evidence,
+            "build_evidence": build_evidence,
+            "source_scope": "fight_color_composition_plus_session_all_opponents",
+            "limitation": (
+                "profession frequency is observed; no positive role evidence was available"
+            ),
+        }
+    primary = role_rows[0]
+    evidence.append(
+        f"Profession-level candidate: {primary['role']} ({primary['level']}); "
+        "enemy identity is not retained, so this cannot be assigned to an estimated slot"
     )
     return {
-        "label": label,
-        "tags": tags,
+        "label": "Unknown",
+        "candidate_label": primary["role"],
+        "candidate_qualifier": primary["level"],
+        "tags": [item["role"] for item in role_rows],
         "family": {
             "primary_support": "Support",
             "healer": "Healer",
@@ -240,13 +332,15 @@ def _infer_tactical_role(profession, observed_frequency, role_context):
             "dps": "DPS",
             "hybrid": "Hybrid",
         }[role_family],
-        "qualifier": "Likely" if has_metric_evidence else "Inferred",
-        "confidence": "medium" if has_metric_evidence else "low",
+        "qualifier": "Unresolved",
+        "confidence": "unresolved",
+        "roles": role_rows,
         "evidence": evidence,
+        "build_evidence": build_evidence,
         "source_scope": "fight_color_composition_plus_session_all_opponents",
         "limitation": (
-            "profession frequency is observed; individual build, healing, strip source, "
-            "and party position are inferred"
+            "profession frequency and profession-level signals are observed; individual "
+            "role, build, healing, strip source, and party position are not attributable"
         ),
     }
 
@@ -400,6 +494,7 @@ def _composition_snapshots(tiddlers, fight_rows, role_context=None):
         )
         output.append({
             "index": snapshot["index"],
+            "time_label": fight.get("time_label"),
             "color": snapshot["color"],
             "enemy_count": enemy_count,
             "observed_profession_count": observed_count,
@@ -778,7 +873,7 @@ def _pull_rates(pulls, combat_seconds):
     ]
 
 
-def _role_context(damage_skills, pulls, incoming_strips, damage_profile):
+def _role_context(damage_skills, pulls, incoming_strips, damage_profile, actor_role_evidence=None):
     damage_by_profession = {}
     for row in damage_skills:
         for profession in _DAMAGE_SKILL_PROFESSIONS.get(row["skill"], set()):
@@ -796,6 +891,7 @@ def _role_context(damage_skills, pulls, incoming_strips, damage_profile):
         "pulls_by_profession": pulls_by_profession,
         "incoming_strip_count": exact_strip,
         "damage_profile": damage_profile,
+        "actor_role_evidence": actor_role_evidence or {},
     }
 
 
@@ -846,7 +942,8 @@ def _scope_aggregate(color, snapshots):
 
 
 def build_enemy_intel(
-    tiddlers, fight_rows, selected_fights=None, reported_fights=None
+    tiddlers, fight_rows, selected_fights=None, reported_fights=None,
+    actor_role_evidence=None,
 ):
     """Build the deterministic Enemy Intel section for a night model."""
     damage_skills = _enemy_damage_skills(tiddlers)
@@ -873,7 +970,10 @@ def build_enemy_intel(
     snapshots = _composition_snapshots(
         tiddlers,
         fight_rows,
-        role_context=_role_context(damage_skills, pulls, incoming_strips, damage_profile),
+        role_context=_role_context(
+            damage_skills, pulls, incoming_strips, damage_profile,
+            actor_role_evidence=actor_role_evidence,
+        ),
     )
     colors = sorted({snapshot["color"] for snapshot in snapshots})
     scopes = [
@@ -894,6 +994,10 @@ def build_enemy_intel(
         },
         "cc": {"available": bool(cc), "scope": "session"},
         "pulls": {"available": bool(pulls), "scope": "session"},
+        "enemy_role_skills": {
+            "available": bool((actor_role_evidence or {}).get("enemy_actor_appearances")),
+            "scope": "detailed_enemy_targets_across_selected_fights",
+        },
     }
     return {
         "coverage": {
@@ -936,12 +1040,21 @@ def build_enemy_intel(
             "pulls": pulls,
             "damage_profile": damage_profile,
         },
+        "role_validation": actor_role_evidence or {
+            "source": "combined_report_only",
+            "enemy_actor_appearances": 0,
+            "professions": {},
+            "limitations": (
+                "This recovered report contains profession counts and session-wide incoming skills, "
+                "but no per-enemy rotations or DPS. Roles remain estimated."
+            ),
+        },
         "methodology": {
             "profession_counts": "observed",
             "party_placement": "inferred",
-            "roles": "inferred_from_observed_frequency_session_pressure_and_profession_archetype",
+            "roles": "skill_and_dps_validated_when_detailed_json_exists_otherwise_estimated",
             "exact_builds": "not_available",
-            "all_scope": "comparison_only_never_blended",
+            "all_scope": "representative_average_across_snapshots",
         },
         # Deliberately empty: report generation never makes a network/model
         # call.  A future opt-in enrichment step may populate this structure.
