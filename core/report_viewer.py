@@ -134,6 +134,16 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     return String(value || "Stats").replace(/[-_]+/g, " ")
       .replace(/\b\w/g, function (c) { return c.toUpperCase(); });
   }
+  function readableLabel(value) {
+    return titleCase(String(value || "").replace(/_/g, " "));
+  }
+  function confidenceLabel(confidence) {
+    if (!confidence) return "Unknown";
+    if (typeof confidence !== "object") return readableLabel(confidence);
+    var level = readableLabel(confidence.level || "Unknown");
+    var score = Number(confidence.score);
+    return level + (Number.isFinite(score) ? " · " + Math.round(score * 100) + "%" : "");
+  }
   function humanDuration(value) {
     var text = String(value || "");
     var hours = Number((text.match(/(\d+)\s*h\b/i) || [0, 0])[1]);
@@ -180,7 +190,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   function totalsCards(compact) {
     var t = model.totals || {};
     var cards = [
-      ["Fights", t.fights],
+      ["Modeled fights", t.fights],
       ["Enemy downs", t.enemy_downs],
       ["Enemy kills", t.enemy_kills],
       ["Our downs", t.ally_downs],
@@ -196,7 +206,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   function reportHeading(kicker) {
     var s = model.session || {};
     var title = s.commander ? esc(s.commander) + "’s night" : "Night report";
-    var bits = [s.date, humanDuration(s.total_duration)].filter(Boolean).map(esc);
+    var bits = [s.date, s.total_duration ? "Combat time " + humanDuration(s.total_duration) : null]
+      .filter(Boolean).map(esc);
     return "<header class=\"hero\"><span class=\"eyebrow\">" +
       esc(kicker) + "</span><h1>" + title + "</h1><p>" +
       (bits.join(" · ") || "Combined WvW fight log summary") + "</p></header>";
@@ -454,8 +465,12 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var c = model.enemy_intel && model.enemy_intel.coverage || {};
     var selected = c.selected_fights == null ? "—" : c.selected_fights;
     var reported = c.reported_fights == null ? (c.modeled_fights == null ? "—" : c.modeled_fights) : c.reported_fights;
-    return "<div class=\"coverage\"><span><b>" + fmt(selected) + "</b> selected</span>" +
-      "<span><b>" + fmt(reported) + "</b> parsed</span><span><b>" +
+    var excluded = (typeof selected === "number" && typeof reported === "number") ?
+      Math.max(0, selected - reported) : null;
+    return "<div class=\"coverage\"><span><b>" + fmt(selected) + "</b> logs selected</span>" +
+      "<span><b>" + fmt(reported) + "</b> modeled encounters</span>" +
+      (excluded ? "<span><b>" + fmt(excluded) + "</b> unmodeled / excluded</span>" : "") +
+      "<span><b>" +
       fmt(c.composition_snapshots) + "</b> composition snapshots</span><span><b>" +
       fmt((c.colors || []).join ? c.colors.join(" / ") : c.colors) +
       "</b> enemy colors</span></div>";
@@ -520,7 +535,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           var evidence = member.evidence || (member.observed ? "observed" : "inferred");
           return "<li class=\"" + esc(evidence) + "\"><b>" +
             esc(member.profession || "Unknown") + "</b><span>" +
-            esc(member.role || "Role unknown") + "</span><small>" +
+            esc(readableLabel(member.role || "Role unknown")) + "</span><small>" +
             esc(evidence === "observed" ? "Observed" : "Inferred placement") +
             "</small></li>";
         }).join("");
@@ -529,7 +544,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           "<span>Unidentified slot</span><small>Unknown</small></li>";
         return "<article class=\"party\"><header><b>Party " +
           fmt(party.party || party.index || i + 1) + "</b><span>" +
-          fmt(party.confidence) + " confidence</span></header><ol>" + members +
+          esc(confidenceLabel(party.confidence)) + " confidence</span></header><ol>" + members +
           "</ol></article>";
       }).join("") + "</div><p class=\"accuracy\"><b>Estimated Enemy Group Comp:</b> " +
       "profession counts are observed where available; five-player party placement and roles " +
@@ -556,7 +571,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   function renderSparky() {
     var boards = allBoards();
     var overview = subnav("overview", [["summary","Night Summary"],["timeline","Fight Timeline"]]) +
-      subpanel("overview", "summary", poisonSpotlight() +
+      subpanel("overview", "summary", enemyCoverage() + poisonSpotlight() +
         sectionHead("Command view", "The important things", "Performance, pressure, and standout players without the table hunt.") +
         boardGrid([], 8, "No overview boards were found."), false) +
       subpanel("overview", "timeline", sectionHead("Fight by fight", "Night timeline", "Follow momentum and open the detailed rows below.") +
@@ -593,7 +608,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         "</div>" + highScoreGrid([]) + poisonTable(), true);
     var body = "<div class=\"session-strip\"><b>Sparky Pro</b><span>" +
       esc((model.session || {}).date || "Night report") + "</span><span>" +
-      esc(humanDuration((model.session || {}).total_duration) || "Duration unavailable") +
+      "Combat · " + esc(humanDuration((model.session || {}).total_duration) || "unavailable") +
       "</span><span>Offline · deterministic</span></div>" +
       reportHeading("Pro · command analytics") + totalsCards(false) +
       "<nav class=\"tabs\" aria-label=\"Pro report views\" role=\"tablist\">" +
@@ -779,7 +794,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           fmt(fight.enemy_count) + "</strong><span>observed enemy count</span></div>" +
           "<div><strong>" + fmt(fight.observed_profession_count) +
           "</strong><span>identified professions</span></div><div><strong>" +
-          fmt(fight.confidence) + "</strong><span>reconstruction confidence</span></div></div>" +
+          esc(confidenceLabel(fight.confidence)) + "</strong><span>reconstruction confidence</span></div></div>" +
           "<article class=\"intel-card wide\"><h3>Observed composition</h3>" +
           chips(fight.professions, "profession", "count", 40) + "</article>" +
           partyGrid(fight) + pressurePanels(scope) :

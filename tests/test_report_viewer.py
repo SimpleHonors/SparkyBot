@@ -79,6 +79,13 @@ def test_convert_report_carries_selected_log_count_from_filename(tmp_path):
 
     report = path.read_text(encoding="utf-8")
     assert '"selected_fights":31' in report
+    assert "logs selected" in report
+    assert "modeled encounters" in report
+    assert "unmodeled / excluded" in report
+    assert "Modeled fights" in report
+    assert "Combat time" in report
+    assert "confidenceLabel" in report
+    assert "readableLabel(member.role" in report
 
 
 def test_pro_viewer_exposes_navigation_subviews_and_persistent_themes():
