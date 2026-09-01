@@ -8,7 +8,7 @@ collected in ``warnings``.
 Schema of ``build_night_model(tiddlers) -> dict``::
 
     {
-      "schema_version": 1,
+      "schema_version": 2,
       "session": {                     # session meta
         "tag": str | None,             # e.g. "2026-08-10-20:27:05"
         "date": str | None,            # "YYYY-MM-DD" part of the tag
@@ -56,6 +56,9 @@ Schema of ``build_night_model(tiddlers) -> dict``::
         {"account": str, "name": str, "prof": str, "apps": int,
          "fight_time": float, "output": float, "apps_per_min": float}
       ],
+      "pro_navigation": [...],         # Pro views and their subviews
+      "enemy_intel": {...},            # observed evidence + explicitly
+                                        # inferred enemy subgroup estimates
       "warnings": [str]                # one entry per section that failed
     }
 
@@ -72,8 +75,9 @@ import re
 from dataclasses import asdict
 
 from core import poison_tab
+from core.enemy_intel import PRO_NAVIGATION, build_enemy_intel
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _TAG_RE = re.compile(r"(\d{4}-\d{2}-\d{2}-\d{2}:\d{2}:\d{2})")
 _IMG_RE = re.compile(r"\[img[^\]]*?\[([^|\]]+)\|[^\]]*?\]\]")
@@ -706,7 +710,7 @@ def _parse_squad_composition(tiddlers):
 # ------------------------------------------------------------------
 
 
-def build_night_model(tiddlers):
+def build_night_model(tiddlers, selected_fights=None):
     """Parse a combiner tiddler store into one typed night model dict.
 
     ``tiddlers`` is the JSON list of tiddler dicts (the night summary
@@ -725,6 +729,8 @@ def build_night_model(tiddlers):
         "high_scores": None,
         "squad_composition": None,
         "poison": [],
+        "pro_navigation": copy.deepcopy(PRO_NAVIGATION),
+        "enemy_intel": None,
         "warnings": warnings,
     }
 
@@ -752,5 +758,36 @@ def build_night_model(tiddlers):
     except Exception as exc:  # noqa
         warnings.append(f"poison: {type(exc).__name__}: {exc}")
         model["poison"] = []
+
+    try:
+        reported_fights = (
+            model["totals"].get("fights") if model["totals"] else None
+        )
+        model["enemy_intel"] = build_enemy_intel(
+            copy.deepcopy(tiddlers),
+            copy.deepcopy(model["fights"]),
+            selected_fights=selected_fights,
+            reported_fights=reported_fights,
+        )
+    except Exception as exc:  # noqa
+        warnings.append(f"enemy_intel: {type(exc).__name__}: {exc}")
+        model["enemy_intel"] = {
+            "coverage": {
+                "selected_fights": selected_fights,
+                "reported_fights": 0,
+                "modeled_fights": len(model["fights"]),
+                "composition_fights": 0,
+                "composition_snapshots": 0,
+                "colors": [],
+                "sources": {},
+            },
+            "scopes": [],
+            "fights": [],
+            "all": {"mode": "comparison_only", "estimated_subgroups": None,
+                    "comparisons": []},
+            "session_pressure": {},
+            "methodology": {},
+            "ai_analysis": None,
+        }
 
     return model

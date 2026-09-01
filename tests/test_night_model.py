@@ -216,7 +216,7 @@ def test_bad_section_warns_but_does_not_raise():
 
 def test_garbage_input_is_tolerated():
     model = build_night_model(["not a dict", {"no_title": 1}, None])
-    assert model["schema_version"] == 1
+    assert model["schema_version"] == 2
     assert model["fights"] == []
     assert model["leaderboards"] == []
     assert model["stat_tables"] == []
@@ -224,3 +224,13 @@ def test_garbage_input_is_tolerated():
     # unparseable sections are recorded; absent-is-valid sections are not
     failed = {w.split(":")[0] for w in model["warnings"]}
     assert failed == {"totals", "fights", "high_scores", "squad_composition"}
+
+
+def test_selected_fight_coverage_can_be_supplied_by_the_report_pipeline():
+    model = build_night_model(
+        _load("aug10_summary_poison.json"), selected_fights=11
+    )
+    coverage = model["enemy_intel"]["coverage"]
+    assert coverage["selected_fights"] == 11
+    assert coverage["reported_fights"] == 8
+    assert coverage["modeled_fights"] == 8
