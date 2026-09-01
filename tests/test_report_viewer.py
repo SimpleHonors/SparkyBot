@@ -106,6 +106,9 @@ def test_pro_viewer_exposes_navigation_subviews_and_persistent_themes():
     assert 'value="studio-light">Studio Light<' in report
     assert "sparkybot-report-theme" in report
     assert "prefers-reduced-motion" in report
+    assert "allSourceBoards()" in report
+    assert "leaderboards</span>" in report
+    assert "stat tables</span>" in report
 
 
 def test_enemy_intel_is_comparison_only_for_all_and_labels_estimates():

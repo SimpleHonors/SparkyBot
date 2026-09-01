@@ -157,6 +157,10 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         return true;
       });
   }
+  function allSourceBoards() {
+    return (model.leaderboards || []).concat(model.stat_tables || [])
+      .filter(function (board) { return (board.rows || []).length; });
+  }
   function boardCard(board, limit) {
     var rows = (board.rows || []).slice(0, limit || 10);
     var body = rows.map(function (row, index) {
@@ -340,6 +344,18 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       return boardCard(board, limit || 10);
     }).join("") + "</div>" : "<p class=\"empty\">" + esc(emptyText ||
       "No matching source table was available for this report.") + "</p>";
+  }
+  function sourceBoardGrid() {
+    var boards = allSourceBoards();
+    if (!boards.length) return "<p class=\"empty\">No source tables were available.</p>";
+    return "<div class=\"detail-counts\"><span><b>" +
+      fmt((model.leaderboards || []).length) + "</b> leaderboards</span><span><b>" +
+      fmt((model.stat_tables || []).length) + "</b> stat tables</span><span><b>" +
+      fmt((model.high_scores && model.high_scores.blocks || []).length) +
+      "</b> high-score blocks</span><span><b>" + fmt((model.poison || []).length) +
+      "</b> poison rows</span></div><div class=\"boards\">" +
+      boards.map(function (board) { return boardCard(board, 100); }).join("") +
+      "</div>";
   }
   function sectionHead(kicker, title, text) {
     return "<div class=\"section-head\"><div><span class=\"eyebrow\">" +
@@ -573,7 +589,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       subpanel("details", "players", "<label class=\"search\">Filter players<input id=\"player-filter\" placeholder=\"Name, account, class…\"></label>" + boardGrid([], 50), true) +
       subpanel("details", "attendance", boardGrid(["attendance","fight attendance"], 50), true) +
       subpanel("details", "composition", squadCards() || "<p class=\"empty\">No squad composition was found.</p>", true) +
-      subpanel("details", "tables", "<div id=\"all-boards\">" + boardGrid([], 100) + "</div>" + highScoreGrid([]) + poisonTable(), true);
+      subpanel("details", "tables", "<div id=\"all-boards\">" + sourceBoardGrid() +
+        "</div>" + highScoreGrid([]) + poisonTable(), true);
     var body = "<div class=\"session-strip\"><b>Sparky Pro</b><span>" +
       esc((model.session || {}).date || "Night report") + "</span><span>" +
       esc(humanDuration((model.session || {}).total_duration) || "Duration unavailable") +
@@ -631,6 +648,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       ".wide{margin:12px 0}.chips{display:flex;flex-wrap:wrap;gap:7px}.chips span{padding:6px 9px;background:var(--panel-2);",
       "border:1px solid var(--line-soft);border-radius:999px;color:var(--muted);font-size:12px}.chips b{color:var(--text)}",
       ".scope-note,.muted{color:var(--muted)}.comparison-banner{padding:13px;border-left:4px solid var(--accent-2);",
+      ".detail-counts{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.detail-counts span{padding:8px 10px;",
+      "border:1px solid var(--line);border-radius:7px;color:var(--muted)}.detail-counts b{color:var(--text)}",
       "background:var(--panel);margin:12px 0}.party-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}",
       ".party{border:1px dashed var(--line);border-radius:10px;background:var(--panel);overflow:hidden}.party header{display:flex;",
       "justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line)}.party header span{color:var(--muted);font-size:11px}",
