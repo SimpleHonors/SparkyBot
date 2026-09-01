@@ -39,9 +39,10 @@ Schema of ``build_night_model(tiddlers) -> dict``::
       ],
       "stat_tables": [                 # per-night combiner stat tables
         {"stat": str,                  # (Damage, Heal-Stats, Uptimes, ...)
+         "value_label": str|None,      # honest metric used for ranking
          "rows": [{"rank": int|None, "name": str, "account": str|None,
                    "profession": str|None, "value": float|None,
-                   "cells": [int|float]}]}
+                   "cells": [int|float], "metrics": {str:int|float}}]}
       ],
       "high_scores": {"blocks": [      # High-Scores flex-col blocks
          {"caption": str|None,
@@ -351,7 +352,11 @@ def _parse_fights(tiddlers):
 # ------------------------------------------------------------ boards
 
 
-def _parse_board_rows(line_iter, ranked=False):
+def _metric_key(value):
+    return re.sub(r"[^a-z0-9]+", "", _plain(value).lstrip("!").lower())
+
+
+def _parse_board_rows(line_iter, ranked=False, headers=None):
     rows = []
     for line in line_iter:
         if not _is_data_row(line):
@@ -362,16 +367,53 @@ def _parse_board_rows(line_iter, ranked=False):
         profession = _prof(line)
         cells = [_plain(c) for c in raw_cells]
         rank = None
-        if ranked and len(raw_cells) > 1:
-            rank = _num(raw_cells[1])
+        if ranked and len(cells) > 1:
+            rank = _num(cells[1])
         name = None
         name_i = None
-        for i, c in enumerate(cells):
-            if i == 0 and rank is not None:
-                continue
-            if c and not _NUM_RE.match(raw_cells[i] if i < len(raw_cells)
-                                       else ""):
-                if re.search(r"[A-Za-z]", c):
+        if headers:
+            account_i = next(
+                (i for i, key in enumerate(headers) if key == "account"),
+                None,
+            )
+            if account_i is not None and account_i < len(cells):
+                account = cells[account_i] or account
+            name_i = next(
+                (
+                    i
+                    for wanted in ("name", "player")
+                    for i, key in enumerate(headers)
+                    if key == wanted
+                ),
+                None,
+            )
+            profession_i = next(
+                (
+                    i
+                    for i, key in enumerate(headers)
+                    if key in ("profession", "prof")
+                ),
+                None,
+            )
+            if profession_i is not None and profession_i < len(raw_cells):
+                profession = (
+                    _prof(raw_cells[profession_i])
+                    or cells[profession_i]
+                    or profession
+                )
+            if name_i is not None and name_i < len(raw_cells):
+                name = cells[name_i]
+                embedded_profession = _prof(raw_cells[name_i])
+                if embedded_profession:
+                    profession = embedded_profession
+                    if name.casefold().startswith(embedded_profession.casefold()):
+                        name = name[len(embedded_profession):].strip()
+        if not name:
+            name_i = None
+            for i, c in enumerate(cells):
+                if i == 0 and rank is not None:
+                    continue
+                if c and not _NUM_RE.match(c) and re.search(r"[A-Za-z]", c):
                     name = c
                     name_i = i
                     break
@@ -379,18 +421,24 @@ def _parse_board_rows(line_iter, ranked=False):
             continue
         value = None
         nums = []
-        for i, c in enumerate(raw_cells):
+        metrics = {}
+        for i, c in enumerate(cells):
             if i <= (name_i or 0):
                 continue
             v = _num(c)
             if v is not None:
                 nums.append(v)
+                if headers and i < len(headers) and headers[i]:
+                    metrics[headers[i]] = v
                 if value is None:
                     value = v
-        rows.append({"rank": int(rank) if rank is not None else None,
-                     "name": name, "account": account,
-                     "profession": profession, "value": value,
-                     "cells": nums})
+        row = {"rank": int(rank) if rank is not None else None,
+               "name": name, "account": account,
+               "profession": profession, "value": value,
+               "cells": nums}
+        if headers is not None:
+            row["metrics"] = metrics
+        rows.append(row)
     return rows
 
 
@@ -422,8 +470,49 @@ def _session_tag(tiddlers):
     return None
 
 
+def _named_table(lines, caption):
+    """Return one table by caption from a tiddler that contains several."""
+    caption_key = caption.casefold()
+    caption_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _ends(line) == "|c" and caption_key in _plain(line).casefold()
+        ),
+        None,
+    )
+    if caption_index is None:
+        return "", []
+    header_index = next(
+        (
+            index
+            for index in range(caption_index + 1, len(lines))
+            if _is_header_row(lines[index])
+        ),
+        None,
+    )
+    if header_index is None:
+        return "", []
+    rows = []
+    for line in lines[header_index + 1:]:
+        if _is_data_row(line):
+            rows.append(line)
+        elif rows:
+            break
+    return lines[header_index], rows
+
+
 def _parse_stat_tables(tiddlers):
     """Parse the standard per-night combiner stat tables."""
+    score_rules = {
+        "Damage": ("Damage / sec", ("targetdamageps",)),
+        "Heal-Stats": ("Healing / sec", ("healingps",)),
+        "Uptimes": ("Might uptime (%)", ("might",)),
+        "Conditions-Out": ("Conditions applied", ("count",)),
+        "Debuffs-Out": ("Control effects", ("count",)),
+        "Mechanics": ("Killing blows", ("kllngblwplayer",)),
+        "Attendance": ("Fights attended", ("numfights",)),
+    }
     tables = []
     tag = _session_tag(tiddlers)
     for suffix in _STAT_TABLE_SUFFIXES:
@@ -432,11 +521,73 @@ def _parse_stat_tables(tiddlers):
                  None) if exact else _find_tiddler(tiddlers, "-" + suffix)
         if not t or not t.get("text"):
             continue
+        text_lines = t["text"].splitlines()
+        if suffix == "Pull-Skills":
+            # This tiddler carries two different tables. Only outgoing pulls
+            # belong in a performer leaderboard; incoming pulls describe who
+            # got pulled and must never be mixed into the same ranking.
+            header_line, row_lines = _named_table(text_lines, "Outgoing Pulls")
+        else:
+            header_line = next(
+                (line for line in text_lines if _is_header_row(line)), ""
+            )
+            row_lines = [
+                line for line in text_lines if not _is_header_row(line)
+            ]
+        headers = [_metric_key(cell) for cell in _cells(header_line)]
         rows = _parse_board_rows(
-            l for l in t["text"].splitlines() if not _is_header_row(l))
+            row_lines,
+            headers=headers,
+        )
         if rows:
-            stat = (t.get("caption") or suffix.replace("-", " ")).strip()
-            tables.append({"stat": stat, "rows": rows})
+            stat = (
+                "Outgoing Pulls"
+                if suffix == "Pull-Skills"
+                else (t.get("caption") or suffix.replace("-", " ")).strip()
+            )
+            value_label = None
+            keys = ()
+            if suffix in score_rules:
+                value_label, keys = score_rules[suffix]
+            for row in rows:
+                metrics = row.get("metrics", {})
+                if suffix == "Pull-Skills":
+                    value_label = "Outgoing pulls"
+                    row["value"] = sum(
+                        value for key, value in metrics.items()
+                        if key != "fighttime"
+                    )
+                elif suffix == "Combat-Resurrect":
+                    value_label = "Resurrection output"
+                    row["value"] = sum(
+                        value for key, value in metrics.items()
+                        if "resurrect" in key or "naturesrenewal" in key
+                    )
+                elif keys:
+                    row["value"] = next(
+                        (metrics[key] for key in keys if key in metrics), None
+                    )
+                else:
+                    row["value"] = None
+            if value_label:
+                rows = [row for row in rows if row["value"] is not None]
+                best_by_player = {}
+                for row in rows:
+                    player_key = (
+                        row.get("account")
+                        or f"{row.get('name', '').casefold()}|"
+                        f"{row.get('profession', '').casefold()}"
+                    )
+                    previous = best_by_player.get(player_key)
+                    if previous is None or row["value"] > previous["value"]:
+                        best_by_player[player_key] = row
+                rows = list(best_by_player.values())
+                rows.sort(key=lambda row: row["value"], reverse=True)
+            tables.append({
+                "stat": stat,
+                "value_label": value_label,
+                "rows": rows,
+            })
     return tables
 
 
@@ -459,15 +610,51 @@ def _parse_high_scores(tiddlers):
         for line in chunk.splitlines():
             if not _is_data_row(line):
                 continue
-            cells = [_plain(c) for c in _cells(line) if _plain(c)]
+            raw_cells = [c for c in _cells(line) if _plain(c)]
+            cells = [_plain(c) for c in raw_cells]
             if not cells:
                 continue
             score = None
-            for c in reversed(cells):
-                score = _num(c)
+            score_i = None
+            for index in range(len(cells) - 1, -1, -1):
+                score = _num(cells[index])
                 if score is not None:
+                    score_i = index
                     break
-            rows.append({"cells": cells, "score": score})
+            identity_raw = raw_cells[0]
+            profession = _prof(identity_raw)
+            identity = cells[0]
+            if profession and identity.casefold().startswith(profession.casefold()):
+                identity = identity[len(profession):].strip()
+            fight = None
+            fight_match = re.match(r"^(.*?)\s*-(\d+)\s*$", identity)
+            if fight_match:
+                identity = fight_match.group(1).strip()
+                fight = int(fight_match.group(2))
+            details = cells[1:score_i] if score_i is not None else cells[1:]
+            details = [
+                re.sub(r"^\{([^{}]+)\}-\1$", r"\1", detail)
+                for detail in details
+            ]
+            display_cells = [identity]
+            if profession:
+                display_cells.append(profession)
+            if fight is not None:
+                display_cells.append(f"Fight {fight}")
+            display_cells.extend(details)
+            rows.append({
+                "cells": display_cells,
+                "name": identity,
+                "account": (
+                    account_match.group(1).strip()
+                    if (account_match := _TOOLTIP_RE.search(identity_raw))
+                    else None
+                ),
+                "profession": profession,
+                "fight": fight,
+                "details": details,
+                "score": score,
+            })
         if rows:
             blocks.append({"caption": caption, "rows": rows})
     if not blocks:

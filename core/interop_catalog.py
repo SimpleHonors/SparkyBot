@@ -22,92 +22,88 @@ INTEROP_PROJECTS = (
         "ArcDPS",
         "https://www.deltaconnected.com/arcdps/",
         "upstream terms",
-        "Creates the EVTC combat logs that make this entire ecosystem possible.",
-        "SparkyBot detects its settings and log folder; ArcDPS remains the source of truth.",
+        "Creates the EVTC fight logs used across the WvW reporting ecosystem.",
+        "SparkyBot can detect ArcDPS and reuse its configured log folder.",
     ),
     InteropProject(
         "GW2 Elite Insights",
         "https://github.com/baaron4/GW2-Elite-Insights-Parser",
         "MIT",
-        "The authoritative, deeply capable parser with encounter coverage no reporting front end should try to reinvent.",
-        "It powers SparkyBot's parsing and is credited and licensed as a bundled third-party component.",
+        "Deep combat parsing and detailed reports across many game modes.",
+        "Elite Insights is the parser SparkyBot uses for fight data.",
     ),
     InteropProject(
         "MzFightReporter",
         "https://github.com/Swedemon/MzFightReporter",
         "MIT",
-        "Excellent compact, battle-first WvW reports with a proven live Discord and optional Twitch workflow.",
-        "We used it, learned from it, and openly credit it as the original inspiration for SparkyBot.",
+        "Compact WvW Discord reports and an optional Twitch workflow.",
+        "MzFightReporter directly inspired SparkyBot's live fight-report workflow; settings can be moved both ways.",
     ),
     InteropProject(
         "PlenBot Log Uploader",
         "https://github.com/Plenyx/PlenBotLogUploader",
         "MIT",
-        "A mature general-purpose upload workflow with strong team, encounter, and webhook filtering controls.",
-        "SparkyBot can import from and export to its documented settings formats.",
+        "Mature upload filtering by team, encounter, and webhook.",
+        "SparkyBot can import from and export to its documented settings format.",
     ),
     InteropProject(
         "AxiBridge",
         "https://github.com/darkharasho/axibridge",
         "GPL-3.0",
-        "A polished WvW-native visual experience with strong web publishing and readable graphical fight reports.",
-        "SparkyBot provides original format-only interoperability; no AxiBridge code or assets are copied or bundled.",
+        "Polished graphical WvW reports and web publishing.",
+        "SparkyBot can import its local setup; the adapter is original code and copies no AxiBridge assets.",
     ),
     InteropProject(
         "TopStatsAIO",
         "https://github.com/darkharasho/TopStatsAIO",
         "MIT",
-        "A focused, hands-on all-in-one interface for deep top-stat and session-analysis workflows.",
-        "SparkyBot can move its raw-log location both ways and never mistakes generated EI output for raw logs.",
+        "A hands-on desktop interface for deep top-stat and session analysis.",
+        "SparkyBot can move the raw-log location both ways.",
     ),
     InteropProject(
         "WvW Insights",
         "https://github.com/Retherichus/wvw-insights",
         "no license file published at reviewed revision",
-        "Convenient in-game Nexus integration, batch uploads, and session management without leaving Guild Wars 2.",
-        "Format-only interoperability; no source, assets, or binaries are reused.",
+        "In-game Nexus integration, batch uploads, and session management.",
+        "SparkyBot can import its settings format; no WvW Insights code or assets are reused.",
     ),
     InteropProject(
         "EVTC_parser",
         "https://github.com/Drevarr/EVTC_parser",
         "GPL-3.0",
-        "A direct, understandable watcher-and-webhook workflow that is easy to inspect and automate.",
-        "SparkyBot can move the raw-log path and fight webhook both ways using original adapter code.",
+        "A direct watcher-and-webhook workflow that is easy to automate.",
+        "SparkyBot can move the log path and fight webhook both ways.",
     ),
     InteropProject(
         "GW2 EI Log Combiner",
         "https://github.com/Drevarr/GW2_EI_log_combiner",
         "GPL-3.0",
-        "Deep, configurable whole-session aggregation across Elite Insights JSON output, including compressed standalone reports.",
-        "SparkyBot invokes a user-approved runtime copy separately and enables that path by default so big night reports can fit Discord's standard unpaid attachment limit. Its v1.8.0 release credits SimpleHonors for the submitted capability.",
+        "Configurable whole-session reports built from Elite Insights JSON.",
+        "SparkyBot uses the Combiner for nightly reports and its compressed standalone-HTML option for smaller files.",
     ),
     InteropProject(
         "arcdps_top_stats_parser",
         "https://github.com/Drevarr/arcdps_top_stats_parser",
         "GPL-3.0",
-        "Powerful and highly configurable top-stat analysis for groups that want direct control over the report model.",
-        "SparkyBot recognizes the workflow but does not copy its code or misread its generated-output folders.",
+        "Highly configurable top-stat analysis with direct control of its report model.",
+        "SparkyBot recognizes its log workflow but does not copy its code or treat generated output as raw logs.",
     ),
-    InteropProject(
-        "GW2-WVW-Teams",
-        "https://github.com/Drevarr/GW2-WVW-Teams",
-        "GPL-3.0",
-        "Purpose-built roster, alliance, and team-composition embeds from CSV, API, or Google Sheets data.",
-        "It is adjacent roster tooling, not an EVTC log reporter. SparkyBot credits it but never imports its roster webhook as Logspam.",
-    ),
-    InteropProject(
-        "TopStatsDash",
-        "https://github.com/Drevarr/TopStatsDash",
-        "GPL-3.0",
-        "Interactive exploration and custom-formula analysis of the SQLite session databases produced by the Drevarr stats workflow.",
-        "It consumes generated analysis databases rather than raw ArcDPS settings, so there is no honest config adapter to offer.",
-    ),
+)
+
+
+# Keep in-app credits narrow: these are dependencies or direct inspiration.
+# Everything else belongs in the clearly separate neighboring-tools catalog.
+CREDIT_PROJECT_NAMES = frozenset(
+    {"ArcDPS", "GW2 Elite Insights", "MzFightReporter", "GW2 EI Log Combiner"}
+)
+CREDIT_PROJECTS = tuple(
+    project for project in INTEROP_PROJECTS if project.name in CREDIT_PROJECT_NAMES
 )
 
 
 INTEROP_PLAIN_PROMISE = (
     "SparkyBot should be the tool people choose, never the tool they are trapped in. "
-    "Imports and exports are explicit one-time actions. Other tools' files stay "
-    "theirs, existing settings are preserved and backed up, and credentials that "
-    "do not map safely are left alone."
+    "Imports and exports are explicit one-time actions. Imports leave the source "
+    "tool's files untouched. Exports back up an existing target before updating "
+    "it, and credentials that do not map safely are left alone."
 )

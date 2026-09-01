@@ -1,7 +1,20 @@
 import tempfile
 import unittest
+import re
 from pathlib import Path
 from unittest import mock
+
+
+def test_installer_version_matches_runtime_version():
+    from core.version import VERSION
+
+    script = (
+        Path(__file__).parents[1] / "build" / "sparkybot.iss"
+    ).read_text(encoding="utf-8")
+    match = re.search(r'^#define MyAppVersion "([^"]+)"$', script, re.MULTILINE)
+
+    assert match is not None
+    assert match.group(1) == VERSION
 
 
 class UpdateHelperTests(unittest.TestCase):

@@ -105,6 +105,9 @@ def make_runner(config):
         guild_id="",
         api_key="",
         augment_json=augment_json,
+        report_default_view=getattr(
+            config, "raidreport_default_view", "sparky"
+        ),
     )
 
 
@@ -116,14 +119,15 @@ def publish_result(config, result):
     """
     from core.report_publisher import publish_report
     from core.discord_bot import DiscordWebhookManager
-    from core.raid_report import make_publish_caption
+    from core.raid_report import make_publish_embed
 
     dm = DiscordWebhookManager(config)
     destination = config.get_raid_report_discord_webhook_index()
     bot = dm.get_webhook(destination)
     if bot is None:
         raise RuntimeError("No active Discord webhook configured")
-    caption = make_publish_caption(result)
+    embed = make_publish_embed(result)
+    embed["color"] = int(getattr(config, "embed_color", 0x5865F2))
 
     # Wrap-up embed / AI zingers / voice-recap mp3 are PARKED until the
     # recap is respec'd with data worth reporting (operator, 2026-07-19).
@@ -133,7 +137,8 @@ def publish_result(config, result):
     publish_report(
         result.html_path,
         send_file=bot.send_file,
-        caption=caption,
+        caption="",
+        embed=embed,
         always_zip=getattr(config, 'raidreport_always_zip', False),
     )
 
@@ -219,6 +224,9 @@ def run_headless_raid_report(config):
         guild_id="",
         api_key="",
         augment_json=augment_json,
+        report_default_view=getattr(
+            config, "raidreport_default_view", "sparky"
+        ),
     )
 
     name = f"Raid Report {selected[0].timestamp:%Y-%m-%d} ({len(selected)} fights)"

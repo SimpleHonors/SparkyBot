@@ -131,6 +131,7 @@ class Config:
             'raidreportCacheRetentionHours': '48',
             'raidreportViewerHtml': '',
             'raidreportOutputDir': '',
+            'reportDefaultView': 'sparky',
             'raidreportAlwaysZip': 'false',
             'raidreportPoisonTab': 'true',
             # Wrap-up embed, AI zingers, and voice recap are parked until
@@ -323,6 +324,14 @@ class Config:
         self.raidreport_cache_retention_hours = self._config.getint('RaidReport', 'raidreportCacheRetentionHours')
         self.raidreport_viewer_html = self._config.get('RaidReport', 'raidreportViewerHtml', fallback='')
         self.raidreport_output_dir = self._config.get('RaidReport', 'raidreportOutputDir', fallback='')
+        raw_default_view = self._config.get(
+            'RaidReport', 'reportDefaultView', fallback='sparky'
+        ).strip().casefold()
+        self.raidreport_default_view = (
+            raw_default_view
+            if raw_default_view in ('sparky', 'simple', 'classic')
+            else 'sparky'
+        )
         self.raidreport_always_zip = self._config.getboolean('RaidReport', 'raidreportAlwaysZip')
         self.raidreport_poison_tab = self._config.getboolean('RaidReport', 'raidreportPoisonTab')
         self.raidreport_wrapup = self._config.getboolean('RaidReport', 'raidreportWrapup')

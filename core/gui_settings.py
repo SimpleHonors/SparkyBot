@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from pathlib import Path
 from core import theme
-from core.interop_catalog import INTEROP_PROJECTS
+from core.interop_catalog import CREDIT_PROJECTS
 from core.update_flow import UpdateFlow
 from core.version import VERSION
 from core.discord_bot import normalize_webhook_url
@@ -668,10 +668,13 @@ class SettingsWindow(QWidget):
         self.max_upload.setRange(1, 1024)
         self.max_upload.setSingleStep(1)
         self.max_upload.setSuffix(" MB")
-        form.addRow("Max Upload Size:", self.max_upload)
 
         self.large_upload_after = QCheckBox("Upload Large Files After Parsing")
-        form.addRow("", self.large_upload_after)
+        # Legacy config controls retained off-screen so old files round-trip
+        # without churn. These keys have never had a runtime consumer and must
+        # not be presented as working upload behavior.
+        self.max_upload.hide()
+        self.large_upload_after.hide()
 
         layout.addWidget(group)
         layout.addStretch()
@@ -2803,6 +2806,12 @@ class SettingsWindow(QWidget):
         self.raidreport_cache_enabled.setChecked(self.config.raidreport_cache_enabled)
         self.raidreport_poison_tab.setChecked(self.config.raidreport_poison_tab)
         self.raidreport_always_zip.setChecked(self.config.raidreport_always_zip)
+        default_view_index = self.raidreport_default_view.findData(
+            self.config.raidreport_default_view
+        )
+        self.raidreport_default_view.setCurrentIndex(
+            max(0, default_view_index)
+        )
         manual = self.config.raidreport_run_mode == 'manual'
         self.runmode_manual.setChecked(manual)
         self.runmode_run_button.setChecked(not manual)
@@ -2950,6 +2959,11 @@ class SettingsWindow(QWidget):
         cfg('RaidReport', 'raidreportCacheEnabled', str(self.raidreport_cache_enabled.isChecked()).lower())
         cfg('RaidReport', 'raidreportPoisonTab', str(self.raidreport_poison_tab.isChecked()).lower())
         cfg('RaidReport', 'raidreportAlwaysZip', str(self.raidreport_always_zip.isChecked()).lower())
+        cfg(
+            'RaidReport',
+            'reportDefaultView',
+            self.raidreport_default_view.currentData() or 'sparky',
+        )
         cfg('RaidReport', 'runMode',
             'manual' if self.runmode_manual.isChecked() else 'run-button')
         cfg('RaidReport', 'runAutoPost',
@@ -3570,7 +3584,7 @@ class SettingsWindow(QWidget):
         self.runmode_group_box = QGroupBox("How reports get made")
         runmode_layout = QVBoxLayout(self.runmode_group_box)
 
-        self.runmode_run_button = QRadioButton("One-button runs (recommended)")
+        self.runmode_run_button = QRadioButton("Track the whole run (recommended)")
         theme.mark_option(self.runmode_run_button)
         runmode_layout.addWidget(self.runmode_run_button)
         run_hint = QLabel(
@@ -3630,6 +3644,26 @@ class SettingsWindow(QWidget):
         # Options
         options_group = QGroupBox("Options")
         options_layout = QVBoxLayout(options_group)
+
+        default_view_form = QFormLayout()
+        self.raidreport_default_view = QComboBox()
+        self.raidreport_default_view.addItem(
+            "Sparky — complete guided view (recommended)", "sparky"
+        )
+        self.raidreport_default_view.addItem(
+            "Simple — quick headline view", "simple"
+        )
+        self.raidreport_default_view.addItem(
+            "Classic — untouched full source report", "classic"
+        )
+        self.raidreport_default_view.setToolTip(
+            "Sets how a new report opens. Every reader can still switch "
+            "between Sparky, Simple, and Classic inside the report."
+        )
+        default_view_form.addRow(
+            "Report opens in:", self.raidreport_default_view
+        )
+        options_layout.addLayout(default_view_form)
 
         self.raidreport_cache_enabled = QCheckBox(
             "Fast reports (reuse live fight data) \u2014 recommended"
@@ -3714,61 +3748,39 @@ class SettingsWindow(QWidget):
 
         layout.addSpacing(12)
 
-        credits_header = QLabel("<b>Credits &amp; links</b>")
+        credits_header = QLabel("<b>Software we use and credit</b>")
         credits_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         theme.set_variant(credits_header, "heading")
         layout.addWidget(credits_header)
 
-        used_names = {"ArcDPS", "GW2 Elite Insights", "GW2 EI Log Combiner"}
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(5)
+        for index, project in enumerate(CREDIT_PROJECTS):
+            project_link = QLabel(
+                f'<a href="{html.escape(project.url, quote=True)}">'
+                f'{html.escape(project.name)}</a>'
+            )
+            project_link.setTextFormat(Qt.TextFormat.RichText)
+            project_link.setOpenExternalLinks(True)
+            project_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            grid.addWidget(project_link, index // 2, index % 2)
+        layout.addLayout(grid)
 
-        def add_project_links(heading, projects):
-            section = QLabel(f"<b>{html.escape(heading)}</b>")
-            section.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(section)
-            grid = QGridLayout()
-            grid.setHorizontalSpacing(24)
-            grid.setVerticalSpacing(5)
-            for index, project in enumerate(projects):
-                project_link = QLabel(
-                    f'<a href="{html.escape(project.url, quote=True)}">'
-                    f'{html.escape(project.name)}</a>'
-                )
-                project_link.setTextFormat(Qt.TextFormat.RichText)
-                project_link.setOpenExternalLinks(True)
-                project_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                grid.addWidget(project_link, index // 2, index % 2)
-            layout.addLayout(grid)
-
-        used = [project for project in INTEROP_PROJECTS
-                if project.name in used_names]
-        neighbors = [project for project in INTEROP_PROJECTS
-                     if project.name not in used_names]
-
-        add_project_links("Tools SparkyBot uses", used)
         used_note = QLabel(
             "ArcDPS creates the logs, Elite Insights parses them, and the "
-            "Log Combiner builds optional whole-night reports."
+            "GW2 EI Log Combiner builds whole-night reports. "
+            "MzFightReporter directly inspired SparkyBot's live WvW workflow."
         )
         used_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         used_note.setWordWrap(True)
         theme.mark_hint(used_note)
         layout.addWidget(used_note)
 
-        layout.addSpacing(8)
-        add_project_links("Independent neighboring tools", neighbors)
-        neighbor_note = QLabel(
-            "Listed for credit and interoperability—not as a claim that "
-            "their code is bundled or that SparkyBot was based on them."
-        )
-        neighbor_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        neighbor_note.setWordWrap(True)
-        theme.mark_hint(neighbor_note)
-        layout.addWidget(neighbor_note)
-
         comparison_link = QLabel(
             '<a href="https://github.com/SimpleHonors/SparkyBot/blob/main/'
             'docs/WVW_LOG_TOOL_INTEROPERABILITY.md">'
-            '<b>How these tools differ</b></a>'
+            '<b>Other WvW log tools and switching guide</b></a>'
         )
         comparison_link.setTextFormat(Qt.TextFormat.RichText)
         comparison_link.setOpenExternalLinks(True)
