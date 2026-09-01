@@ -22,6 +22,7 @@ a = Analysis(
     datas=[
         (os.path.join(_repo_root, 'prompts'), 'prompts'),
         (os.path.join(_repo_root, 'assets'), 'assets'),
+        (os.path.join(_repo_root, 'core', 'trait_evidence_catalog.json'), 'core'),
         # GW2EI is NOT bundled in _internal.  It must be placed next to
         # SparkyBot.exe (dist/SparkyBot/GW2EI/) so it is writable for the
         # self-updater.  The build_windows.bat script copies it after the
