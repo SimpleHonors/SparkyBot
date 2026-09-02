@@ -59,14 +59,19 @@ a = Analysis(
     optimize=0,
 )
 
-# Drop binaries that Qt's PySide6 binary hooks collect but that this app
-# can never use.  Module excludes above remove the Qt modules; these two are
-# loose DLLs (software-OpenGL fallback + Direct2D platform plugin) that are
-# collected unconditionally, so strip them from the collected binary list.
+# Drop binaries that Qt's PySide6 hooks collect but that this app can never
+# use. Module excludes above stop Python imports, but these loose DLLs can still
+# be collected unconditionally, so strip them from the collected binary list.
 # COLLECT reads a.binaries, so filtering here removes them from the bundle.
 _DEAD_BINARIES = (
-    'opengl32sw.dll',   # 20.6 MB software GL fallback; ANGLE/DX path is used
-    'qdirect2d',        # Direct2D platform plugin; 'windows' platform plugin used
+    'opengl32sw.dll',          # software OpenGL fallback; ANGLE/DX is used
+    'qdirect2d.dll',           # unused Direct2D platform plugin
+    'qt6pdf.dll',
+    'qt6quick.dll',
+    'qt6qml.dll',
+    'qt6qmlmeta.dll',
+    'qt6qmlmodels.dll',
+    'qt6qmlworkerscript.dll',
 )
 a.binaries = [
     b for b in a.binaries
@@ -88,7 +93,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -105,7 +110,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='SparkyBot',
 )

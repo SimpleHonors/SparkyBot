@@ -59,7 +59,7 @@ xcopy GW2EI dist\SparkyBot\GW2EI\ /E /I /Q /H
 
 | Artifact | Before (audit) | Expected after |
 |---|---|---|
-| `dist\SparkyBot\SparkyBot.exe` | fat — contained the full Qt DLL set (≥60 MB of DLLs seen inside) + 5.6 MB PYZ | thin bootloader only: **~4–10 MB** (console=False, icon, UPX) |
+| `dist\SparkyBot\SparkyBot.exe` | fat — contained the full Qt DLL set (≥60 MB of DLLs seen inside) + 5.6 MB PYZ | thin bootloader only: **~4–10 MB** (console=False, icon, no UPX) |
 | `_internal\base_library.dat` | n/a (PYZ was inside exe) | ~5–6 MB (the real app code) |
 | `_internal\PySide6\` DLLs | duplicated vs exe | single copy only |
 | `opengl32sw.dll` (20.6 MB) | present | **gone** |
