@@ -55,7 +55,7 @@ def test_missing_nightly_json_still_produces_an_attachment_summary(tmp_path):
     ]
 
 
-def test_real_publish_path_sends_the_summary_with_the_attachment(
+def test_real_publish_path_sends_summary_before_separate_attachment(
     tmp_path, monkeypatch
 ):
     json_path = tmp_path / "night.json"
@@ -73,7 +73,16 @@ def test_real_publish_path_sends_the_summary_with_the_attachment(
         span="",
     )
     sent = {}
-    bot = SimpleNamespace(send_file=lambda *_args, **_kwargs: True)
+    events = []
+
+    def send_message(content="", embeds=None):
+        events.append(("summary", content, embeds))
+        return True
+
+    def send_file(*_args, **_kwargs):
+        return True
+
+    bot = SimpleNamespace(send_message=send_message, send_file=send_file)
 
     class Manager:
         def __init__(self, _config):
@@ -83,6 +92,7 @@ def test_real_publish_path_sends_the_summary_with_the_attachment(
             return bot
 
     def capture(path, **kwargs):
+        events.append(("report", path, kwargs))
         sent["path"] = path
         sent.update(kwargs)
 
@@ -96,8 +106,11 @@ def test_real_publish_path_sends_the_summary_with_the_attachment(
 
     publish_result(config, result)
 
+    assert [event[0] for event in events] == ["summary", "report"]
+    summary_embed = events[0][2][0]
+    assert summary_embed["description"] == "Commanded by **Mohr Shadows**"
+    assert summary_embed["color"] == 0x123456
     assert sent["path"] == html_path
     assert sent["send_file"] is bot.send_file
-    assert sent["embed"]["description"] == "Commanded by **Mohr Shadows**"
-    assert sent["embed"]["color"] == 0x123456
+    assert sent["embed"] is None
     assert sent["caption"] == ""

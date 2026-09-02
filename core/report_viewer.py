@@ -536,7 +536,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   }
   function reportHeading(kicker) {
     var s = model.session || {};
-    var title = s.commander ? esc(s.commander) + "’s night" : "Night report";
+    var title = esc(s.report_title || "Night report");
     var bits = [s.date, s.total_duration ? "Combat time " + humanDuration(s.total_duration) : null]
       .filter(Boolean).map(esc);
     return "<header class=\"hero\"><span class=\"eyebrow\">" +

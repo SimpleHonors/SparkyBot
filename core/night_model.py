@@ -324,7 +324,8 @@ def _select_commander(candidates, stat_tables):
 
 def _parse_session(tiddlers, stat_tables=None):
     out = {"tag": None, "date": None, "commander": None,
-           "commander_account": None, "total_duration": None}
+           "commander_account": None, "total_duration": None,
+           "period": "night", "report_title": "Night report"}
 
     for title_key in ("-Log-Summary",):
         t = _find_tiddler(tiddlers, title_key)
@@ -340,6 +341,9 @@ def _parse_session(tiddlers, stat_tables=None):
                 break
     if out["tag"]:
         out["date"] = out["tag"][:10]
+        match = re.match(r"^\d{4}-\d{2}-\d{2}-(\d{2}):", out["tag"])
+        if match and 5 <= int(match.group(1)) < 12:
+            out["period"] = "morning"
 
     tag = out["tag"]
     ts = _find_tiddler(tiddlers, "-Tag_Stats") if tag else None
@@ -370,6 +374,10 @@ def _parse_session(tiddlers, stat_tables=None):
                         out["total_duration"] = c
                         break
                 break
+    if out["commander"]:
+        out["report_title"] = f"{out['commander']}’s {out['period']}"
+    else:
+        out["report_title"] = f"{out['period'].title()} report"
     return out
 
 

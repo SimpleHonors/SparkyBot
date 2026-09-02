@@ -52,16 +52,19 @@ def test_aug10_session(aug10):
     assert aug10["session"]["commander"] == "Mohr Shadows"
     assert aug10["session"]["commander_account"] == "Mohrr.8294"
     assert aug10["session"]["total_duration"] == "31m 00s 871ms"
+    assert aug10["session"]["period"] == "night"
+    assert aug10["session"]["report_title"] == "Mohr Shadows’s night"
 
 
-def _commander_selection_tiddlers(tag_rows, attendance_rows):
+def _commander_selection_tiddlers(tag_rows, attendance_rows,
+                                  tag="2026-08-31-20:43:58"):
     return [
         {
-            "title": "2026-08-31-20:43:58-Log-Summary",
+            "title": f"{tag}-Log-Summary",
             "text": "",
         },
         {
-            "title": "2026-08-31-20:43:58-Tag_Stats",
+            "title": f"{tag}-Tag_Stats",
             "caption": "Tag Summary",
             "text": "\n".join([
                 "| Summary by Command Tag |c",
@@ -71,7 +74,7 @@ def _commander_selection_tiddlers(tag_rows, attendance_rows):
             ]),
         },
         {
-            "title": "2026-08-31-20:43:58-Attendance",
+            "title": f"{tag}-Attendance",
             "caption": "Attendance",
             "text": "\n".join([
                 "| Attendance Review |c",
@@ -96,6 +99,22 @@ def test_session_commander_uses_most_commanded_fights_not_first_row():
 
     assert model["session"]["commander"] == "Beta Tag"
     assert model["session"]["commander_account"] == "Beta.2222"
+
+
+def test_morning_run_title_uses_winning_commander_and_start_period():
+    model = build_night_model(_commander_selection_tiddlers(
+        [
+            '|<span data-tooltip="Mohr.1111">Mohr</span>|{{Druid}}|8|0|0|0|0|0|',
+        ],
+        [
+            "|Mohr.1111|Mohr|{{Druid}}|8|900| |",
+        ],
+        tag="2026-08-31-07:15:00",
+    ))
+
+    assert model["session"]["commander"] == "Mohr"
+    assert model["session"]["period"] == "morning"
+    assert model["session"]["report_title"] == "Mohr’s morning"
 
 
 def test_session_commander_tie_uses_most_combat_time():

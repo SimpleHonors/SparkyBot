@@ -134,11 +134,13 @@ def publish_result(config, result):
     # Deliberately not config-gated: configs written by older versions
     # have the old true defaults baked in (save() persists every key),
     # so a config flag cannot be trusted to keep this off.
+    if not bot.send_message("", embeds=[embed]):
+        raise RuntimeError("Discord overview post failed")
     publish_report(
         result.html_path,
         send_file=bot.send_file,
         caption="",
-        embed=embed,
+        embed=None,
         always_zip=getattr(config, 'raidreport_always_zip', False),
     )
 

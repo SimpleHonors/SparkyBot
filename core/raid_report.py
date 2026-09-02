@@ -485,6 +485,6 @@ def make_publish_embed(result: ReportResult) -> dict:
         "title": f"\U0001f4ca {display_name}",
         "description": description,
         "fields": fields,
-        "footer": {"text": "Full Sparky \u2022 Simple \u2022 Classic report attached"},
+        "footer": {"text": "Full Sparky \u2022 Simple \u2022 Classic report follows"},
         "color": 0x5865F2,
     }

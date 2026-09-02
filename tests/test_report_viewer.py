@@ -49,6 +49,18 @@ def test_switchable_report_carries_three_views_and_one_classic_payload():
     assert "https://" not in report and "http://" not in report
 
 
+def test_report_heading_uses_precomputed_commander_period_title():
+    model = build_night_model(_tiddlers())
+    model["session"]["report_title"] = "Mohr’s morning"
+
+    report = build_switchable_report("<html><title>Report</title></html>", model)
+
+    assert 's.report_title || "Night report"' in report
+    assert unpack_night_model(report)["session"]["report_title"] == (
+        "Mohr’s morning"
+    )
+
+
 def test_switchable_report_compresses_and_round_trips_night_model():
     classic = "<html><title>Report</title></html>"
     model = build_night_model(_tiddlers())
