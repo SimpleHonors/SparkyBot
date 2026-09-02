@@ -6,9 +6,10 @@ that PyInstaller says it excluded.
 ## Frozen layout
 
 - SparkyBot is a one-directory PyInstaller app.
-- The v2.2.1 fat main-executable topology remains in place for v2.2.2. It is
-  larger than a thin bootloader, but changing topology is separate from code
-  signing and must not be described as a SmartScreen fix.
+- The main executable is a thin PyInstaller bootloader; binaries and data live
+  once under `_internal` through `exclude_binaries=True`.
+- Thin packaging removes duplicate payload. It is not code signing and must
+  not be described as a SmartScreen or Defender fix.
 - UPX is disabled in both specs.
 - Dependencies are exact-pinned in `requirements-windows.lock`.
 - `SparkyBotUpdater.exe` sits beside `SparkyBot.exe`.

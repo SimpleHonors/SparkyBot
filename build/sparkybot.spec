@@ -89,17 +89,14 @@ a.binaries = [
 
 pyz = PYZ(a.pure)
 
-# Keep the v2.2.1 fat-exe topology until a signed thin build passes the real
-# operator path.  This topology is not a SmartScreen fix: unsigned downloads
-# can still show "Unknown publisher" regardless of their PyInstaller layout.
-# It does duplicate DLL payload in the exe and _internal, so any future change
-# must be measured and exercised from an Internet-marked archive on Windows.
+# True onedir build: the launcher contains only the bootloader and Python
+# archive; native binaries and data live once under _internal. This reduces
+# duplicate payload but is not a SmartScreen fix: unsigned downloads can still
+# show "Unknown publisher" regardless of their PyInstaller layout.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
-    [],
+    exclude_binaries=True,
     name='SparkyBot',
     debug=False,
     bootloader_ignore_signals=False,
