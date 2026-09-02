@@ -1,14 +1,23 @@
-"""Invokes GW2EI CLI for parsing EVTC log files"""
+"""Invokes GW2EI CLI for parsing EVTC log files."""
 
+import json
+import shutil
 import subprocess
 import logging
+import tempfile
+import threading
 import time
+import uuid
+import weakref
 from pathlib import Path
 from typing import Optional
 
 from core.apppaths import app_dir, gw2ei_dir, no_window_kwargs
 
 logger = logging.getLogger(__name__)
+
+_same_log_locks_guard = threading.Lock()
+_same_log_locks = weakref.WeakValueDictionary()
 
 PARSE_CONFIG_CONTENT = (
     "SaveOutJSON=True\n"
@@ -32,6 +41,17 @@ PARSE_CONFIG_CONTENT = (
     "LightTheme=False\n"
     "CustomTooShort=2200\n"
 )
+
+
+def _same_log_lock(log_file: Path):
+    """Return the process-wide lock for one source log path."""
+    key = str(Path(log_file).resolve()).casefold()
+    with _same_log_locks_guard:
+        lock = _same_log_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _same_log_locks[key] = lock
+        return lock
 
 
 class GW2EIInvoker:
@@ -105,22 +125,29 @@ class GW2EIInvoker:
         Returns:
             Path to generated JSON file, or None if parsing failed.
 
-        Concurrency note: EI writes its JSON next to the INPUT log, named from
-        that log's stem (see _find_generated_json), so distinct inputs never
-        collide on output. The only shared write target was the config file,
-        which `config_name` makes per-job.
+        The live watcher and End Run worker can reach this method through
+        separate ``GW2EIInvoker`` instances in the same application. Same-log
+        calls are serialized until the deterministic GW2EI output has been
+        moved to a unique local claim path. Distinct logs remain parallel.
         """
         gw2ei_path = self.get_gw2ei_path()
         if not gw2ei_path:
             logger.error("GW2EI executable not found")
             return None
 
+        log_file = Path(log_file)
+        parse_lock = _same_log_lock(log_file)
+        parse_lock.acquire()
         is_temp_config = config_name is not None
-        parse_config = self._ensure_parse_config(config_name or "wvwupload.conf")
-
-        logger.info(f"Invoking GW2EI for {log_file.name} (timeout: {timeout}s)")
+        parse_config = None
 
         try:
+            parse_config = self._ensure_parse_config(
+                config_name or "wvwupload.conf"
+            )
+            logger.info(
+                f"Invoking GW2EI for {log_file.name} (timeout: {timeout}s)"
+            )
             cmd = [str(gw2ei_path), "-c", str(parse_config), str(log_file)]
             logger.info(f"GW2EI command: {' '.join(cmd)}")
 
@@ -154,8 +181,9 @@ class GW2EIInvoker:
                 if not self._wait_for_json_stable(json_file):
                     logger.error(f"JSON file never stabilized: {json_file.name}")
                     return None
-                logger.info(f"Generated JSON: {json_file.name}")
-                return json_file
+                claimed_file = self._claim_generated_json(json_file)
+                logger.info(f"Generated JSON: {claimed_file.name}")
+                return claimed_file
             else:
                 logger.warning("No JSON file generated")
                 return None
@@ -169,11 +197,26 @@ class GW2EIInvoker:
         finally:
             # Clean up a per-invocation temp config so concurrent imports don't
             # litter GW2EI/Settings. The shared default config is left in place.
-            if is_temp_config:
+            if is_temp_config and parse_config is not None:
                 try:
                     parse_config.unlink()
                 except OSError:
                     pass
+            parse_lock.release()
+
+    def _claim_generated_json(self, json_file: Path) -> Path:
+        """Move a stable shared GW2EI output to a unique local path."""
+        claims_dir = Path(tempfile.gettempdir()) / "SparkyBot" / "GW2EIClaims"
+        claims_dir.mkdir(parents=True, exist_ok=True)
+        claimed = claims_dir / (
+            f"{json_file.stem}-{uuid.uuid4().hex}{json_file.suffix}"
+        )
+        try:
+            shutil.move(str(json_file), str(claimed))
+        except Exception:
+            claimed.unlink(missing_ok=True)
+            raise
+        return claimed
 
     def _find_generated_json(self, log_file: Path, start_time: float) -> Optional[Path]:
         """Find the JSON file generated from parsing the log file
@@ -212,7 +255,9 @@ class GW2EIInvoker:
         """Wait for GW2EI JSON output to finish writing.
 
         After GW2EI exits, the JSON file may still be flushing to disk.
-        We wait until size is unchanged AND the last byte is '}' (valid JSON closing).
+        We wait until size is unchanged and the complete document parses. A
+        trailing ``}`` alone cannot prove that another internal worker did not
+        copy or rewrite the deterministic output path mid-document.
         """
         interval = 0.5
         elapsed = 0.0
@@ -226,12 +271,11 @@ class GW2EIInvoker:
 
             if size == last_size and size > 0:
                 try:
-                    with open(json_file, 'rb') as f:
-                        f.seek(-1, 2)
-                        last_byte = f.read(1)
-                    if last_byte == b'}':
+                    with open(json_file, "r", encoding="utf-8") as handle:
+                        parsed = json.load(handle)
+                    if isinstance(parsed, dict):
                         return True
-                except OSError:
+                except (json.JSONDecodeError, OSError, UnicodeError):
                     pass
 
             last_size = size

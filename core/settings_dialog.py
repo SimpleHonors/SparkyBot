@@ -10,8 +10,8 @@ The dialog does not own any settings widgets. It re-homes the controls of
 the legacy SettingsWindow ("the engine") into task-shaped category pages —
 the engine keeps its full attribute surface, its load/save routines and all
 of its background-thread test/refresh machinery. Re-homing is presentation
-only: ZERO config keys change (Thresholds/maxUploadSize still lives in
-[Thresholds] even though the control now sits on the Discord page).
+only: existing config keys keep their on-disk compatibility. Obsolete upload
+size controls remain out of the visible settings pages.
 
 Categories (AI-off): Discord, Fight Reports, Watcher & Parsing,
 Raid Reports, Twitch, Application, Updates, About. With AI enabled, a separator and
@@ -100,7 +100,7 @@ _TRACKED_COMBOS = (
     "active_webhook", "raid_report_webhook", "ai_provider", "ai_model",
     "ai_prompt_mode", "theme_combo",
     "tts_provider", "tts_edge_voice", "tts_elevenlabs_model",
-    "tts_local_voice",
+    "tts_local_voice", "raidreport_default_view",
 )
 _TRACKED_TEXT_EDITS = ("ai_system_prompt",)
 
@@ -338,19 +338,28 @@ class SettingsDialog(QDialog):
         form.addRow("Bot name", e.discord_webhook_label)
         layout.addWidget(webhooks)
 
-        uploads = QGroupBox("Uploads")
-        uform = QFormLayout(uploads)
-        e.max_upload.setToolTip(
-            "Fight logs larger than this are not attached to Discord posts."
+        delivery = QGroupBox("What gets posted")
+        dlayout = QVBoxLayout(delivery)
+        fight_delivery = QLabel(
+            "Individual fight posts are Discord embeds. SparkyBot does not "
+            "attach raw fight-log files (.evtc or .zevtc)."
         )
-        uform.addRow("Max upload size", e.max_upload)
-        uform.addRow("", e.large_upload_after)
-        layout.addWidget(uploads)
+        fight_delivery.setWordWrap(True)
+        dlayout.addWidget(fight_delivery)
+        nightly_delivery = QLabel(
+            "End-of-night posts include a quick run summary plus the report "
+            "file. SparkyBot shrinks or zips it automatically when needed; "
+            "Discord's hard limit is 10 MB."
+        )
+        nightly_delivery.setWordWrap(True)
+        theme.mark_hint(nightly_delivery)
+        dlayout.addWidget(nightly_delivery)
+        layout.addWidget(delivery)
 
         # Master-checkbox dependency graying (the old UI never did this)
         def _gray(on):
             webhooks.setEnabled(on)
-            uploads.setEnabled(on)
+            delivery.setEnabled(on)
         e.enable_discord.toggled.connect(_gray)
         _gray(e.enable_discord.isChecked())
 
@@ -451,6 +460,7 @@ class SettingsDialog(QDialog):
 
         output = QGroupBox("Output")
         form = QFormLayout(output)
+        form.addRow("Report opens in", e.raidreport_default_view)
         form.addRow("Report output folder",
                     self._pair(e.raidreport_output_dir, e.raidreport_output_browse_btn))
         form.addRow("", e.raidreport_cache_enabled)

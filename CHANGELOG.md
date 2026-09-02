@@ -107,6 +107,12 @@ shipped broken.
 - End-of-night reports ship as one compressed, self-contained HTML file by
   default — big nights fit under Discord's free attachment limit. Uses the
   upstream combiner capability SparkyBot contributed in its v1.8.0 release.
+- Every end-of-night file now opens with three built-in choices: Sparky's
+  guided report, a Simple headline report, and the untouched Classic report.
+  The person opening the file can switch views without downloading anything.
+- End-of-night Discord posts now include a compact overview of the commander,
+  run window, elapsed and combat time, fights, kills, downs, squad losses, and
+  K/D instead of posting a bare attachment.
 - A GO-ready first-run path: after choosing a Guild Setup File, SparkyBot skips
   AI, voice, Twitch, and other optional pages, auto-detects local requirements,
   and confirms the individual-fight and end-of-night Discord destinations.
@@ -118,10 +124,15 @@ shipped broken.
 ### Changed
 
 - Settings now gives Updates and About their own entries, so the Application
-  page fits without scrolling. About uses plain, linked credits that separate
-  tools SparkyBot actually uses from independent neighboring projects; the
-  README and interoperability guide state where those tools differ or may be
-  the better fit without implying SparkyBot was built on every listed project.
+  page fits without scrolling. About only credits the dependencies and direct
+  inspiration SparkyBot actually uses; a separate linked guide explains other
+  WvW log tools, what each does well, and supported switching paths.
+- The neighbor-import preview has a checkbox for every reusable item, plus
+  All/None controls. Safe detected values start selected and nothing hidden is
+  imported.
+- Removed the unused 50 MB raw-log upload controls. Fight posts do not attach
+  EVTC files; nightly HTML is zipped above 9.3 MB and Discord webhooks reject
+  attachments above 10 MB.
 
 ### Security
 

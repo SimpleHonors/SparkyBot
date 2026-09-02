@@ -172,7 +172,10 @@ def test_run_counter_refresh_returns_before_slow_folder_scan(qt_app, tmp_path):
     finally:
         release.set()
         window.hide()
-        del window
+        # Bypass MainWindow.closeEvent: this fixture deliberately leaves a
+        # synthetic run open, and closeEvent would display the real quit/run
+        # confirmation if a later module cleaned up lingering top-levels.
+        window.deleteLater()
         gc.collect()
         qt_app.processEvents()
 
@@ -228,7 +231,7 @@ def test_end_run_click_returns_before_slow_selection_scan(qt_app, tmp_path):
     finally:
         release.set()
         window.hide()
-        del window
+        window.deleteLater()
         gc.collect()
         qt_app.processEvents()
 

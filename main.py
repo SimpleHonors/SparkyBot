@@ -358,7 +358,11 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                     })
 
             # Send fight report immediately — no waiting on AI
-            success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
+            success_count = discord.send_to_all(
+                embeds=embeds,
+                icon_path=icon_path,
+                compact_single_message=True,
+            )
 
             if (dpsreport_active and success_count
                     and config.dpsreport_timing == dpsreport.TIMING_LINK_LATER):

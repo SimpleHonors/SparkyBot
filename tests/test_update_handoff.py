@@ -4,6 +4,39 @@ from pathlib import Path
 from unittest import mock
 
 
+def test_installer_version_is_injected_by_release_driver():
+    script = (
+        Path(__file__).parents[1] / "build" / "sparkybot.iss"
+    ).read_text(encoding="utf-8")
+    driver = (
+        Path(__file__).parents[1] / "build" / "release_windows.bat"
+    ).read_text(encoding="utf-8")
+
+    assert "#ifndef MyAppVersion" in script
+    assert '#define MyAppVersion "' not in script
+    assert "/DMyAppVersion=" in driver
+
+
+def test_clean_windows_build_creates_writable_gw2ei_folder():
+    script = (
+        Path(__file__).parents[1] / "build" / "build_windows.bat"
+    ).read_text(encoding="utf-8")
+
+    assert "xcopy GW2EI" not in script
+    assert "mkdir dist\\SparkyBot\\GW2EI" in script
+
+
+def test_windows_build_bundles_trait_evidence_catalog():
+    spec = (
+        Path(__file__).parents[1] / "build" / "sparkybot.spec"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "(os.path.join(_repo_root, 'core', 'trait_evidence_catalog.json'), 'core')"
+        in spec
+    )
+
+
 class UpdateHelperTests(unittest.TestCase):
     def test_apply_pending_tree_replaces_runtime_and_preserves_user_data(self):
         from core.update_helper import apply_pending_tree

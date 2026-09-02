@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import requests
@@ -43,6 +44,98 @@ def normalize_webhook_url(url: str) -> Optional[str]:
 def validate_webhook_url(url: str) -> bool:
     """Return True for a blank slot or a complete Discord webhook URL."""
     return normalize_webhook_url(url) is not None
+
+
+def _embed_char_count(embed: Dict[str, Any]) -> int:
+    """Count the characters Discord applies to its per-message embed limit."""
+    total = len(embed.get("description", "")) + len(embed.get("title", ""))
+    total += len(embed.get("author", {}).get("name", ""))
+    total += len(embed.get("footer", {}).get("text", ""))
+    for field in embed.get("fields", []):
+        total += len(field.get("name", "")) + len(field.get("value", ""))
+    return total
+
+
+def _truncate_field_value(value: str, limit: int) -> str:
+    """Shorten one field at a line boundary while preserving code fences."""
+    if len(value) <= limit:
+        return value
+
+    marker = "… condensed; full details in linked report"
+    if limit <= len(marker):
+        return marker[:max(1, limit)]
+
+    if value.startswith("```"):
+        first_newline = value.find("\n")
+        opening = value[:first_newline] if first_newline >= 0 else "```"
+        body = value[first_newline + 1:] if first_newline >= 0 else value[3:]
+        if body.endswith("```"):
+            body = body[:-3].rstrip("\n")
+        fixed = len(opening) + len(marker) + len("\n\n\n```")
+        body_limit = max(0, limit - fixed)
+        shortened = body[:body_limit]
+        if "\n" in shortened and len(body) > body_limit:
+            shortened = shortened.rsplit("\n", 1)[0]
+        result = f"{opening}\n{shortened}\n{marker}\n```"
+        return result[:limit]
+
+    body_limit = max(0, limit - len(marker) - 1)
+    shortened = value[:body_limit]
+    if "\n" in shortened and len(value) > body_limit:
+        shortened = shortened.rsplit("\n", 1)[0]
+    return f"{shortened}\n{marker}"[:limit]
+
+
+def _compact_embeds_to_one_message(embeds: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """Return a condensed copy that fits one Discord message, when possible."""
+    if len(embeds) > MAX_EMBEDS_PER_POST:
+        return None
+
+    compacted = deepcopy(embeds)
+    original_total = sum(_embed_char_count(embed) for embed in compacted)
+    if original_total <= MAX_TOTAL_CHARS:
+        return compacted
+
+    fields = [
+        field
+        for embed in compacted
+        for field in embed.get("fields", [])
+    ]
+    value_lengths = [len(field.get("value", "")) for field in fields]
+    fixed_chars = original_total - sum(value_lengths)
+    value_budget = MAX_TOTAL_CHARS - fixed_chars
+    if not fields or value_budget < len(fields):
+        return None
+
+    allocations = [0] * len(fields)
+    remaining = set(range(len(fields)))
+    remaining_budget = value_budget
+    while remaining:
+        share = remaining_budget // len(remaining)
+        small = [index for index in remaining if value_lengths[index] <= share]
+        if small:
+            for index in small:
+                allocations[index] = value_lengths[index]
+                remaining_budget -= value_lengths[index]
+                remaining.remove(index)
+            continue
+
+        for offset, index in enumerate(sorted(remaining)):
+            allocations[index] = share + (1 if offset < remaining_budget % len(remaining) else 0)
+        break
+
+    for field, allocation in zip(fields, allocations):
+        field["value"] = _truncate_field_value(field.get("value", ""), allocation)
+
+    compacted_total = sum(_embed_char_count(embed) for embed in compacted)
+    if compacted_total > MAX_TOTAL_CHARS:
+        return None
+    logger.info(
+        "Condensed Discord fight report from %s to %s embed characters to keep one post",
+        original_total,
+        compacted_total,
+    )
+    return compacted
 
 
 class DiscordBot:
@@ -204,7 +297,8 @@ class DiscordWebhookManager:
         return ""
 
     def send_to_all(self, message: str = "", embeds=None, icon_path=None,
-                    audio_bytes: bytes = None, audio_filename: str = "sparkybot-commentary.mp3") -> int:
+                    audio_bytes: bytes = None, audio_filename: str = "sparkybot-commentary.mp3",
+                    compact_single_message: bool = False) -> int:
         """Send embeds batched to stay under Discord's 6000 char total limit per POST.
 
         When audio_bytes is provided, the AI commentary embed is sent first
@@ -221,23 +315,18 @@ class DiscordWebhookManager:
         if not embeds:
             return 0
 
+        if compact_single_message:
+            compacted = _compact_embeds_to_one_message(embeds)
+            if compacted is not None:
+                embeds = compacted
+
         # Build batches that stay under MAX_TOTAL_CHARS
         batches = []
         current_batch = []
         current_chars = 0
 
         for embed in embeds:
-            embed_chars = len(embed.get('description', ''))
-            embed_chars += len(embed.get('title', ''))
-            author = embed.get('author', {})
-            embed_chars += len(author.get('name', ''))
-            footer = embed.get('footer', {})
-            embed_chars += len(footer.get('text', ''))
-
-            # Count field names and values
-            for field in embed.get('fields', []):
-                embed_chars += len(field.get('name', ''))
-                embed_chars += len(field.get('value', ''))
+            embed_chars = _embed_char_count(embed)
 
             if current_batch and (current_chars + embed_chars > MAX_TOTAL_CHARS or len(current_batch) >= MAX_EMBEDS_PER_POST):
                 batches.append(current_batch)

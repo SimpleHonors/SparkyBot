@@ -5,8 +5,9 @@ import logging
 import re
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from core.raid_session import (
@@ -24,6 +25,10 @@ from core.report_bake import (
     apply_sticky_table_headers,
     merge_augmented_tiddlers,
     summarize_tiddlers,
+)
+from core.report_viewer import convert_report_file
+from core.enemy_role_evidence import (
+    collect_report_evidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,7 +75,9 @@ class RaidReportRunner:
                  progress=None,               # callable(stage, done, total, msg)
                  cancelled=None,             # callable() -> bool
                  augment_json=None,         # callable(Path) -> dict | None
-                 viewer_factory=None):     # callable() -> Path (lazy resolve)
+                 viewer_factory=None,      # callable() -> Path (lazy resolve)
+                 report_default_view="sparky",
+                 parse_concurrency=4):
         self.log_folder = Path(log_folder)
         self.cache = cache
         self.parse_log = parse_log
@@ -87,6 +94,8 @@ class RaidReportRunner:
         self._cancelled = cancelled
         self.augment_json = augment_json
         self._viewer_factory = viewer_factory
+        self.report_default_view = report_default_view
+        self.parse_concurrency = max(1, min(int(parse_concurrency), 8))
 
     def _emit(self, stage: str, done: int, total: int, msg: str = ""):
         if self._progress:
@@ -95,6 +104,60 @@ class RaidReportRunner:
     def _check_cancelled(self):
         if self._cancelled and self._cancelled():
             raise RaidReportCancelled()
+
+    def _parse_missing_logs(self, logs: list[LogInfo], *,
+                            total_selected: int,
+                            done_already: int) -> tuple[list[Path], list[str]]:
+        """Parse cache misses concurrently and preserve selection order."""
+        stored_by_index: dict[int, Path] = {}
+        failed_indexes: set[int] = set()
+
+        def parse_one(index_and_log):
+            index, log = index_and_log
+            result = self.parse_log(log.path)
+            if not isinstance(result, Path):
+                return index, log, None
+            stored = self.cache.store(
+                log.path, result, self.ei_version,
+                self.settings_fingerprint,
+            )
+            return index, log, stored
+
+        worker_count = min(self.parse_concurrency, len(logs))
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="raid-report-parse",
+        ) as executor:
+            futures = {
+                executor.submit(parse_one, item): item
+                for item in enumerate(logs)
+            }
+            completed = 0
+            for future in as_completed(futures):
+                self._check_cancelled()
+                index, log, stored = future.result()
+                completed += 1
+                self._emit(
+                    "parse", done_already + completed, total_selected,
+                    f"Parsing {log.path.stem}",
+                )
+                if stored is None:
+                    logger.warning("Failed to parse log: %s", log.path)
+                    failed_indexes.add(index)
+                else:
+                    stored_by_index[index] = stored
+
+        stored_paths = [
+            stored_by_index[index]
+            for index in range(len(logs))
+            if index in stored_by_index
+        ]
+        failed_names = [
+            logs[index].path.stem
+            for index in range(len(logs))
+            if index in failed_indexes
+        ]
+        return stored_paths, failed_names
 
     def select(self, mode: str = "recent") -> list[LogInfo]:
         """Return logs for the requested selection mode.
@@ -152,22 +215,13 @@ class RaidReportRunner:
 
         if to_parse:
             done_already = len(hits)
-            for i, log in enumerate(to_parse, start=1):
-                self._check_cancelled()
-                # Count against ALL selected fights, with previously-read
-                # ones already complete — "4 of 4" when 9 are selected
-                # reads like fights went missing.
-                self._emit("parse", done_already + i, total_selected,
-                           f"Parsing {log.path.stem}")
-                result = self.parse_log(log.path)
-                if isinstance(result, Path):
-                    stored = self.cache.store(
-                        log.path, result, self.ei_version,
-                        self.settings_fingerprint)
-                    json_paths.append(stored)
-                else:
-                    logger.warning("Failed to parse log: %s", log.path)
-                    failed_names.append(log.path.stem)
+            parsed_paths, parse_failures = self._parse_missing_logs(
+                to_parse,
+                total_selected=total_selected,
+                done_already=done_already,
+            )
+            json_paths.extend(parsed_paths)
+            failed_names.extend(parse_failures)
 
         if not json_paths:
             raise RuntimeError(
@@ -189,10 +243,10 @@ class RaidReportRunner:
             cleanup_temp = False
         input_dir.mkdir(parents=True, exist_ok=True)
 
-        for jp in json_paths:
+        self._emit("collect", 0, len(json_paths))
+        for index, jp in enumerate(json_paths, start=1):
             shutil.copy2(jp, input_dir)
-
-        self._emit("collect", 1, 1)
+            self._emit("collect", index, len(json_paths))
 
         self._check_cancelled()
 
@@ -207,12 +261,14 @@ class RaidReportRunner:
                 "check your internet connection and try again."
             )
         if self._viewer_factory:
-            self._emit("resolve", 1, 1, "Resolving stats viewer...")
+            self._emit("resolve", 0, 1, "Resolving stats viewer...")
             self.viewer_html = self._viewer_factory()
+            self._emit("resolve", 1, 1, "Stats viewer ready")
         self.combiner.write_run_config(
             run_dir, input_dir,
             self.guild_name, self.guild_id, self.api_key,
         )
+        self._emit("combine", 0, 1)
         dragdrop_json = self.combiner.run(
             input_dir,
             run_dir,
@@ -223,7 +279,7 @@ class RaidReportRunner:
 
         self._check_cancelled()
         if self.augment_json:
-            self._emit("augment", 1, 1)
+            self._emit("augment", 0, 1)
             try:
                 original_tiddlers = json.loads(
                     dragdrop_json.read_text(encoding="utf-8")
@@ -243,6 +299,7 @@ class RaidReportRunner:
                     "report will ship unaugmented",
                     exc_info=True,
                 )
+            self._emit("augment", 1, 1)
 
         # Same augmentation path: pin report table headers so scrolling a
         # long fight keeps the column labels. Never fails the report.
@@ -261,6 +318,35 @@ class RaidReportRunner:
             standalone_html,
             session_date=f"{selected[0].timestamp:%Y-%m-%d}",
         )
+
+        # Build the multi-view shell only after the Classic report has all
+        # of its v2.2.x augmentations. The viewer embeds that final Classic
+        # document losslessly alongside the Simple and Sparky views.
+        self._check_cancelled()
+        self._emit("view", 0, 1, "Building report views...")
+        try:
+            enemy_role_evidence, player_skill_evidence = (
+                collect_report_evidence(json_paths)
+            )
+            current_tiddlers = json.loads(
+                dragdrop_json.read_text(encoding="utf-8")
+            )
+            if not isinstance(current_tiddlers, list):
+                raise ValueError("combined report data is not a list")
+            convert_report_file(
+                standalone_html,
+                current_tiddlers,
+                default_view=self.report_default_view,
+                enemy_role_evidence=enemy_role_evidence,
+                player_skill_evidence=player_skill_evidence,
+            )
+            self._emit("view", 1, 1, "Report views ready")
+        except Exception as exc:
+            logger.error("Report viewer build failed", exc_info=True)
+            raise RuntimeError(
+                "SparkyBot could not build the Classic, Simple, and Sparky "
+                "report views."
+            ) from exc
 
         if report_name is not None and report_name.strip():
             name = report_name.strip()
@@ -297,13 +383,137 @@ class RaidReportRunner:
         )
 
 
-def make_publish_caption(result: ReportResult) -> str:
-    # Default report filenames already include "(N fights)". Discord uses a
-    # cleaner caption shape and adds the authoritative count exactly once.
-    display_name = re.sub(
-        r"\s+\(\d+\s+fights?\)\s*$", "", result.name, flags=re.IGNORECASE)
+_FIGHT_TIME_RE = re.compile(
+    r"(?P<date>\d{4}-\d{2}-\d{2})\s+-\s+"
+    r"(?P<time>\d{2}:\d{2}:\d{2})"
+)
+_DURATION_PART_RE = re.compile(
+    r"(?:(?P<hours>\d+)h\s*)?(?:(?P<minutes>\d+)m\s*)?"
+    r"(?:(?P<seconds>\d+)s)?"
+)
+
+
+def _fight_datetime(label: str) -> datetime | None:
+    match = _FIGHT_TIME_RE.search(label or "")
+    if not match:
+        return None
+    try:
+        return datetime.strptime(
+            f"{match.group('date')} {match.group('time')}",
+            "%Y-%m-%d %H:%M:%S",
+        )
+    except ValueError:
+        return None
+
+
+def _duration_seconds(value: str | None) -> int:
+    match = _DURATION_PART_RE.search(value or "")
+    if not match:
+        return 0
     return (
-        f"{display_name} \u2014 {result.fight_count} "
-        f"{'fight' if result.fight_count == 1 else 'fights'} \u00b7 "
-        f"{result.generated_date:%m/%d/%Y}"
+        int(match.group("hours") or 0) * 3600
+        + int(match.group("minutes") or 0) * 60
+        + int(match.group("seconds") or 0)
     )
+
+
+def _short_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m" + (f" {seconds}s" if minutes < 10 and seconds else "")
+    return f"{seconds}s"
+
+
+def _run_window(fights: list[dict]) -> tuple[str | None, str | None]:
+    timed = [
+        (stamp, fight)
+        for fight in fights
+        if (stamp := _fight_datetime(str(fight.get("time_label", ""))))
+        is not None
+    ]
+    if not timed:
+        return None, None
+    start = timed[0][0]
+    last_start, last_fight = timed[-1]
+    end = last_start + timedelta(
+        seconds=_duration_seconds(str(last_fight.get("duration", "")))
+    )
+    start_clock = start.strftime("%I:%M %p").lstrip("0")
+    end_clock = end.strftime("%I:%M %p").lstrip("0")
+    if start.date() == end.date():
+        window = f"{start_clock}\u2013{end_clock}"
+    else:
+        window = (
+            f"{start:%b} {start.day}, {start_clock}\u2013"
+            f"{end:%b} {end.day}, {end_clock}"
+        )
+    return window, _short_duration(int((end - start).total_seconds()))
+
+
+def make_publish_embed(result: ReportResult) -> dict:
+    """Build a compact nightly overview; a bad stats file never blocks upload."""
+    from core.night_model import build_night_model
+
+    model: dict = {}
+    try:
+        tiddlers = json.loads(result.json_path.read_text(encoding="utf-8"))
+        if isinstance(tiddlers, list):
+            model = build_night_model(tiddlers)
+    except Exception:
+        logger.warning("Nightly Discord summary could not read report data", exc_info=True)
+
+    display_name = re.sub(
+        r"\s+\(\d+\s+fights?\)\s*$", "", result.name, flags=re.IGNORECASE
+    )
+    session = model.get("session") or {}
+    totals = model.get("totals") or {}
+    fights = model.get("fights") or []
+    fight_count = int(totals.get("fights") or result.fight_count)
+
+    run_lines = [f"**{fight_count}** {'fight' if fight_count == 1 else 'fights'}"]
+    window, elapsed = _run_window(fights)
+    if window:
+        run_lines.append(window)
+    if elapsed:
+        run_lines.append(f"{elapsed} elapsed")
+    combat_seconds = _duration_seconds(session.get("total_duration"))
+    if combat_seconds:
+        run_lines.append(f"{_short_duration(combat_seconds)} in combat")
+
+    fields = [{"name": "Run", "value": "\n".join(run_lines), "inline": True}]
+    if totals:
+        fields.extend(
+            (
+                {
+                    "name": "Enemies",
+                    "value": (
+                        f"**{int(totals.get('enemy_kills') or 0):,}** killed\n"
+                        f"**{int(totals.get('enemy_downs') or 0):,}** downed\n"
+                        f"**{float(totals.get('kdr') or 0):.2f}** K/D"
+                    ),
+                    "inline": True,
+                },
+                {
+                    "name": "Squad losses",
+                    "value": (
+                        f"**{int(totals.get('ally_deaths') or 0):,}** killed\n"
+                        f"**{int(totals.get('ally_downs') or 0):,}** downed"
+                    ),
+                    "inline": True,
+                },
+            )
+        )
+
+    commander = session.get("commander")
+    description = f"Commanded by **{commander}**" if commander else None
+    return {
+        "title": f"\U0001f4ca {display_name}",
+        "description": description,
+        "fields": fields,
+        "footer": {"text": "Full Sparky \u2022 Simple \u2022 Classic report follows"},
+        "color": 0x5865F2,
+    }

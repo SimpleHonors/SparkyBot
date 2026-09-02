@@ -239,8 +239,8 @@ Other tools make you wait. SparkyBot was already working the whole time you play
 ### How it works
 
 1. **Open the Raid Report tab** — it auto-discovers your logs and selects the last 12 hours. A line tells you how many fights are ready: *"N recent fights found — ready."*
-2. **Click the big button** — **"Make my raid report."** SparkyBot reuses everything it already parsed live, downloads the stats builder on first use (one-time), and bakes a single self-contained HTML file. Progress shows inline: reading fights, crunching numbers, building the page. **Raid ends, click, done.**
-3. **Post to Discord** — one more click sends it to your guild's channel. You can also open the report in your browser first. Big reports auto-zip to fit Discord's attachment limit.
+2. **Click the big button** — **"Make my raid report."** SparkyBot reuses everything it already parsed live, downloads the stats builder on first use (one-time), and bakes a single self-contained HTML file. That one file includes a guided **Sparky** view, a fast **Simple** view, and the untouched **Classic** report; every reader can switch at the top. Progress shows inline: reading fights, crunching numbers, building the page. **Raid ends, click, done.**
+3. **Post to Discord** — one more click sends a compact commander/run/K-D overview plus the report file to your guild's channel. You can also open the report in your browser first. Big reports auto-zip to fit Discord's attachment limit.
 
 SparkyBot enables the combiner's compressed standalone-HTML path by default,
 so a big end-of-night report often shrinks enough to post under Discord's
@@ -257,7 +257,7 @@ If anything goes wrong, you see a plain-text error right on the tab — no stack
 
 ### What's in it
 
-A TopStats-style dashboard that uses **all the data from every fight in the session** — not just one-off per-fight snippets. Per-player rankings across DPS, boon uptime, healing, strips, cleanses, CCs, and damage modifiers. Per-fight breakdowns so you can see who popped off in the opener vs. who carried the long slog. Combined stats dashboards that surface patterns across the whole night.
+The **Sparky** view starts with the night's totals and correctly labeled player rankings, then provides players, fights, poison coverage, and a direct path to every original detail. **Simple** keeps only the useful headlines. **Classic** is the byte-for-byte upstream report with its complete tables and charts. All three use **all the data from every fight in the session** and travel together in the same offline file.
 
 ### Cache & storage
 

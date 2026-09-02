@@ -140,6 +140,7 @@ class CompetitorImportPlan:
     fight_webhook: ImportedWebhook | None
     nightly_webhook: ImportedWebhook | None
     settings: tuple[ImportedSetting, ...] = ()
+    extra_webhooks: tuple[ImportedWebhook, ...] = ()
 
     @property
     def has_discord_routing(self) -> bool:
@@ -147,16 +148,14 @@ class CompetitorImportPlan:
 
     @property
     def saved_webhooks(self) -> tuple[ImportedWebhook, ...]:
-        """Selected routes first, then other named destinations, up to capacity."""
-        if not self.has_discord_routing:
-            return ()
+        """Selected routes first, then every explicitly selected extra."""
         return _unique_webhooks(
             (
                 self.fight_webhook,
                 self.nightly_webhook,
-                *self.finding.webhooks,
+                *self.extra_webhooks,
             )
-        )[:3]
+        )
 
     @property
     def additional_webhooks(self) -> tuple[ImportedWebhook, ...]:
@@ -217,10 +216,6 @@ _SETTING_RULES: dict[tuple[str, str], tuple[str, int, int, str]] = {
     ("Thresholds", "minFightDowns"): ("int", 0, 10, "Minimum downs"),
     ("Thresholds", "minFightTotalDmg"): (
         "int", 0, 9_999_999, "Minimum total damage"
-    ),
-    ("Thresholds", "maxUploadSize"): ("int", 1, 1024, "Upload limit (MB)"),
-    ("Thresholds", "uploadLargeAfterParse"): (
-        "bool", 0, 0, "Upload large reports after parsing"
     ),
     ("UI", "showDamage"): ("bool", 0, 0, "Show damage"),
     ("UI", "showHeals"): ("bool", 0, 0, "Show healing"),
@@ -323,10 +318,14 @@ def _unique_paths(values: Iterable[Path | str]) -> tuple[Path, ...]:
     return tuple(result)
 
 
-def _unique_webhooks(values: Iterable[ImportedWebhook]) -> tuple[ImportedWebhook, ...]:
+def _unique_webhooks(
+    values: Iterable[ImportedWebhook | None],
+) -> tuple[ImportedWebhook, ...]:
     result: list[ImportedWebhook] = []
     seen: set[str] = set()
     for hook in values:
+        if hook is None:
+            continue
         key = hook.url.casefold()
         if key in seen:
             continue
@@ -849,8 +848,6 @@ _MZ_SETTING_MAPPINGS = (
     ("minFightDuration", "Thresholds", "minFightDuration"),
     ("minFightDowns", "Thresholds", "minFightDowns"),
     ("minFightTotalDmg", "Thresholds", "minFightTotalDmg"),
-    ("maxUploadMegabytes", "Thresholds", "maxUploadSize"),
-    ("largeUploadsAfterParse", "Thresholds", "uploadLargeAfterParse"),
     ("showDamage", "UI", "showDamage"),
     ("showHeals", "UI", "showHeals"),
     ("showDefense", "UI", "showDefense"),
@@ -1494,6 +1491,15 @@ def build_import_plan(finding: CompetitorFinding) -> CompetitorImportPlan:
         fight_webhook=fight,
         nightly_webhook=nightly,
         settings=finding.settings,
+        extra_webhooks=tuple(
+            hook
+            for hook in finding.webhooks
+            if hook.url not in {
+                selected.url
+                for selected in (fight, nightly)
+                if selected is not None
+            }
+        ),
     )
 
 
@@ -1722,34 +1728,160 @@ def apply_competitor_import(
                 continue
             config.update(setting.section, setting.key, setting.value)
 
-        if include_discord and plan.fight_webhook and plan.nightly_webhook:
+        if include_discord and plan.saved_webhooks:
             fight = plan.fight_webhook
             nightly = plan.nightly_webhook
             saved = plan.saved_webhooks
-            for index in range(1, 4):
-                suffix = "" if index == 1 else str(index)
-                hook = saved[index - 1] if index <= len(saved) else None
-                config.update(
-                    "Discord", f"discordWebhook{suffix}", hook.url if hook else ""
+
+            if len(saved) > 3:
+                raise CompetitorConfigError(
+                    "SparkyBot can keep only 3 Discord channels. Select fewer "
+                    "channels and try again."
                 )
+
+            urls = [
+                config.discord_webhook,
+                config.discord_webhook2,
+                config.discord_webhook3,
+            ]
+            names = [
+                config.discord_webhook_name1,
+                config.discord_webhook_name2,
+                config.discord_webhook_name3,
+            ]
+            claimed: set[int] = set()
+
+            def place(hook, preferred, avoid=()):
+                avoid = set(avoid)
+                for index, url in enumerate(urls, 1):
+                    if (
+                        index not in claimed
+                        and url == hook.url
+                    ):
+                        claimed.add(index)
+                        names[index - 1] = hook.display_name
+                        return index
+                candidates = [
+                    *(index for index in preferred if index not in avoid),
+                    *(
+                        index for index in range(1, 4)
+                        if index not in preferred and index not in avoid
+                    ),
+                ]
+                for only_empty in (True, False):
+                    for index in candidates:
+                        if index in claimed:
+                            continue
+                        if only_empty and urls[index - 1]:
+                            continue
+                        claimed.add(index)
+                        urls[index - 1] = hook.url
+                        names[index - 1] = hook.display_name
+                        return index
+                return None
+
+            active_index = int(config.active_discord_webhook or 1)
+            if active_index not in (1, 2, 3):
+                active_index = 1
+            configured_nightly = int(config.raid_report_discord_webhook or 0)
+            resolved_nightly_index = (
+                configured_nightly
+                if configured_nightly in (1, 2, 3)
+                else active_index
+            )
+            preserved_indices = set()
+            if fight is None:
+                preserved_indices.add(active_index)
+            if nightly is None:
+                preserved_indices.add(resolved_nightly_index)
+            preserved_urls = {
+                urls[index - 1]
+                for index in preserved_indices
+                if urls[index - 1]
+            }
+            selected_urls = {hook.url for hook in saved}
+            required_slots = len(preserved_indices) + len(
+                selected_urls - preserved_urls
+            )
+            if required_slots > 3:
+                raise CompetitorConfigError(
+                    "Those choices need more than SparkyBot's 3 Discord channel "
+                    "slots because unchecked existing routes are kept. Select "
+                    "fewer channels and try again."
+                )
+
+            fight_avoid = {resolved_nightly_index} if nightly is None else set()
+            fight_index = (
+                place(fight, [active_index, 1, 2, 3], fight_avoid)
+                if fight
+                else None
+            )
+            if fight is not None and fight_index is None:
+                raise CompetitorConfigError(
+                    "SparkyBot could not fit every selected Discord channel."
+                )
+
+            if nightly is fight and fight_index is not None:
+                nightly_index = fight_index
+            elif nightly:
+                nightly_preference = (
+                    [configured_nightly, 1, 2, 3]
+                    if configured_nightly in (1, 2, 3)
+                    else [2, 3, 1]
+                )
+                nightly_avoid = {active_index} if fight is None else set()
+                nightly_index = place(
+                    nightly, nightly_preference, nightly_avoid
+                )
+                if nightly_index is None:
+                    raise CompetitorConfigError(
+                        "SparkyBot could not fit every selected Discord channel."
+                    )
+            else:
+                nightly_index = None
+
+            route_urls = {
+                hook.url for hook in (fight, nightly) if hook is not None
+            }
+            extra_avoid = set()
+            if fight is None:
+                extra_avoid.add(active_index)
+            if nightly is None:
+                extra_avoid.add(resolved_nightly_index)
+            for hook in saved:
+                if hook.url not in route_urls:
+                    if place(hook, [1, 2, 3], extra_avoid) is None:
+                        raise CompetitorConfigError(
+                            "SparkyBot could not fit every selected Discord channel."
+                        )
+
+            for index, (url, name) in enumerate(zip(urls, names), 1):
+                suffix = "" if index == 1 else str(index)
+                config.update("Discord", f"discordWebhook{suffix}", url)
                 config.update(
                     "Discord",
                     f"discordWebhookName{index}",
-                    hook.display_name if hook else "",
+                    name,
                 )
-            nightly_index = next(
-                (
-                    index
-                    for index, hook in enumerate(saved, 1)
-                    if hook.url == nightly.url
-                ),
-                1,
-            )
-            config.update("Discord", "activeDiscordWebhook", "1")
-            config.update(
-                "Discord", "raidReportDiscordWebhook", str(nightly_index)
-            )
-            config.update("Discord", "enableDiscordBot", "true")
+            if fight_index is not None:
+                config.update(
+                    "Discord", "activeDiscordWebhook", str(fight_index)
+                )
+            if nightly_index is not None:
+                config.update(
+                    "Discord", "raidReportDiscordWebhook", str(nightly_index)
+                )
+            elif fight_index is not None and configured_nightly == 0:
+                # "Follow fight reports" would otherwise make an unchecked
+                # nightly destination silently follow the newly imported
+                # fight route. Pin it to the destination it used before.
+                config.update(
+                    "Discord",
+                    "raidReportDiscordWebhook",
+                    str(resolved_nightly_index),
+                )
+            if fight_index is not None or nightly_index is not None:
+                config.update("Discord", "enableDiscordBot", "true")
 
         if turn_off_optional:
             config.update("AI", "enableAiAnalysis", "false")

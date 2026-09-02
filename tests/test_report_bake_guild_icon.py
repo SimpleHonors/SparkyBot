@@ -11,6 +11,7 @@ from core.raid_report import RaidReportRunner
 from core.raid_session import LogInfo
 from core.report_bake import apply_guild_icon
 from core.report_pack import is_packed, pack_html, unpack_html
+from core.report_viewer import unpack_classic_report
 
 TIDDLER_TITLE = "$:/sparkybot/guild-icon"
 SLOT_TITLE = "index.png"
@@ -345,7 +346,7 @@ def test_runner_stamps_the_guild_icon_on_the_generated_report(tmp_path):
         [_make_log(tmp_path)], report_name="Night", work_dir=tmp_path / "work"
     )
 
-    full = unpack_html(result.html_path.read_text(encoding="utf-8"))
+    full = unpack_classic_report(result.html_path.read_text(encoding="utf-8"))
     assert OVERRIDE_MARKER in full
     assert f'"title":"{TIDDLER_TITLE}"' in full
     assert _winning_tiddler(full, SLOT_TITLE)["text"] == PNG_B64
@@ -361,7 +362,7 @@ def test_runner_without_a_configured_icon_ships_a_plain_report(tmp_path):
         [_make_log(tmp_path)], report_name="Night", work_dir=tmp_path / "work"
     )
 
-    full = unpack_html(result.html_path.read_text(encoding="utf-8"))
+    full = unpack_classic_report(result.html_path.read_text(encoding="utf-8"))
     assert OVERRIDE_MARKER not in full
     assert f'"title":"{TIDDLER_TITLE}"' not in full
     assert _winning_tiddler(full, SLOT_TITLE)["text"] == STOCK_LOGO_B64

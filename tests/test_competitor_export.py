@@ -100,8 +100,6 @@ def test_safe_preferences_round_trip_through_reciprocal_neighbor_formats(tmp_pat
         ("Thresholds", "minFightDuration", "27"),
         ("Thresholds", "minFightDowns", "3"),
         ("Thresholds", "minFightTotalDmg", "765432"),
-        ("Thresholds", "maxUploadSize", "24"),
-        ("Thresholds", "uploadLargeAfterParse", "true"),
         ("UI", "showDamage", "false"),
         ("UI", "showQuickReport", "false"),
         ("Behavior", "closeToTray", "true"),
@@ -147,7 +145,8 @@ def test_safe_preferences_round_trip_through_reciprocal_neighbor_formats(tmp_pat
 
     assert mz_settings[("Discord", "embedColor")] == "0xA1B2C3"
     assert mz_settings[("Thresholds", "minFightDuration")] == "27"
-    assert mz_settings[("Thresholds", "maxUploadSize")] == "24"
+    assert ("Thresholds", "maxUploadSize") not in mz_settings
+    assert ("Thresholds", "uploadLargeAfterParse") not in mz_settings
     assert mz_settings[("UI", "showDamage")] == "false"
     assert mz_settings[("UI", "showQuickReport")] == "false"
     assert mz_settings[("Behavior", "maxParseMemory")] == "8192"

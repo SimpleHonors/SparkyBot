@@ -8,6 +8,7 @@ from typing import Iterable
 
 from PySide6.QtCore import Qt, QStandardPaths
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGroupBox,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QMessageBox,
@@ -52,11 +54,18 @@ _CONFIG_FILTER = (
 
 
 class CompetitorImportDialog(QDialog):
-    """One preview with smart defaults and four optional corrections."""
+    """One consent screen where every reusable item is independently selectable."""
 
-    def __init__(self, finding: CompetitorFinding, parent: QWidget | None = None):
+    def __init__(
+        self,
+        finding: CompetitorFinding,
+        parent: QWidget | None = None,
+        *,
+        existing_config=None,
+    ):
         super().__init__(parent)
         self.finding = finding
+        self.existing_config = existing_config
         self.default_plan = build_import_plan(finding)
         self.setWindowTitle(f"Set Up from {finding.app}?")
         self.setMinimumWidth(610)
@@ -72,7 +81,7 @@ class CompetitorImportDialog(QDialog):
         layout = QVBoxLayout(body)
         intro = QLabel(
             f"SparkyBot found what it can reuse from <b>{finding.app}</b>. "
-            "Everything below is already selected."
+            "Useful items are selected. Uncheck anything you do not want."
         )
         intro.setTextFormat(Qt.TextFormat.RichText)
         intro.setWordWrap(True)
@@ -91,6 +100,19 @@ class CompetitorImportDialog(QDialog):
         theme.mark_hint(source)
         layout.addWidget(source)
 
+        choice_bar = QHBoxLayout()
+        choice_bar.addWidget(QLabel("<b>Choose what to copy</b>"))
+        choice_bar.addStretch()
+        self.select_all_button = QPushButton("All")
+        self.select_none_button = QPushButton("None")
+        choice_bar.addWidget(self.select_all_button)
+        choice_bar.addWidget(self.select_none_button)
+        layout.addLayout(choice_bar)
+
+        self._import_checks: list[QCheckBox] = []
+        self.setting_checks: list[tuple[object, QCheckBox]] = []
+        self.webhook_checks: list[tuple[ImportedWebhook, QCheckBox]] = []
+
         form = QFormLayout()
         self.log_combo = QComboBox()
         self._fill_path_combo(
@@ -99,7 +121,12 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.log_folder,
             "Let SparkyBot find the fight logs",
         )
-        form.addRow("Fight files:", self.log_combo)
+        self.log_check = self._make_item_check(
+            "Fight log folder",
+            self.log_combo,
+            self.default_plan.log_folder is not None,
+        )
+        form.addRow(self.log_check, self.log_combo)
 
         self.parser_combo = QComboBox()
         self._fill_path_combo(
@@ -108,7 +135,12 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.parser_executable,
             "Let SparkyBot find the report helper",
         )
-        form.addRow("Report helper:", self.parser_combo)
+        self.parser_check = self._make_item_check(
+            "Elite Insights parser",
+            self.parser_combo,
+            self.default_plan.parser_executable is not None,
+        )
+        form.addRow(self.parser_check, self.parser_combo)
 
         self.fight_combo = QComboBox()
         self._fill_webhook_combo(
@@ -117,7 +149,12 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.fight_webhook,
             "Set up individual fight reports later",
         )
-        form.addRow("Individual fight channel:", self.fight_combo)
+        self.fight_check = self._make_item_check(
+            "Individual fight channel",
+            self.fight_combo,
+            self.default_plan.fight_webhook is not None,
+        )
+        form.addRow(self.fight_check, self.fight_combo)
 
         self.nightly_combo = QComboBox()
         self._fill_webhook_combo(
@@ -126,24 +163,53 @@ class CompetitorImportDialog(QDialog):
             self.default_plan.nightly_webhook,
             "Set up nightly debrief later",
         )
-        form.addRow("Nightly debrief channel:", self.nightly_combo)
+        self.nightly_check = self._make_item_check(
+            "Nightly debrief channel",
+            self.nightly_combo,
+            self.default_plan.nightly_webhook is not None,
+        )
+        form.addRow(self.nightly_check, self.nightly_combo)
         layout.addLayout(form)
 
-        self.additional_webhooks_label = QLabel("")
-        self.additional_webhooks_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.additional_webhooks_label.setWordWrap(True)
-        theme.mark_hint(self.additional_webhooks_label)
-        layout.addWidget(self.additional_webhooks_label)
-        self.fight_combo.currentIndexChanged.connect(
-            self._refresh_additional_webhooks
+        if self.default_plan.extra_webhooks:
+            saved_group = QGroupBox("Other saved Discord channels")
+            saved_layout = QVBoxLayout(saved_group)
+            core_urls = {
+                hook.url
+                for hook in (
+                    self.default_plan.fight_webhook,
+                    self.default_plan.nightly_webhook,
+                )
+                if hook is not None
+            }
+            remaining_slots = max(0, 3 - len(core_urls))
+            for index, hook in enumerate(self.default_plan.extra_webhooks):
+                check = self._plain_item_check(
+                    hook.display_name, index < remaining_slots
+                )
+                self.webhook_checks.append((hook, check))
+                saved_layout.addWidget(check)
+            layout.addWidget(saved_group)
+
+        self.webhook_limit_label = QLabel(
+            "SparkyBot can keep 3 Discord channels total, including any "
+            "existing route you leave unchanged. Uncheck one before selecting "
+            "a fourth channel."
         )
-        self.nightly_combo.currentIndexChanged.connect(
-            self._refresh_additional_webhooks
-        )
-        self._refresh_additional_webhooks()
+        self.webhook_limit_label.setWordWrap(True)
+        theme.set_state(self.webhook_limit_label, "warn")
+        self.webhook_limit_label.setVisible(len(finding.webhooks) > 3)
+        layout.addWidget(self.webhook_limit_label)
+        for combo in (
+            self.log_combo,
+            self.parser_combo,
+            self.fight_combo,
+            self.nightly_combo,
+        ):
+            combo.currentIndexChanged.connect(self._refresh_selection_state)
 
         if finding.settings:
-            preferences_heading = QLabel("<b>Other matching choices</b>")
+            preferences_heading = QLabel("<b>Other settings found</b>")
             preferences_heading.setTextFormat(Qt.TextFormat.RichText)
             layout.addWidget(preferences_heading)
 
@@ -156,10 +222,12 @@ class CompetitorImportDialog(QDialog):
                 group = QGroupBox(section)
                 group_form = QFormLayout(group)
                 for setting in settings:
+                    check = self._plain_item_check(setting.label)
+                    self.setting_checks.append((setting, check))
                     value = QLabel(setting.display_value)
                     value.setTextFormat(Qt.TextFormat.PlainText)
                     value.setWordWrap(True)
-                    group_form.addRow(f"{setting.label}:", value)
+                    group_form.addRow(check, value)
                 layout.addWidget(group)
 
         privacy = QLabel(
@@ -190,10 +258,129 @@ class CompetitorImportDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         outer_layout.addWidget(buttons)  # fixed outside the scroll — never clipped
+        self.select_all_button.clicked.connect(lambda: self._select_items(True))
+        self.select_none_button.clicked.connect(lambda: self._select_items(False))
+        self._refresh_selection_state()
         # Cap height so the body scrolls on 768p / high-DPI instead of the
         # dialog overflowing the screen and overlapping its own content.
         self.resize(620, 600)
         self.setMaximumHeight(720)
+
+    def _plain_item_check(self, text: str, checked: bool = True) -> QCheckBox:
+        check = QCheckBox(text)
+        check.setProperty("importItem", True)
+        check.setChecked(checked)
+        check.toggled.connect(self._refresh_selection_state)
+        self._import_checks.append(check)
+        return check
+
+    def _make_item_check(
+        self, text: str, editor: QWidget, checked: bool
+    ) -> QCheckBox:
+        check = self._plain_item_check(text, checked)
+        check.setEnabled(checked)
+        editor.setEnabled(checked)
+        check.toggled.connect(editor.setEnabled)
+        return check
+
+    def _select_items(self, selected: bool) -> None:
+        for check in self._import_checks:
+            if check.isEnabled():
+                check.setChecked(selected)
+        if selected:
+            self._trim_webhook_selection()
+        self._refresh_selection_state()
+
+    def _selected_webhook_count(self) -> int:
+        urls = set()
+        for check, combo in (
+            (getattr(self, "fight_check", None), getattr(self, "fight_combo", None)),
+            (getattr(self, "nightly_check", None), getattr(self, "nightly_combo", None)),
+        ):
+            if check is not None and combo is not None and check.isChecked():
+                hook = combo.currentData()
+                if hook is not None:
+                    urls.add(hook.url)
+        urls.update(
+            hook.url for hook, check in self.webhook_checks if check.isChecked()
+        )
+        preserved = self._preserved_webhook_slots()
+        preserved_urls = {url for url in preserved.values() if url}
+        return len(preserved) + len(urls - preserved_urls)
+
+    def _preserved_webhook_slots(self) -> dict[int, str]:
+        config = self.existing_config
+        if config is None:
+            return {}
+        urls = (
+            getattr(config, "discord_webhook", ""),
+            getattr(config, "discord_webhook2", ""),
+            getattr(config, "discord_webhook3", ""),
+        )
+        try:
+            active = int(getattr(config, "active_discord_webhook", 1) or 1)
+        except (TypeError, ValueError):
+            active = 1
+        if active not in (1, 2, 3):
+            active = 1
+        try:
+            nightly = int(
+                getattr(config, "raid_report_discord_webhook", 0) or 0
+            )
+        except (TypeError, ValueError):
+            nightly = 0
+        if nightly not in (1, 2, 3):
+            nightly = active
+        preserved = {}
+        fight_selected = (
+            self.fight_check.isChecked()
+            and self.fight_combo.currentData() is not None
+        )
+        nightly_selected = (
+            self.nightly_check.isChecked()
+            and self.nightly_combo.currentData() is not None
+        )
+        if not fight_selected:
+            preserved[active] = urls[active - 1]
+        if not nightly_selected:
+            preserved[nightly] = urls[nightly - 1]
+        return preserved
+
+    def _trim_webhook_selection(self) -> None:
+        for _hook, check in reversed(self.webhook_checks):
+            if self._selected_webhook_count() <= 3:
+                break
+            check.setChecked(False)
+
+    def _refresh_selection_state(self) -> None:
+        core_checks = {
+            self.log_check,
+            self.parser_check,
+            self.fight_check,
+            self.nightly_check,
+        }
+        selected = sum(
+            check.isChecked()
+            for check in self._import_checks
+            if check not in core_checks
+        )
+        selected += sum(
+            check.isChecked() and combo.currentData() is not None
+            for check, combo in (
+                (self.log_check, self.log_combo),
+                (self.parser_check, self.parser_combo),
+                (self.fight_check, self.fight_combo),
+                (self.nightly_check, self.nightly_combo),
+            )
+        )
+        webhook_overflow = self._selected_webhook_count() > 3
+        if hasattr(self, "use_button"):
+            self.use_button.setEnabled(selected > 0 and not webhook_overflow)
+            self.use_button.setText("Use This Setup")
+        if hasattr(self, "webhook_limit_label"):
+            self.webhook_limit_label.setVisible(
+                len(self.finding.webhooks) > 3 or webhook_overflow
+            )
 
     @staticmethod
     def _fill_path_combo(
@@ -243,22 +430,33 @@ class CompetitorImportDialog(QDialog):
     def selected_plan(self) -> CompetitorImportPlan:
         return CompetitorImportPlan(
             finding=self.finding,
-            log_folder=self.log_combo.currentData(),
-            parser_executable=self.parser_combo.currentData(),
-            fight_webhook=self.fight_combo.currentData(),
-            nightly_webhook=self.nightly_combo.currentData(),
-            settings=self.default_plan.settings,
+            log_folder=(
+                self.log_combo.currentData() if self.log_check.isChecked() else None
+            ),
+            parser_executable=(
+                self.parser_combo.currentData()
+                if self.parser_check.isChecked()
+                else None
+            ),
+            fight_webhook=(
+                self.fight_combo.currentData()
+                if self.fight_check.isChecked()
+                else None
+            ),
+            nightly_webhook=(
+                self.nightly_combo.currentData()
+                if self.nightly_check.isChecked()
+                else None
+            ),
+            settings=tuple(
+                setting
+                for setting, check in self.setting_checks
+                if check.isChecked()
+            ),
+            extra_webhooks=tuple(
+                hook for hook, check in self.webhook_checks if check.isChecked()
+            ),
         )
-
-    def _refresh_additional_webhooks(self) -> None:
-        extras = self.selected_plan().additional_webhooks
-        self.additional_webhooks_label.setText(
-            "Also keep these saved channels: "
-            + ", ".join(hook.display_name for hook in extras)
-            if extras
-            else ""
-        )
-        self.additional_webhooks_label.setVisible(bool(extras))
 
 
 class CompetitorExportConfirmDialog(QDialog):
@@ -462,7 +660,11 @@ def preview_competitor_finding(
 
     Used by the wizard's proactive offer: discovery already ran, the user
     clicked "Use <tool>'s Settings", so no picker — straight to consent."""
-    dialog = CompetitorImportDialog(finding, parent)
+    dialog = CompetitorImportDialog(
+        finding,
+        parent,
+        existing_config=getattr(parent, "config", None),
+    )
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.selected_plan()
@@ -533,11 +735,11 @@ def choose_competitor_export(
 
 
 class InteropCatalogDialog(QDialog):
-    """Linked credits that celebrate why another tool may be the better fit."""
+    """Plain-language links to neighboring tools and migration support."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Other WvW Log Tools & Credits")
+        self.setWindowTitle("Other WvW Log Tools")
         self.setMinimumSize(720, 620)
         outer = QVBoxLayout(self)
 
@@ -556,10 +758,10 @@ class InteropCatalogDialog(QDialog):
         body_layout = QVBoxLayout(body)
         for project in INTEROP_PROJECTS:
             entry = QLabel(
-                f'<a href="{project.url}"><b>{project.name}</b></a> '
-                f'— {project.license}<br>'
-                f'<b>Where it may be the better fit:</b> {project.celebrates}<br>'
-                f'<span style="color:#9aa4b2;">{project.relationship}</span>'
+                f'<a href="{project.url}"><b>{project.name}</b></a><br>'
+                f'<b>What it does well:</b> {project.celebrates}<br>'
+                f'<b>SparkyBot connection:</b> '
+                f'{project.relationship}'
             )
             entry.setTextFormat(Qt.TextFormat.RichText)
             entry.setOpenExternalLinks(True)

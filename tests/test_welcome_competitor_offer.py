@@ -5,6 +5,7 @@ exactly as before."""
 
 import os
 import sys
+import gc
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QApplication
 
 import core.setup_wizard as sw
@@ -24,6 +26,18 @@ from core.config import Config
 @pytest.fixture(scope="module")
 def app():
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def close_test_windows(app):
+    """Dispose each wizard while Qt is alive, not during interpreter GC."""
+    existing = set(QApplication.topLevelWidgets())
+    yield
+    for widget in set(QApplication.topLevelWidgets()) - existing:
+        widget.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    gc.collect()
 
 
 def make_wizard(tmp_path, monkeypatch, findings):

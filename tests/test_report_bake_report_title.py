@@ -7,6 +7,7 @@ from core.raid_report import RaidReportRunner
 from core.raid_session import LogInfo
 from core.report_bake import DEFAULT_REPORT_TITLE, apply_report_title
 from core.report_pack import is_packed, pack_html, unpack_html
+from core.report_viewer import unpack_classic_report
 
 TITLE = DEFAULT_REPORT_TITLE
 UPSTREAM = "Top Stats - Elite Insight Log Summary"
@@ -321,7 +322,7 @@ def test_runner_sticky_icon_and_title_coexist(tmp_path):
         [_make_log(tmp_path)], report_name="Night", work_dir=tmp_path / "work"
     )
 
-    full = unpack_html(result.html_path.read_text(encoding="utf-8"))
+    full = unpack_classic_report(result.html_path.read_text(encoding="utf-8"))
     # Sticky headers still ride along...
     assert "position: sticky;" in full
     # ...the guild icon still takes the logo slot...
@@ -348,7 +349,7 @@ def test_runner_renames_the_header_without_a_configured_icon(tmp_path):
         [_make_log(tmp_path)], report_name="Night", work_dir=tmp_path / "work"
     )
 
-    full = unpack_html(result.html_path.read_text(encoding="utf-8"))
+    full = unpack_classic_report(result.html_path.read_text(encoding="utf-8"))
     assert OVERRIDE_MARKER in full
     assert _winning_tiddler(full, HEADER_TIDDLER)["text"] == (
         ICON_CELL + f' <font size="35">{TITLE}</font>|'

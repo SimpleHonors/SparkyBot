@@ -9,6 +9,7 @@ from core.report_bake import (
     apply_sticky_table_headers,
 )
 from core.report_pack import is_packed, pack_html, unpack_html
+from core.report_viewer import unpack_classic_report
 
 MARKER = "data-sparkybot-sticky-headers"
 
@@ -147,8 +148,7 @@ def test_runner_applies_sticky_headers_to_the_generated_report(tmp_path):
     result = runner.generate([log], report_name="Night", work_dir=tmp_path / "work")
 
     html = result.html_path.read_text(encoding="utf-8")
-    assert is_packed(html)
-    full = unpack_html(html)
+    full = unpack_classic_report(html)
     assert MARKER in full
     assert "position: sticky;" in full
 
@@ -168,5 +168,6 @@ def test_runner_still_ships_a_report_the_styling_cannot_touch(tmp_path):
     result = runner.generate([log], report_name="Night", work_dir=tmp_path / "work")
 
     html = result.html_path.read_text(encoding="utf-8")
-    assert MARKER not in html
-    assert unpack_html(html) == "<html><body><p>data</p></body></html>"
+    classic = unpack_classic_report(html)
+    assert MARKER not in classic
+    assert classic == "<html><body><p>data</p></body></html>"

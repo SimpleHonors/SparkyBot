@@ -3,6 +3,7 @@
 """
 
 import ctypes
+import os
 import time
 import logging
 import threading
@@ -22,6 +23,45 @@ NATIVE_WATCH_PROBE_TIMEOUT = 2.0
 NATIVE_PROBE_PREFIX = "SparkyBot-watch-probe"
 COMPAT_STATUS_NOTE = ("Network folder detected — using compatibility "
                       "watching")
+
+_LOG_EXTENSIONS = ('.evtc', '.zevtc')
+
+
+def _scan_log_folder(folder: Path) -> tuple[Set[str], dict[str, int]]:
+    """Return combat-log paths and directory mtimes in one scandir walk.
+
+    ``Path.rglob`` plus ``Path.is_file`` turns a network-folder scan into a
+    metadata round trip for every historical log.  ``os.scandir`` reuses the
+    directory metadata returned by SMB and lets the polling watcher remember
+    directory mtimes, so unchanged folders need only a cheap directory stat.
+    """
+    files: Set[str] = set()
+    directory_mtimes: dict[str, int] = {}
+    pending = [Path(folder)]
+
+    while pending:
+        current = pending.pop()
+        try:
+            mtime_before = current.stat().st_mtime_ns
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+                        elif entry.name.lower().endswith(_LOG_EXTENSIONS):
+                            files.add(str(Path(entry.path)))
+                    except OSError:
+                        logger.debug("Skipping unreadable path: %s", entry.path)
+            mtime_after = current.stat().st_mtime_ns
+            # If the directory changed while its entries were being read,
+            # retain the old signature so the next poll immediately rescans.
+            directory_mtimes[str(current)] = (
+                mtime_before if mtime_before != mtime_after else mtime_after
+            )
+        except OSError:
+            logger.debug("Skipping unreadable log folder: %s", current)
+
+    return files, directory_mtimes
 
 
 def is_network_path(path: Path) -> bool:
@@ -209,32 +249,52 @@ class LogFileHandler(FileSystemEventHandler):
 class PollingFileWatcher:
     """Fallback file watcher using polling - works with network shares"""
 
-    MAX_PROCESSED_FILES = 10000
+    FULL_RESCAN_INTERVAL = 60.0
 
-    def __init__(self, config, on_new_file: Callable[[Path], None], poll_interval: float = 5.0):
+    def __init__(self, config, on_new_file: Callable[[Path], None],
+                 poll_interval: float = 5.0,
+                 full_rescan_interval: float = FULL_RESCAN_INTERVAL):
         self.config = config
         self.on_new_file = on_new_file
         self.poll_interval = poll_interval
+        self.full_rescan_interval = full_rescan_interval
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
         # Files that existed when the watcher started (never evicted - prevents reprocessing)
         self._initial_files: Set[str] = set()
-        # All files ever seen by this watcher (only evicted when file no longer exists on disk)
+        # All files seen during this watcher process.  A set of paths is far
+        # cheaper than periodically issuing one network exists() call per log.
         self._seen_files: Set[str] = set()
+        # Files noticed while ArcDPS is still writing them.  These are checked
+        # on every poll without walking the history again.
+        self._pending_files: Set[str] = set()
+        self._directory_mtimes: dict[str, int] = {}
+        self._last_full_scan = 0.0
+
+    def _scan_all_folders(self) -> tuple[Set[str], dict[str, int]]:
+        files: Set[str] = set()
+        directory_mtimes: dict[str, int] = {}
+        for folder in self.config.get_log_folders():
+            if not folder.exists():
+                continue
+            found, mtimes = _scan_log_folder(folder)
+            files.update(found)
+            directory_mtimes.update(mtimes)
+        return files, directory_mtimes
 
     def _scan_existing_files(self):
         """Scan for existing files to build initial state"""
         self._initial_files.clear()
         self._seen_files.clear()
-        for folder in self.config.get_log_folders():
-            if folder.exists():
-                for file_path in folder.rglob('*'):
-                    if file_path.is_file() and file_path.suffix.lower() in ('.evtc', '.zevtc'):
-                        self._initial_files.add(str(file_path))
-                        self._seen_files.add(str(file_path))
-                        logger.debug(f"Existing file found: {file_path}")
+        self._pending_files.clear()
+        files, self._directory_mtimes = self._scan_all_folders()
+        self._initial_files.update(files)
+        self._seen_files.update(files)
+        self._last_full_scan = time.monotonic()
 
-    def start(self, initial_files: Optional[Set[str]] = None):
+    def start(self, initial_files: Optional[Set[str]] = None,
+              initial_directory_mtimes: Optional[dict[str, int]] = None):
         """Start polling for new files
 
         Args:
@@ -246,6 +306,12 @@ class PollingFileWatcher:
         else:
             self._initial_files = initial_files.copy()
             self._seen_files = initial_files.copy()
+            if initial_directory_mtimes is None:
+                _, self._directory_mtimes = self._scan_all_folders()
+            else:
+                self._directory_mtimes = initial_directory_mtimes.copy()
+            self._last_full_scan = time.monotonic()
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
@@ -255,71 +321,62 @@ class PollingFileWatcher:
         """Main polling loop"""
         while self._running:
             try:
-                # Occasionally clean up entries for files that no longer exist on disk
-                self._cleanup_missing_files()
                 self._check_for_new_files()
             except Exception as e:
                 logger.error(f"Error in polling loop: {e}")
 
-            time.sleep(self.poll_interval)
+            self._stop_event.wait(self.poll_interval)
 
-    def _cleanup_missing_files(self):
-        """Remove entries for files that no longer exist on disk.
+    def _directories_changed(self) -> bool:
+        """Cheap poll: one stat per known directory, not per historical log."""
+        configured = {
+            str(folder) for folder in self.config.get_log_folders()
+            if folder.exists()
+        }
+        known_roots = {
+            str(folder) for folder in self.config.get_log_folders()
+            if str(folder) in self._directory_mtimes
+        }
+        if configured != known_roots:
+            return True
 
-        This prevents unbounded growth when log files are archived or deleted.
-        """
-        if len(self._seen_files) <= self.MAX_PROCESSED_FILES:
-            return
-
-        to_remove = set()
-        for path_str in self._seen_files:
-            if not Path(path_str).exists():
-                to_remove.add(path_str)
-
-        for p in to_remove:
-            self._seen_files.discard(p)
-
-        # If still over cap after cleanup, log a warning (shouldn't happen in normal use)
-        if len(self._seen_files) > self.MAX_PROCESSED_FILES:
-            logger.warning(
-                f"_seen_files has {len(self._seen_files)} entries and exceeds cap; "
-                "log files may need manual cleanup"
-            )
+        for path_str, old_mtime in self._directory_mtimes.items():
+            try:
+                if Path(path_str).stat().st_mtime_ns != old_mtime:
+                    return True
+            except OSError:
+                return True
+        return False
 
     def _check_for_new_files(self):
         """Check folders for new files"""
-        for folder in self.config.get_log_folders():
-            if not folder.exists():
-                continue
-
-            for file_path in folder.rglob('*'):
-                if not file_path.is_file():
-                    continue
-
-                if file_path.suffix.lower() not in ('.evtc', '.zevtc'):
-                    continue
-
-                path_str = str(file_path)
-
-                # Skip if already seen
-                if path_str in self._seen_files:
-                    continue
-
-                # Skip initial files (existing when watcher started)
+        now = time.monotonic()
+        rescan_due = now - self._last_full_scan >= self.full_rescan_interval
+        if self._directories_changed() or rescan_due:
+            files, mtimes = self._scan_all_folders()
+            self._directory_mtimes = mtimes
+            self._last_full_scan = now
+            for path_str in sorted(files - self._seen_files):
                 if path_str in self._initial_files:
-                    logger.debug(f"Skipping existing file: {file_path.name}")
                     self._seen_files.add(path_str)
                     continue
+                self._pending_files.add(path_str)
 
-                # Check if file is stable (not being written)
-                if not self._is_file_stable(file_path):
-                    continue
+        self._check_pending_files()
 
-                # New file!
-                logger.info(f"New file detected (polling): {file_path.name}")
+    def _check_pending_files(self):
+        for path_str in tuple(self._pending_files):
+            file_path = Path(path_str)
+            if not file_path.exists():
+                self._pending_files.discard(path_str)
+                continue
+            if not self._is_file_stable(file_path):
+                continue
 
-                self._seen_files.add(path_str)
-                self.on_new_file(file_path)
+            logger.info(f"New file detected (polling): {file_path.name}")
+            self._pending_files.discard(path_str)
+            self._seen_files.add(path_str)
+            self.on_new_file(file_path)
 
     def _is_file_stable(self, file_path: Path, check_count: int = 3) -> bool:
         """Check if file is stable (size/mtime not changing)"""
@@ -331,8 +388,9 @@ class PollingFileWatcher:
                 if not file_path.exists():
                     return False
 
-                size = file_path.stat().st_size
-                mtime = file_path.stat().st_mtime
+                stat_result = file_path.stat()
+                size = stat_result.st_size
+                mtime = stat_result.st_mtime
 
                 if last_size != -1 and (size != last_size or mtime != last_mtime):
                     # File is still changing
@@ -352,6 +410,7 @@ class PollingFileWatcher:
     def stop(self):
         """Stop polling"""
         self._running = False
+        self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
             if self._thread.is_alive():
@@ -375,6 +434,7 @@ class FileWatcher:
         self._event_handler: Optional[LogFileHandler] = None
         self._polling_watcher: Optional[PollingFileWatcher] = None
         self._initial_files: Set[str] = set()
+        self._initial_directory_mtimes: dict[str, int] = {}
         self._running = False
         self._use_polling = False
         self._is_network: Optional[bool] = None  # Instance-level cache
@@ -385,12 +445,12 @@ class FileWatcher:
     def _scan_existing_files(self):
         """Scan for existing files to skip them initially"""
         self._initial_files.clear()
+        self._initial_directory_mtimes.clear()
         for folder in self.config.get_log_folders():
             if folder.exists():
-                for file_path in folder.rglob('*'):
-                    if file_path.is_file() and file_path.suffix.lower() in ('.evtc', '.zevtc'):
-                        self._initial_files.add(str(file_path))
-                        logger.debug(f"Existing file found: {file_path}")
+                files, mtimes = _scan_log_folder(folder)
+                self._initial_files.update(files)
+                self._initial_directory_mtimes.update(mtimes)
 
     def _is_network_share(self) -> bool:
         """Check if any log folder is on a network share (cached per instance)"""
@@ -451,7 +511,10 @@ class FileWatcher:
             self._on_new_file,
             self.poll_interval
         )
-        self._polling_watcher.start(self._initial_files)
+        self._polling_watcher.start(
+            self._initial_files,
+            self._initial_directory_mtimes,
+        )
 
     def _start_native(self):
         """Start the OS-native event watcher."""

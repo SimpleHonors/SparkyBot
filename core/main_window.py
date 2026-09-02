@@ -55,9 +55,7 @@ from core.gui_settings import ProcessFilesWidget, SettingsWindow
 from core import helplinks
 from core.helplinks import help_url as _help_url
 from core.raid_session import discover_logs
-# Stage-weighted progress shares the Raid Report page's weights — the run
-# panel's inline bar must behave exactly like the page's.
-from core.raid_report_tab import _STAGE_BASE, _STAGE_SPAN
+from core.raid_report_progress import progress_state
 from core.run_session import (
     RESUME_WINDOW_HOURS, STALE_HINT_HOURS, RunSession, collect_run_logs,
     format_elapsed,
@@ -1239,17 +1237,8 @@ class MainWindow(QMainWindow):
                          detail: str):
         if self.run_panel is None:
             return
-        base = _STAGE_BASE.get(stage, 0)
-        span = _STAGE_SPAN.get(stage, 0)
-        frac = (current / total) if total > 0 else 0
-        # Stage-weighted: only reaches 100% when the report is done.
-        self.run_progress.setValue(min(int(base + span * frac), 99))
-        messages = {
-            "parse": f"Reading fight {current} of {total}…",
-            "combine": "Crunching the numbers…",
-            "bake": "Building your page…",
-        }
-        msg = messages.get(stage)
+        percent, msg = progress_state(stage, current, total)
+        self.run_progress.setValue(percent)
         if msg:
             self.run_status_label.setText(msg)
 

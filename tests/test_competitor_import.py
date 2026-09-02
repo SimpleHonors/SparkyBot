@@ -108,7 +108,8 @@ def test_mzfightreporter_imports_every_safe_matching_preference(tmp_path):
         for setting in finding.settings
     }
     assert imported[("Thresholds", "minFightDuration")] == "27"
-    assert imported[("Thresholds", "maxUploadSize")] == "24"
+    assert ("Thresholds", "maxUploadSize") not in imported
+    assert ("Thresholds", "uploadLargeAfterParse") not in imported
     assert imported[("UI", "showDamage")] == "false"
     assert imported[("Behavior", "closeToTray")] == "true"
     assert imported[("Behavior", "maxParseMemory")] == "8192"
@@ -738,6 +739,123 @@ def test_existing_user_can_import_without_disabling_their_optional_features(tmp_
 
     assert config.enable_ai_analysis is True
     assert config.log_folder == str(logs)
+
+
+def test_unchecked_saved_channel_does_not_erase_an_existing_destination(tmp_path):
+    config = Config(tmp_path / "sparky.properties")
+    config.update("Discord", "discordWebhook", webhook(41, "old-fight"))
+    config.update("Discord", "discordWebhook2", webhook(42, "old-night"))
+    config.update("Discord", "discordWebhook3", webhook(43, "keep-third"))
+    config._load_values()
+    finding = CompetitorFinding(
+        app="Neighbor",
+        source_files=(tmp_path / "neighbor.json",),
+    )
+    plan = CompetitorImportPlan(
+        finding=finding,
+        log_folder=None,
+        parser_executable=None,
+        fight_webhook=ImportedWebhook(
+            "New fights", webhook(51, "new-fight"), "fight"
+        ),
+        nightly_webhook=ImportedWebhook(
+            "New nightly", webhook(52, "new-night"), "nightly"
+        ),
+    )
+
+    apply_competitor_import(config, plan, persist=False)
+
+    assert config.discord_webhook == webhook(51, "new-fight")
+    assert config.discord_webhook2 == webhook(52, "new-night")
+    assert config.discord_webhook3 == webhook(43, "keep-third")
+
+
+def test_selecting_only_nightly_route_does_not_turn_it_into_logspam(tmp_path):
+    config = Config(tmp_path / "sparky.properties")
+    finding = CompetitorFinding(
+        app="Neighbor",
+        source_files=(tmp_path / "neighbor.json",),
+    )
+    nightly = ImportedWebhook("Nightly", webhook(61, "night-only"), "nightly")
+    extra = ImportedWebhook("Saved", webhook(62, "saved-only"), "unknown")
+    plan = CompetitorImportPlan(
+        finding=finding,
+        log_folder=None,
+        parser_executable=None,
+        fight_webhook=None,
+        nightly_webhook=nightly,
+        extra_webhooks=(extra,),
+    )
+
+    apply_competitor_import(config, plan, persist=False)
+
+    assert config.discord_webhook == ""
+    assert config.discord_webhook2 == nightly.url
+    assert config.discord_webhook3 == extra.url
+    assert config.active_discord_webhook == 1
+    assert config.raid_report_discord_webhook == 2
+
+
+def test_fight_only_import_preserves_nightly_that_used_to_follow_fights(tmp_path):
+    config = Config(tmp_path / "sparky.properties")
+    old_shared = webhook(71, "old-shared")
+    config.update("Discord", "discordWebhook", old_shared)
+    config.update("Discord", "activeDiscordWebhook", "1")
+    config.update("Discord", "raidReportDiscordWebhook", "0")
+    config._load_values()
+    finding = CompetitorFinding(
+        app="Neighbor",
+        source_files=(tmp_path / "neighbor.json",),
+    )
+    new_fight = ImportedWebhook("New fights", webhook(72, "new-fight"), "fight")
+    plan = CompetitorImportPlan(
+        finding=finding,
+        log_folder=None,
+        parser_executable=None,
+        fight_webhook=new_fight,
+        nightly_webhook=None,
+    )
+
+    apply_competitor_import(config, plan, persist=False)
+
+    assert config.discord_webhook == old_shared
+    assert config.discord_webhook2 == new_fight.url
+    assert config.active_discord_webhook == 2
+    assert config.raid_report_discord_webhook == 1
+
+
+def test_apply_never_drops_selected_channels_behind_preserved_routes(tmp_path):
+    config = Config(tmp_path / "sparky.properties")
+    old_shared = webhook(81, "old-shared")
+    config.update("Discord", "discordWebhook", old_shared)
+    config.update("Discord", "activeDiscordWebhook", "1")
+    config.update("Discord", "raidReportDiscordWebhook", "0")
+    config._load_values()
+    finding = CompetitorFinding(
+        app="Neighbor",
+        source_files=(tmp_path / "neighbor.json",),
+    )
+    extras = tuple(
+        ImportedWebhook(
+            f"Saved {number}", webhook(81 + number, f"saved-{number}"), "unknown"
+        )
+        for number in range(1, 4)
+    )
+    plan = CompetitorImportPlan(
+        finding=finding,
+        log_folder=None,
+        parser_executable=None,
+        fight_webhook=None,
+        nightly_webhook=None,
+        extra_webhooks=extras,
+    )
+
+    with pytest.raises(CompetitorConfigError, match="unchecked existing routes"):
+        apply_competitor_import(config, plan, persist=False)
+
+    assert config.discord_webhook == old_shared
+    assert config.discord_webhook2 == ""
+    assert config.discord_webhook3 == ""
 
 
 def test_apply_rejects_unallowlisted_preferences_and_rolls_back(tmp_path):

@@ -129,7 +129,8 @@ class _FakeDiscord:
         self.calls = []
 
     def send_to_all(self, message="", embeds=None, icon_path=None,
-                    audio_bytes=None, audio_filename=None):
+                    audio_bytes=None, audio_filename=None,
+                    compact_single_message=False):
         self.calls.append({"message": message, "embeds": embeds})
         return 1
 

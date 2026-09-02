@@ -139,17 +139,21 @@ class EIUpdater:
     def _compare_versions(self, v1: str, v2: str) -> int:
         """Compare versions. Returns 1 if v1 > v2, 0 if equal, -1 if v1 < v2"""
         def parse(v):
-            return [int(x) for x in v.split('.')][:3]
+            import re
+            return [int(x) for x in re.findall(r"\d+", str(v))]
 
         try:
             p1, p2 = parse(v1), parse(v2)
+            width = max(len(p1), len(p2))
+            p1.extend([0] * (width - len(p1)))
+            p2.extend([0] * (width - len(p2)))
             for a, b in zip(p1, p2):
                 if a > b:
                     return 1
                 if a < b:
                     return -1
             return 0
-        except:
+        except (TypeError, ValueError):
             return 0
 
     def download_and_update(self, download_url: str, version: str = "", progress_callback=None) -> Tuple[bool, str]:

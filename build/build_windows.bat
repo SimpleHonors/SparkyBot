@@ -72,6 +72,14 @@ if errorlevel 1 (
 
 copy /Y dist\SparkyBotUpdater.exe dist\SparkyBot\SparkyBotUpdater.exe >nul
 
+REM --- Create the writable GW2EI destination without shipping local files ---
+echo.
+echo Creating empty dist\SparkyBot\GW2EI...
+if exist dist\SparkyBot\GW2EI rmdir /s /q dist\SparkyBot\GW2EI
+REM GW2EI is downloaded after user opt-in. Never copy a developer's local
+REM parser tree into a build; release packaging also excludes this directory.
+mkdir dist\SparkyBot\GW2EI
+
 echo.
 echo ============================================================
 echo  Build complete!

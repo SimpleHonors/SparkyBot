@@ -164,8 +164,9 @@ class FakePolling:
         self.callback = callback
         FakePolling.instances.append(self)
 
-    def start(self, initial_files=None):
+    def start(self, initial_files=None, initial_directory_mtimes=None):
         self.started_with = initial_files
+        self.started_with_directory_mtimes = initial_directory_mtimes
 
     def stop(self):
         self.stopped = True

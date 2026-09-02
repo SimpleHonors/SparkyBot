@@ -106,6 +106,9 @@ def make_runner(config):
         api_key="",
         guild_icon=getattr(config, "guild_icon", "") or "",
         augment_json=augment_json,
+        report_default_view=getattr(
+            config, "raidreport_default_view", "sparky"
+        ),
     )
 
 
@@ -117,24 +120,28 @@ def publish_result(config, result):
     """
     from core.report_publisher import publish_report
     from core.discord_bot import DiscordWebhookManager
-    from core.raid_report import make_publish_caption
+    from core.raid_report import make_publish_embed
 
     dm = DiscordWebhookManager(config)
     destination = config.get_raid_report_discord_webhook_index()
     bot = dm.get_webhook(destination)
     if bot is None:
         raise RuntimeError("No active Discord webhook configured")
-    caption = make_publish_caption(result)
+    embed = make_publish_embed(result)
+    embed["color"] = int(getattr(config, "embed_color", 0x5865F2))
 
     # Wrap-up embed / AI zingers / voice-recap mp3 are PARKED until the
     # recap is respec'd with data worth reporting (operator, 2026-07-19).
     # Deliberately not config-gated: configs written by older versions
     # have the old true defaults baked in (save() persists every key),
     # so a config flag cannot be trusted to keep this off.
+    if not bot.send_message("", embeds=[embed]):
+        raise RuntimeError("Discord overview post failed")
     publish_report(
         result.html_path,
         send_file=bot.send_file,
-        caption=caption,
+        caption="",
+        embed=None,
         always_zip=getattr(config, 'raidreport_always_zip', False),
     )
 
@@ -147,7 +154,9 @@ def build_raid_report_tab(config, parent=None):
         folders = config.get_log_folders()
         if not folders:
             return []
-        return discover_logs(folders[0])
+        # Capture sizes in the same directory walk.  Reading each Path.stat()
+        # later in the GUI causes one SMB round trip per table row.
+        return discover_logs(folders[0], include_size=True)
 
     def _select_session(logs):
         return current_session(logs)
@@ -221,6 +230,9 @@ def run_headless_raid_report(config):
         api_key="",
         guild_icon=getattr(config, "guild_icon", "") or "",
         augment_json=augment_json,
+        report_default_view=getattr(
+            config, "raidreport_default_view", "sparky"
+        ),
     )
 
     name = f"Combined Fight Log Summary {selected[0].timestamp:%Y-%m-%d} ({len(selected)} fights)"
