@@ -341,7 +341,11 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
             )
 
             # Send fight report immediately — no waiting on AI
-            success_count = discord.send_to_all(embeds=embeds, icon_path=icon_path)
+            success_count = discord.send_to_all(
+                embeds=embeds,
+                icon_path=icon_path,
+                compact_single_message=True,
+            )
 
         # AI analysis runs AFTER report is already posted
         ai_text = None
