@@ -4,6 +4,7 @@ from pathlib import Path
 from core.enemy_role_evidence import (
     collect_enemy_role_evidence,
     collect_player_skill_evidence,
+    collect_report_evidence,
 )
 
 
@@ -104,6 +105,36 @@ def test_bad_or_missing_json_is_ignored(tmp_path):
     result = collect_enemy_role_evidence([bad, tmp_path / "missing.json"])
     assert result["enemy_actor_appearances"] == 0
     assert result["professions"] == {}
+
+
+def test_combined_report_evidence_reads_each_json_once(tmp_path, monkeypatch):
+    path = tmp_path / "fight.json"
+    path.write_text(json.dumps({
+        "durationMS": 60_000,
+        "skillMap": {"s10": {"name": "Flux State"}},
+        "players": [{
+            "name": "Squad Player", "account": ":squad.1234",
+            "profession": "Amalgam",
+            "rotation": [{"id": 10, "skills": [{"castTime": 100}]}],
+        }],
+        "targets": [_target("Reaper", 2_000, 120_000, damage_skill=10)],
+    }), encoding="utf-8")
+    expected_enemy = collect_enemy_role_evidence([path])
+    expected_player = collect_player_skill_evidence([path])
+    real_read_text = Path.read_text
+    reads = []
+
+    def counted_read_text(self, *args, **kwargs):
+        reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counted_read_text)
+
+    enemy, player = collect_report_evidence([path])
+
+    assert reads == [path]
+    assert enemy == expected_enemy
+    assert player == expected_player
 
 
 def test_player_skill_casts_are_preserved_separately_from_hit_counts(tmp_path):

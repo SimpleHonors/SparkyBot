@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -21,8 +22,7 @@ from core.raid_session import (
 from core.report_bake import merge_augmented_tiddlers, summarize_tiddlers
 from core.report_viewer import convert_report_file
 from core.enemy_role_evidence import (
-    collect_enemy_role_evidence,
-    collect_player_skill_evidence,
+    collect_report_evidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,8 @@ class RaidReportRunner:
                  cancelled=None,             # callable() -> bool
                  augment_json=None,         # callable(Path) -> dict | None
                  viewer_factory=None,      # callable() -> Path (lazy resolve)
-                 report_default_view="sparky"):
+                 report_default_view="sparky",
+                 parse_concurrency=4):
         self.log_folder = Path(log_folder)
         self.cache = cache
         self.parse_log = parse_log
@@ -86,6 +87,7 @@ class RaidReportRunner:
         self.augment_json = augment_json
         self._viewer_factory = viewer_factory
         self.report_default_view = report_default_view
+        self.parse_concurrency = max(1, min(int(parse_concurrency), 8))
 
     def _emit(self, stage: str, done: int, total: int, msg: str = ""):
         if self._progress:
@@ -94,6 +96,60 @@ class RaidReportRunner:
     def _check_cancelled(self):
         if self._cancelled and self._cancelled():
             raise RaidReportCancelled()
+
+    def _parse_missing_logs(self, logs: list[LogInfo], *,
+                            total_selected: int,
+                            done_already: int) -> tuple[list[Path], list[str]]:
+        """Parse cache misses concurrently and preserve selection order."""
+        stored_by_index: dict[int, Path] = {}
+        failed_indexes: set[int] = set()
+
+        def parse_one(index_and_log):
+            index, log = index_and_log
+            result = self.parse_log(log.path)
+            if not isinstance(result, Path):
+                return index, log, None
+            stored = self.cache.store(
+                log.path, result, self.ei_version,
+                self.settings_fingerprint,
+            )
+            return index, log, stored
+
+        worker_count = min(self.parse_concurrency, len(logs))
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="raid-report-parse",
+        ) as executor:
+            futures = {
+                executor.submit(parse_one, item): item
+                for item in enumerate(logs)
+            }
+            completed = 0
+            for future in as_completed(futures):
+                self._check_cancelled()
+                index, log, stored = future.result()
+                completed += 1
+                self._emit(
+                    "parse", done_already + completed, total_selected,
+                    f"Parsing {log.path.stem}",
+                )
+                if stored is None:
+                    logger.warning("Failed to parse log: %s", log.path)
+                    failed_indexes.add(index)
+                else:
+                    stored_by_index[index] = stored
+
+        stored_paths = [
+            stored_by_index[index]
+            for index in range(len(logs))
+            if index in stored_by_index
+        ]
+        failed_names = [
+            logs[index].path.stem
+            for index in range(len(logs))
+            if index in failed_indexes
+        ]
+        return stored_paths, failed_names
 
     def select(self, mode: str = "recent") -> list[LogInfo]:
         """Return logs for the requested selection mode.
@@ -151,22 +207,13 @@ class RaidReportRunner:
 
         if to_parse:
             done_already = len(hits)
-            for i, log in enumerate(to_parse, start=1):
-                self._check_cancelled()
-                # Count against ALL selected fights, with previously-read
-                # ones already complete — "4 of 4" when 9 are selected
-                # reads like fights went missing.
-                self._emit("parse", done_already + i, total_selected,
-                           f"Parsing {log.path.stem}")
-                result = self.parse_log(log.path)
-                if isinstance(result, Path):
-                    stored = self.cache.store(
-                        log.path, result, self.ei_version,
-                        self.settings_fingerprint)
-                    json_paths.append(stored)
-                else:
-                    logger.warning("Failed to parse log: %s", log.path)
-                    failed_names.append(log.path.stem)
+            parsed_paths, parse_failures = self._parse_missing_logs(
+                to_parse,
+                total_selected=total_selected,
+                done_already=done_already,
+            )
+            json_paths.extend(parsed_paths)
+            failed_names.extend(parse_failures)
 
         if not json_paths:
             raise RuntimeError(
@@ -188,10 +235,10 @@ class RaidReportRunner:
             cleanup_temp = False
         input_dir.mkdir(parents=True, exist_ok=True)
 
-        for jp in json_paths:
+        self._emit("collect", 0, len(json_paths))
+        for index, jp in enumerate(json_paths, start=1):
             shutil.copy2(jp, input_dir)
-
-        self._emit("collect", 1, 1)
+            self._emit("collect", index, len(json_paths))
 
         self._check_cancelled()
 
@@ -206,12 +253,14 @@ class RaidReportRunner:
                 "check your internet connection and try again."
             )
         if self._viewer_factory:
-            self._emit("resolve", 1, 1, "Resolving stats viewer...")
+            self._emit("resolve", 0, 1, "Resolving stats viewer...")
             self.viewer_html = self._viewer_factory()
+            self._emit("resolve", 1, 1, "Stats viewer ready")
         self.combiner.write_run_config(
             run_dir, input_dir,
             self.guild_name, self.guild_id, self.api_key,
         )
+        self._emit("combine", 0, 1)
         dragdrop_json = self.combiner.run(
             input_dir,
             run_dir,
@@ -222,7 +271,7 @@ class RaidReportRunner:
 
         self._check_cancelled()
         if self.augment_json:
-            self._emit("augment", 1, 1)
+            self._emit("augment", 0, 1)
             try:
                 original_tiddlers = json.loads(
                     dragdrop_json.read_text(encoding="utf-8")
@@ -242,10 +291,14 @@ class RaidReportRunner:
                     "report will ship unaugmented",
                     exc_info=True,
                 )
+            self._emit("augment", 1, 1)
 
         self._check_cancelled()
-        self._emit("view", 1, 1, "Building report views...")
+        self._emit("view", 0, 1, "Building report views...")
         try:
+            enemy_role_evidence, player_skill_evidence = (
+                collect_report_evidence(json_paths)
+            )
             current_tiddlers = json.loads(
                 dragdrop_json.read_text(encoding="utf-8")
             )
@@ -255,9 +308,10 @@ class RaidReportRunner:
                 standalone_html,
                 current_tiddlers,
                 default_view=self.report_default_view,
-                enemy_role_evidence=collect_enemy_role_evidence(json_paths),
-                player_skill_evidence=collect_player_skill_evidence(json_paths),
+                enemy_role_evidence=enemy_role_evidence,
+                player_skill_evidence=player_skill_evidence,
             )
+            self._emit("view", 1, 1, "Report views ready")
         except Exception as exc:
             logger.error("Report viewer build failed", exc_info=True)
             raise RuntimeError(

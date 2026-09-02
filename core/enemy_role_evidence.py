@@ -281,63 +281,52 @@ def _damage_skill_counts(target, skill_map):
     return counts
 
 
-def collect_player_skill_evidence(json_paths):
-    """Aggregate squad-player skill casts from detailed EI JSON paths.
-
-    The combined Top Stats export retains connected and total damage-hit counts
-    but not cast counts. Detailed EI JSON still has each player's rotation, so
-    keeping the two sources separate explains pulsing skills without pretending
-    either measurement is an observed pull event.
-    """
-    players = {}
-    for path in json_paths:
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+def _accumulate_player_skill_evidence(data, players):
+    skill_map = data.get("skillMap") or {}
+    buff_map = data.get("buffMap") or {}
+    for player in data.get("players") or []:
+        if not isinstance(player, dict):
             continue
-        skill_map = data.get("skillMap") or {}
-        buff_map = data.get("buffMap") or {}
-        for player in data.get("players") or []:
-            if not isinstance(player, dict):
-                continue
-            # Elite Insights keeps nearby friendly players in the ``players``
-            # collection for WvW and marks them explicitly.  They are useful
-            # combat context, but they are not valid squad-comparison rows.
-            if player.get("notInSquad") or player.get("friendlyNPC"):
-                continue
-            name = str(player.get("name") or "").strip()
-            account = str(player.get("account") or "").strip().lstrip(":")
-            identity = (account or name).casefold()
-            if not identity:
-                continue
-            casts, rotation_links = _rotation_evidence(player, skill_map)
-            row = players.setdefault(identity, {
-                "account": account or None,
-                "names": set(),
-                "professions": set(),
-                "fight_appearances": 0,
-                "skill_casts": Counter(),
-                "weapons": set(),
-                "rotation_links": Counter(),
-                "consumables": {},
-                "traits": {},
-            })
-            if name:
-                row["names"].add(name)
-            profession = str(player.get("profession") or "").strip()
-            if profession:
-                row["professions"].add(profession)
-            row["fight_appearances"] += 1
-            row["skill_casts"].update(casts)
-            row["weapons"].update(_weapon_names(player))
-            row["rotation_links"].update(rotation_links)
-            for consumable in _consumable_rows(player, buff_map):
-                existing = row["consumables"].setdefault(consumable["id"], {**consumable, "observations": 0})
-                existing["observations"] += consumable["observations"]
-            for trait in _trait_observations(player, skill_map):
-                existing = row["traits"].setdefault(trait["observed_skill_id"], {**trait, "appearances": 0})
-                existing["appearances"] += 1
+        # Elite Insights keeps nearby friendly players in the ``players``
+        # collection for WvW and marks them explicitly.  They are useful
+        # combat context, but they are not valid squad-comparison rows.
+        if player.get("notInSquad") or player.get("friendlyNPC"):
+            continue
+        name = str(player.get("name") or "").strip()
+        account = str(player.get("account") or "").strip().lstrip(":")
+        identity = (account or name).casefold()
+        if not identity:
+            continue
+        casts, rotation_links = _rotation_evidence(player, skill_map)
+        row = players.setdefault(identity, {
+            "account": account or None,
+            "names": set(),
+            "professions": set(),
+            "fight_appearances": 0,
+            "skill_casts": Counter(),
+            "weapons": set(),
+            "rotation_links": Counter(),
+            "consumables": {},
+            "traits": {},
+        })
+        if name:
+            row["names"].add(name)
+        profession = str(player.get("profession") or "").strip()
+        if profession:
+            row["professions"].add(profession)
+        row["fight_appearances"] += 1
+        row["skill_casts"].update(casts)
+        row["weapons"].update(_weapon_names(player))
+        row["rotation_links"].update(rotation_links)
+        for consumable in _consumable_rows(player, buff_map):
+            existing = row["consumables"].setdefault(consumable["id"], {**consumable, "observations": 0})
+            existing["observations"] += consumable["observations"]
+        for trait in _trait_observations(player, skill_map):
+            existing = row["traits"].setdefault(trait["observed_skill_id"], {**trait, "appearances": 0})
+            existing["appearances"] += 1
 
+
+def _finish_player_skill_evidence(players):
     return {
         "source": "detailed_gw2ei_json_player_rotations",
         "players": [
@@ -363,45 +352,54 @@ def collect_player_skill_evidence(json_paths):
     }
 
 
-def collect_enemy_role_evidence(json_paths):
-    """Return profession-level role signals from detailed EI JSON paths.
+def collect_player_skill_evidence(json_paths):
+    """Aggregate squad-player skill casts from detailed EI JSON paths.
 
-    Bad/missing/non-detailed files are ignored.  The function is deliberately
-    pure and makes no network calls.
+    The combined Top Stats export retains connected and total damage-hit counts
+    but not cast counts. Detailed EI JSON still has each player's rotation, so
+    keeping the two sources separate explains pulsing skills without pretending
+    either measurement is an observed pull event.
     """
-    actors = []
+    players = {}
     for path in json_paths:
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
-        skill_map = data.get("skillMap") or {}
-        buff_map = data.get("buffMap") or {}
-        duration_ms = int(data.get("durationMS") or 0)
-        for target in data.get("targets") or []:
-            if not isinstance(target, dict) or target.get("name", "").startswith("Dummy"):
-                continue
-            profession = target.get("profession") or str(target.get("name") or "").split(" ", 1)[0]
-            if not profession:
-                continue
-            dps_row = _first_dict(target.get("dpsAll"))
-            active = target.get("activeTimes") or []
-            active_ms = int(active[0] if active and isinstance(active[0], (int, float)) else duration_ms)
-            rotation = _rotation_counts(target, skill_map)
-            damage_skills = _damage_skill_counts(target, skill_map)
-            consumables = _consumable_rows(target, buff_map, enemy=True)
-            actors.append({
-                "profession": profession,
-                "dps": float(dps_row.get("dps") or 0),
-                "damage": int(dps_row.get("damage") or 0),
-                "active_ms": active_ms,
-                "rotation": rotation,
-                "damage_skills": damage_skills,
-                "consumables": consumables,
-                "consumable_role_signal": _consumable_role_signal(consumables),
-                "traits": _trait_observations(target, skill_map),
-            })
+        _accumulate_player_skill_evidence(data, players)
+    return _finish_player_skill_evidence(players)
 
+
+def _accumulate_enemy_role_evidence(data, actors):
+    skill_map = data.get("skillMap") or {}
+    buff_map = data.get("buffMap") or {}
+    duration_ms = int(data.get("durationMS") or 0)
+    for target in data.get("targets") or []:
+        if not isinstance(target, dict) or target.get("name", "").startswith("Dummy"):
+            continue
+        profession = target.get("profession") or str(target.get("name") or "").split(" ", 1)[0]
+        if not profession:
+            continue
+        dps_row = _first_dict(target.get("dpsAll"))
+        active = target.get("activeTimes") or []
+        active_ms = int(active[0] if active and isinstance(active[0], (int, float)) else duration_ms)
+        rotation = _rotation_counts(target, skill_map)
+        damage_skills = _damage_skill_counts(target, skill_map)
+        consumables = _consumable_rows(target, buff_map, enemy=True)
+        actors.append({
+            "profession": profession,
+            "dps": float(dps_row.get("dps") or 0),
+            "damage": int(dps_row.get("damage") or 0),
+            "active_ms": active_ms,
+            "rotation": rotation,
+            "damage_skills": damage_skills,
+            "consumables": consumables,
+            "consumable_role_signal": _consumable_role_signal(consumables),
+            "traits": _trait_observations(target, skill_map),
+        })
+
+
+def _finish_enemy_role_evidence(actors):
     meaningful = [row["dps"] for row in actors if row["active_ms"] >= 15_000 and row["damage"] > 0]
     median_dps = statistics.median(meaningful) if meaningful else 0.0
     upper_count = max(1, math.ceil(len(meaningful) / 3))
@@ -497,3 +495,36 @@ def collect_enemy_role_evidence(json_paths):
             "appearance is not enough for a relative damage role."
         ),
     }
+
+
+def collect_enemy_role_evidence(json_paths):
+    """Return profession-level role signals from detailed EI JSON paths.
+
+    Bad/missing/non-detailed files are ignored. The function is deliberately
+    pure and makes no network calls.
+    """
+    actors = []
+    for path in json_paths:
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        _accumulate_enemy_role_evidence(data, actors)
+    return _finish_enemy_role_evidence(actors)
+
+
+def collect_report_evidence(json_paths):
+    """Collect enemy and squad evidence while decoding each fight once."""
+    actors = []
+    players = {}
+    for path in json_paths:
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        _accumulate_enemy_role_evidence(data, actors)
+        _accumulate_player_skill_evidence(data, players)
+    return (
+        _finish_enemy_role_evidence(actors),
+        _finish_player_skill_evidence(players),
+    )

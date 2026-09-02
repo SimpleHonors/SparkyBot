@@ -22,6 +22,7 @@ from PySide6.QtGui import QDesktopServices
 
 from core import theme
 from core.raid_report import ReportResult
+from core.raid_report_progress import progress_state
 from core.raid_session import LogInfo
 
 logger = logging.getLogger(__name__)
@@ -33,11 +34,6 @@ _COL_CHECK = 0
 _COL_DATE = 1
 _COL_FIGHT = 2
 _COL_SIZE = 3
-
-# Overall progress: each stage owns a slice of the bar so it never sits
-# at 100% while work is still running.
-_STAGE_BASE = {"plan": 0, "parse": 5, "combine": 70, "bake": 85}
-_STAGE_SPAN = {"plan": 5, "parse": 65, "combine": 15, "bake": 15}
 
 class _SortableItem(QTableWidgetItem):
     """Sorts by the numeric _ROLE_SORT payload, not the display text."""
@@ -439,18 +435,8 @@ class RaidReportTab(QWidget):
     @Slot(str, int, int, str)
     def _on_progress(self, stage: str, current: int, total: int,
                      detail: str):
-        base = _STAGE_BASE.get(stage, 0)
-        span = _STAGE_SPAN.get(stage, 0)
-        frac = (current / total) if total > 0 else 0
-        # Stage-weighted: the bar only reaches 100% when the report is done.
-        self.progress_bar.setValue(min(int(base + span * frac), 99))
-
-        messages = {
-            "parse": f"Reading fight {current} of {total}…",
-            "combine": "Crunching the numbers…",
-            "bake": "Building your page…",
-        }
-        msg = messages.get(stage)
+        percent, msg = progress_state(stage, current, total)
+        self.progress_bar.setValue(percent)
         if msg:
             self.status_label.setText(msg)
 
