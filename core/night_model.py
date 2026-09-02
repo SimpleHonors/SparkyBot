@@ -342,8 +342,12 @@ def _parse_session(tiddlers, stat_tables=None):
     if out["tag"]:
         out["date"] = out["tag"][:10]
         match = re.match(r"^\d{4}-\d{2}-\d{2}-(\d{2}):", out["tag"])
-        if match and 5 <= int(match.group(1)) < 12:
-            out["period"] = "morning"
+        if match:
+            hour = int(match.group(1))
+            if 5 <= hour < 12:
+                out["period"] = "morning"
+            elif 12 <= hour < 17:
+                out["period"] = "afternoon"
 
     tag = out["tag"]
     ts = _find_tiddler(tiddlers, "-Tag_Stats") if tag else None

@@ -117,6 +117,32 @@ def test_morning_run_title_uses_winning_commander_and_start_period():
     assert model["session"]["report_title"] == "Mohr’s morning"
 
 
+@pytest.mark.parametrize(
+    ("hour", "expected_period"),
+    [
+        ("04:59:00", "night"),
+        ("05:00:00", "morning"),
+        ("11:59:00", "morning"),
+        ("12:00:00", "afternoon"),
+        ("16:59:00", "afternoon"),
+        ("17:00:00", "night"),
+    ],
+)
+def test_run_title_uses_human_time_of_day_boundaries(hour, expected_period):
+    model = build_night_model(_commander_selection_tiddlers(
+        [
+            '|<span data-tooltip="Mohr.1111">Mohr</span>|{{Druid}}|8|0|0|0|0|0|',
+        ],
+        [
+            "|Mohr.1111|Mohr|{{Druid}}|8|900| |",
+        ],
+        tag=f"2026-08-31-{hour}",
+    ))
+
+    assert model["session"]["period"] == expected_period
+    assert model["session"]["report_title"] == f"Mohr’s {expected_period}"
+
+
 def test_session_commander_tie_uses_most_combat_time():
     model = build_night_model(_commander_selection_tiddlers(
         [
