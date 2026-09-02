@@ -8,15 +8,19 @@ native Simple skin), viewer choice in localStorage, under Discord limits.
 Payload = the real Top_Stats_Index.html viewer + SYNTHETIC fight tiddlers
 sized like a big raid night (60 fights). Synthetic is stated everywhere.
 """
-import base64, gzip, json, random, sys, time
+import base64, gzip, json, os, random, sys, time
 from pathlib import Path
 
-SBROOT = "/tmp/claude-0/-root/2c233635-e4bd-40c9-95f5-e97d393d7637/scratchpad/sbwt-welcome"
-sys.path.insert(0, SBROOT)
+SBROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SBROOT))
 from core.report_bake import _append_tiddler_block  # noqa: E402
 
-VIEWER = Path("/mnt/projects/ai_toolbox/SparkyBot/dev/Top_Stats_Index.html")
-OUT_DIR = Path("/mnt/projects/ai_toolbox/SparkyBot-releases/previews")
+VIEWER = Path(os.environ.get(
+    "SPARKYBOT_VIEWER_HTML", SBROOT / "dev" / "Top_Stats_Index.html"
+))
+OUT_DIR = Path(os.environ.get(
+    "SPARKYBOT_PREVIEW_DIR", SBROOT / "dist" / "viewer-previews"
+))
 DATE = "20260830"
 N_FIGHTS = 60
 random.seed(42)

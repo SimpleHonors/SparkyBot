@@ -46,7 +46,7 @@ def test_session_damage_exposes_total_dps_fight_time_and_fights_for_sorting():
             "caption": "Damage",
             "text": (
                 "|Party|Name|Prof|FightTime|Target_Damage|Target_Damage_PS|h\n"
-                "|1|Aja Skysplinter|{{Paragon}} Par|700.5|1,400,000|1,998.57|"
+                "|1|Player Example|{{Paragon}} Par|700.5|1,400,000|1,998.57|"
             ),
         },
         {
@@ -54,7 +54,7 @@ def test_session_damage_exposes_total_dps_fight_time_and_fights_for_sorting():
             "caption": "Attendance",
             "text": (
                 "|Account|Name|Profession|Num Fights|Active Time|Status|h\n"
-                "|Dlaxer.1428|Aja Skysplinter|{{Paragon}}|12|701||"
+                "|Example.1234|Player Example|{{Paragon}}|12|701||"
             ),
         },
     )

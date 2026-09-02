@@ -27,7 +27,7 @@ def test_nightly_discord_embed_is_brief_but_answers_the_run_basics(tmp_path):
     rendered = json.dumps(embed)
 
     assert embed["title"] == "\U0001f4ca Raid Report 2026-08-10"
-    assert "Mohr Shadows" in rendered
+    assert "Commander Example" in rendered
     assert "8" in rendered and "fights" in rendered
     assert "320" in rendered and "417" in rendered
     assert "8.21" in rendered
@@ -108,7 +108,7 @@ def test_real_publish_path_sends_summary_before_separate_attachment(
 
     assert [event[0] for event in events] == ["summary", "report"]
     summary_embed = events[0][2][0]
-    assert summary_embed["description"] == "Commanded by **Mohr Shadows**"
+    assert summary_embed["description"] == "Commanded by **Commander Example**"
     assert summary_embed["color"] == 0x123456
     assert sent["path"] == html_path
     assert sent["send_file"] is bot.send_file

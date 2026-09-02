@@ -63,12 +63,12 @@ def test_stability_uptime_is_percentage_band(aug10, jul18):
 
 def test_known_tops(aug10):
     # Aug 10 night: healer damage/healing order and the top support
-    # contributors are stable facts of this real fixture.
-    assert aug10["highlights"]["healing"][0]["account"] == "Pho.2175"
+    # contributors are stable facts of this anonymized fixture.
+    assert aug10["highlights"]["healing"][0]["account"] == "SampleAcct033.0033"
     assert aug10["highlights"]["cleanses"][0]["account"] == (
-        "DenaDeathbringer.8419")
-    assert aug10["highlights"]["strips"][0]["account"] == "mjdarknight.8065"
-    assert aug10["highlights"]["kills"][0]["account"] == "jreezy.3105"
+        "SampleAcct011.0011")
+    assert aug10["highlights"]["strips"][0]["account"] == "SampleAcct065.0065"
+    assert aug10["highlights"]["kills"][0]["account"] == "SampleAcct063.0063"
 
 
 def test_missing_source_warns_and_empties_others_intact(aug10):
@@ -102,17 +102,16 @@ def test_boards_have_unique_players(fixture, request):
 
 
 def test_jul18_classic_anchors(jul18):
-    # Classic report headline values for the 2026-07-18 night (gule's
-    # visual-review anchors).
+    # Classic report headline values for the 2026-07-18 anonymized fixture.
     top = jul18["highlights"]["healing"][0]
-    assert (top["account"], top["value"]) == ("sera.7859", 10407038)
+    assert (top["account"], top["value"]) == ("SampleAcct071.0071", 10407038)
     dc = jul18["highlights"]["down_contribution"]
     assert dc[0]["value"] == 2307384
     # raw damage-scale column, never the 22.99%-style pct column: every
     # down-contribution row is damage-scale big.
     assert all(r["value"] >= 100_000 for r in dc)
     dupes = [r["account"] for r in dc
-             if r["account"] in ("ezekiel.7034", "Hendrix.9605")]
+             if r["account"] in ("SampleAcct057.0057", "SampleAcct019.0019")]
     assert dupes == [] or all(dc.count(r) == 1 for r in dupes)
 
 

@@ -8,8 +8,8 @@
 Usage (run from a scratchable copy, not the noexec share):
     QT_QPA_PLATFORM=offscreen python scripts/render_theme_previews.py
 
-Outputs land in /mnt/projects/ai_toolbox/SparkyBot-releases/previews/
-(existing files with the same names are overwritten).
+Outputs land in ``dist/theme-previews`` by default. Set
+``SPARKYBOT_PREVIEW_DIR`` to use a different destination.
 """
 
 import os
@@ -30,7 +30,10 @@ from core.gui_settings import SettingsWindow
 from core.main_window import MainWindow
 from core.settings_dialog import CAT_APPLICATION, SettingsDialog
 
-PREVIEW_DIR = Path("/mnt/projects/ai_toolbox/SparkyBot-releases/previews")
+PREVIEW_DIR = Path(os.environ.get(
+    "SPARKYBOT_PREVIEW_DIR",
+    Path(__file__).resolve().parents[1] / "dist" / "theme-previews",
+))
 WIZARD_SIZE = (760, 620)
 MAIN_SIZE = (1000, 680)
 SETTINGS_SIZE = (780, 560)

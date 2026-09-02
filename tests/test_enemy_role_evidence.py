@@ -153,8 +153,8 @@ def test_player_skill_casts_are_preserved_separately_from_hit_counts(tmp_path):
             "s11": {"name": "Abyssal Blot"},
         },
         "players": [{
-            "name": "Thornzyz",
-            "account": ":jreezy.3105",
+            "name": "Sample Hero ACK",
+            "account": ":SampleAcct063.0063",
             "profession": "Amalgam",
             "weapons": ["Hammer", "2Hand", "Pistol", "Shield", "Unknown"],
             "rotation": [
@@ -172,8 +172,8 @@ def test_player_skill_casts_are_preserved_separately_from_hit_counts(tmp_path):
 
     assert result["source"] == "detailed_gw2ei_json_player_rotations"
     assert result["players"] == [{
-        "account": "jreezy.3105",
-        "names": ["Thornzyz"],
+        "account": "SampleAcct063.0063",
+        "names": ["Sample Hero ACK"],
         "professions": ["Amalgam"],
         "fight_appearances": 1,
         "skill_casts": {"Flux State": 3, "Abyssal Blot": 2},

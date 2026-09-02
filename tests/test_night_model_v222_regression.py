@@ -49,8 +49,8 @@ def test_aug10_totals(aug10):
 def test_aug10_session(aug10):
     assert aug10["session"]["tag"] == "2026-08-10-20:27:05"
     assert aug10["session"]["date"] == "2026-08-10"
-    assert aug10["session"]["commander"] == "Mohr Shadows"
-    assert aug10["session"]["commander_account"] == "Mohrr.8294"
+    assert aug10["session"]["commander"] == "Commander Example"
+    assert aug10["session"]["commander_account"] == "Commander.0001"
     assert aug10["session"]["total_duration"] == "31m 00s 871ms"
 
 
@@ -97,7 +97,7 @@ def test_aug10_stat_tables_non_empty(aug10):
 def test_aug10_poison_non_empty(aug10):
     assert aug10["poison"]
     top = aug10["poison"][0]
-    assert top["name"] == "Simple Deathly"
+    assert top["name"] == "Player Alpha"
     assert top["prof"] == "Scourge"
     assert top["apps"] == 1014
     assert top["apps_per_min"] > 0

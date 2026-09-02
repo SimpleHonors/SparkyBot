@@ -49,11 +49,11 @@ def test_aug10_totals(aug10):
 def test_aug10_session(aug10):
     assert aug10["session"]["tag"] == "2026-08-10-20:27:05"
     assert aug10["session"]["date"] == "2026-08-10"
-    assert aug10["session"]["commander"] == "Mohr Shadows"
-    assert aug10["session"]["commander_account"] == "Mohrr.8294"
+    assert aug10["session"]["commander"] == "Commander Example"
+    assert aug10["session"]["commander_account"] == "Commander.0001"
     assert aug10["session"]["total_duration"] == "31m 00s 871ms"
     assert aug10["session"]["period"] == "night"
-    assert aug10["session"]["report_title"] == "Mohr Shadows’s night"
+    assert aug10["session"]["report_title"] == "Commander Example’s night"
 
 
 def _commander_selection_tiddlers(tag_rows, attendance_rows,
@@ -234,16 +234,20 @@ def test_aug10_stat_tables_non_empty(aug10):
     assert all(row["rate"] == row["metrics"]["might"] for row in uptime["rows"])
     pulls = next(t for t in aug10["stat_tables"] if t["stat"] == "Outgoing Pulls")
     assert pulls["value_label"] == "Pull-skill connected hits"
-    tad = next(row for row in pulls["rows"] if row["name"] == "Tad Bit Blunt")
-    assert tad["value"] == 28
-    assert tad["pull_skill_connected_hits"] == 28
-    assert tad["pull_skill_logged_hit_events"] == 40
-    assert tad["pull_skill_connection_rate"] == pytest.approx(70.0)
-    thornzyz_pull = next(row for row in pulls["rows"] if row["name"] == "Thornzyz")
-    assert thornzyz_pull["total"] == 246
-    assert thornzyz_pull["pull_skill_connected_hits"] == 246
-    assert thornzyz_pull["pull_skill_logged_hit_events"] == 340
-    assert thornzyz_pull["pull_skill_connection_rate"] == pytest.approx(72.3529)
+    logged_pull_player = next(
+        row for row in pulls["rows"] if row["name"] == "Sample Hero AAI"
+    )
+    assert logged_pull_player["value"] == 28
+    assert logged_pull_player["pull_skill_connected_hits"] == 28
+    assert logged_pull_player["pull_skill_logged_hit_events"] == 40
+    assert logged_pull_player["pull_skill_connection_rate"] == pytest.approx(70.0)
+    detailed_pull_player = next(
+        row for row in pulls["rows"] if row["name"] == "Sample Hero ACK"
+    )
+    assert detailed_pull_player["total"] == 246
+    assert detailed_pull_player["pull_skill_connected_hits"] == 246
+    assert detailed_pull_player["pull_skill_logged_hit_events"] == 340
+    assert detailed_pull_player["pull_skill_connection_rate"] == pytest.approx(72.3529)
     assert all(
         "pull" not in award["category"].casefold()
         for award in aug10["night_mvps"]
@@ -255,15 +259,21 @@ def test_aug10_stat_tables_non_empty(aug10):
     assert resurrect["value_label"] == "Resurrection output"
     assert resurrect["rows"][0]["value"] > 0
     mechanics = next(t for t in aug10["stat_tables"] if t["source_key"] == "Mechanics")
-    thornzyz = next(row for row in mechanics["rows"] if row["account"] == "jreezy.3105")
-    assert thornzyz["name"] == "Thornzyz"
-    assert thornzyz["profession"] == "Amalgam"
+    mechanics_player = next(
+        row
+        for row in mechanics["rows"]
+        if row["account"] == "SampleAcct063.0063"
+    )
+    assert mechanics_player["name"] == "Sample Hero ACK"
+    assert mechanics_player["profession"] == "Amalgam"
     attendance = next(t for t in aug10["stat_tables"] if t["stat"] == "Attendance")
     assert attendance["show_fights_column"] is False
     distant = next(
-        row for row in attendance["rows"] if row["account"] == "Mighty Schmoo.6018"
+        row
+        for row in attendance["rows"]
+        if row["account"] == "SampleAcct028.0028"
     )
-    assert distant["name"] == "Distant Deadlights"
+    assert distant["name"] == "Sample Hero ABB"
     assert distant["profession"] == "Luminary"
     hidden_sources = {"Conditions-In", "Debuffs-In", "Support-Summary", "Offensive-Summary"}
     assert all(
@@ -282,8 +292,8 @@ def test_aug10_stat_tables_non_empty(aug10):
 def test_pull_table_combines_connected_hits_logged_hits_and_detailed_casts():
     evidence = {
             "players": [{
-                "account": "jreezy.3105",
-                "names": ["Thornzyz"],
+                "account": "SampleAcct063.0063",
+                "names": ["Sample Hero ACK"],
                 "weapons": ["Hammer"],
                 "skill_casts": {"Flux State": 12},
             }],
@@ -296,17 +306,19 @@ def test_pull_table_combines_connected_hits_logged_hits_and_detailed_casts():
         table for table in model["stat_tables"]
         if table["source_key"] == "Pull-Skills"
     )
-    thornzyz = next(row for row in pulls["rows"] if row["name"] == "Thornzyz")
+    detailed_player = next(
+        row for row in pulls["rows"] if row["name"] == "Sample Hero ACK"
+    )
 
-    assert thornzyz["pull_skill_casts"] == 12
-    assert thornzyz["pull_skill_connected_hits_per_cast"] == pytest.approx(20.5)
+    assert detailed_player["pull_skill_casts"] == 12
+    assert detailed_player["pull_skill_connected_hits_per_cast"] == pytest.approx(20.5)
     assert model["player_skill_evidence"] == evidence
 
 
 def test_aug10_poison_non_empty(aug10):
     assert aug10["poison"]
     top = aug10["poison"][0]
-    assert top["name"] == "Simple Deathly"
+    assert top["name"] == "Player Alpha"
     assert top["prof"] == "Scourge"
     assert top["apps"] == 1014
     assert top["apps_per_min"] > 0
@@ -319,10 +331,10 @@ def test_aug10_high_scores(aug10):
     assert blocks[0]["rows"]
     first = blocks[0]["rows"][0]
     assert first["score"] == 53153
-    assert first["name"] == "Dont Nerf My Mech"
+    assert first["name"] == "Sample Hero ABK"
     assert first["profession"] == "Holosmith"
     assert first["fight"] == 3
-    assert first["cells"] == ["Dont Nerf My Mech", "Holosmith", "Fight 3"]
+    assert first["cells"] == ["Sample Hero ABK", "Holosmith", "Fight 3"]
     skill = blocks[1]["rows"][0]
     assert skill["details"] == ["Rocket"]
 
@@ -429,11 +441,11 @@ def test_player_damage_by_skill_tables_are_modeled_and_duplicate_names_combine()
         {
             "title": (
                 "2026-08-31-20:43:58-Damage-By-Skill-Amalgam-"
-                "Simple Gadget-SimpleHonors.6320"
+                "Simple Gadget-Alpha.0002"
             ),
             "text": "\n".join(
                 [
-                    "|{{Amalgam}} - Simple Gadget - SimpleHonors.6320|c",
+                    "|{{Amalgam}} - Simple Gadget - Alpha.0002|c",
                     "|!Skill Name | !Damage| !Down Contrib| !Hits| !Dmg/Hit| !Max Hit| !% of Total|h",
                     "|[img width=24 [Thunderclap|https://example/1.png]]-Thunderclap | 100| 20| 4| 25| 60| 10%|",
                     "|[img width=24 [Thunderclap|https://example/2.png]]-Thunderclap | 50| 5| 2| 25| 30| 5%|",
@@ -448,7 +460,7 @@ def test_player_damage_by_skill_tables_are_modeled_and_duplicate_names_combine()
     player = model["player_skill_damage"][0]
     assert player["name"] == "Simple Gadget"
     assert player["profession"] == "Amalgam"
-    assert player["account"] == "SimpleHonors.6320"
+    assert player["account"] == "Alpha.0002"
     assert player["total_damage"] == 225
     assert player["skills"][0] == {
         "skill": "Thunderclap",
@@ -463,11 +475,11 @@ def test_player_damage_by_skill_tables_are_modeled_and_duplicate_names_combine()
 
 
 def test_older_damage_by_skill_export_keeps_down_damage_without_fake_max_hit(aug10):
-    thornzyz = next(
+    damage_player = next(
         player for player in aug10["player_skill_damage"]
-        if player["name"] == "Thornzyz"
+        if player["name"] == "Sample Hero ACK"
     )
-    skills = {row["skill"]: row for row in thornzyz["skills"]}
+    skills = {row["skill"]: row for row in damage_player["skills"]}
 
     assert skills["Offensive Protocol: Obliterate"]["down_contribution"] == 44_116
     assert skills["Napalm"]["down_contribution"] == 62_696
