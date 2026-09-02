@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -18,11 +19,13 @@ class LogInfo:
     path: Path
     timestamp: datetime          # local, naive
     source: str                  # "filename" or "mtime"
+    size_bytes: int | None = None
 
 
-def log_info_for_path(path: Path) -> LogInfo:
+def log_info_for_path(path: Path, stat_result=None) -> LogInfo:
     """Build LogInfo for one file using the same rules as discovery."""
     path = Path(path)
+    size_bytes = stat_result.st_size if stat_result is not None else None
     m = _LOG_STEM_RE.match(path.stem)
     if m:
         ts_str = m.group(1) + m.group(2)
@@ -31,32 +34,57 @@ def log_info_for_path(path: Path) -> LogInfo:
                 path=path,
                 timestamp=datetime.strptime(ts_str, '%Y%m%d%H%M%S'),
                 source='filename',
+                size_bytes=size_bytes,
             )
         except ValueError:
             pass
+    if stat_result is None:
+        stat_result = path.stat()
+        size_bytes = stat_result.st_size
     return LogInfo(
         path=path,
-        timestamp=datetime.fromtimestamp(path.stat().st_mtime),
+        timestamp=datetime.fromtimestamp(stat_result.st_mtime),
         source='mtime',
+        size_bytes=size_bytes,
     )
 
 
-def discover_logs(log_folder: Path) -> list[LogInfo]:
-    """Recursive scan for *.zevtc + *.evtc log files.
+def discover_logs(log_folder: Path, *, include_size: bool = False) -> list[LogInfo]:
+    """Discover .zevtc + .evtc logs in one metadata-efficient walk.
 
     Timestamp from YYYYMMDD-HHMMSS filename prefix; falls back to mtime
-    if the name doesn't match. Sorted by timestamp ascending.
+    if the name doesn't match.  ``include_size`` captures file size from the
+    same scandir entry for UIs that display it, avoiding a second SMB stat per
+    row. Sorted by timestamp ascending.
     """
     results: list[LogInfo] = []
-    for ext in ('*.zevtc', '*.evtc'):
-        for path in log_folder.rglob(ext):
-            try:
-                path.stat()
-            except OSError:
-                logger.debug("Skipping unreadable file: %s", path)
-                continue
+    pending = [Path(log_folder)]
+    while pending:
+        current = pending.pop()
+        try:
+            entries = os.scandir(current)
+        except OSError:
+            logger.debug("Skipping unreadable folder: %s", current)
+            continue
 
-            results.append(log_info_for_path(path))
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(Path(entry.path))
+                        continue
+                    if not entry.name.lower().endswith(('.zevtc', '.evtc')):
+                        continue
+                    path = Path(entry.path)
+                    needs_mtime = _LOG_STEM_RE.match(path.stem) is None
+                    stat_result = (
+                        entry.stat(follow_symlinks=False)
+                        if include_size or needs_mtime else None
+                    )
+                    results.append(log_info_for_path(path, stat_result))
+                except OSError:
+                    logger.debug("Skipping unreadable file: %s", entry.path)
+                    continue
 
     results.sort(key=lambda x: x.timestamp)
     return results

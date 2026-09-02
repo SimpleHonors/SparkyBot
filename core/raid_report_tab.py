@@ -334,10 +334,13 @@ class RaidReportTab(QWidget):
             fight_item = QTableWidgetItem(log.path.stem)
             self._table.setItem(row, _COL_FIGHT, fight_item)
 
-            try:
-                size_bytes = log.path.stat().st_size
-            except OSError:
-                size_bytes = 0
+            if log.size_bytes is not None:
+                size_bytes = log.size_bytes
+            else:
+                try:
+                    size_bytes = log.path.stat().st_size
+                except OSError:
+                    size_bytes = 0
             size_item = _SortableItem(
                 f"{size_bytes / 1024 / 1024:.1f} MB")
             size_item.setData(_ROLE_SORT, size_bytes)

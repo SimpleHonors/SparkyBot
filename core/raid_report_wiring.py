@@ -151,7 +151,9 @@ def build_raid_report_tab(config, parent=None):
         folders = config.get_log_folders()
         if not folders:
             return []
-        return discover_logs(folders[0])
+        # Capture sizes in the same directory walk.  Reading each Path.stat()
+        # later in the GUI causes one SMB round trip per table row.
+        return discover_logs(folders[0], include_size=True)
 
     def _select_session(logs):
         return current_session(logs)
