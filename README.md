@@ -10,63 +10,34 @@ Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good 
 
 ---
 
-![SparkyBot v2 Home](docs/screenshots/v2-home.png)
-<br><br>
-![SparkyBot v2 Raid Report](docs/screenshots/v2-raid-report.png)
+## What's New in 2.2.2 — *"The Spreadsheet Learned Espionage"*
 
----
+SparkyBot still posts the quick fight result. Now it also turns the whole night
+into one offline report that is actually worth opening.
 
-## What's New in 2.0 — *"It Has a Front Door Now"*
+- **Enemy Intel is the crown jewel.** Compare your squad with each enemy color,
+  inspect observed profession frequency and incoming skill pressure, then drill
+  into estimated subgroups, role candidates, strips, CC, and build fingerprints.
+  Observed facts and estimates are labeled separately because confident nonsense
+  is still nonsense.
+- **One file, three levels of nerd.** **Pro** is the complete guided analysis,
+  **Simple** keeps the useful highlights, and **Classic** preserves the original
+  report for the no-fun league. Nobody has to surrender their favorite table.
+- **Steal your best player's homework.** Player Compare puts two squad players
+  side by side with damage, support, healing, weapons, rotations, skill-share
+  charts, consumables, and provable trait evidence whenever the source exported it.
+- **Dress the crime scene.** Reports have Graphite, Midnight, Blackout, and
+  Studio Light skins. The desktop app has 11 themes of its own and remembers
+  which one you picked, as a civilized application should.
 
-Version 2.0 gives SparkyBot a Home screen, sidebar navigation, and Settings
-grouped around the jobs you want to accomplish.
+![Sparky Pro Enemy Intel comparing an anonymized squad with a selected enemy color](docs/screenshots/v222-enemy-intel.png)
 
-- **Start Run. End Run. Report done.** SparkyBot counts the fights, remembers
-  an open run after a restart, includes copied or manually processed logs,
-  builds the report, and can post it to Discord. You raid; it handles the
-  paperwork.
-- **Raid Reports without the ritual.** Pick the last 12 hours, today, or only
-  the fights you want. Reports reuse work SparkyBot already did, generate
-  faster, and shrink themselves so Discord is less likely to throw a fit.
-- **A Home screen that tells you what happened.** Posted fights, skipped
-  fights, detected/processing status, commentary, voice, and reports land in
-  one activity feed. Drop log files straight onto the window when you want to
-  process them manually.
-- **AI is optional.** Decline it in setup and SparkyBot stays focused on fight
-  reports and Raid Reports. You can enable AI commentary and voice later.
-- **Native Windows installer.** Download, double-click, done. No Python
-  scavenger hunt and no command prompt audition.
+*Enemy Intel: observed profession counts, estimated subgroup structure, and a
+clear trail into the evidence behind the guess. Enemy player names stay out of it.*
 
-Reports include clearer progress and errors, safer filenames, smaller
-temporary files, and automatic cleanup.
+![Sparky Pro Player Compare in the Studio Light report skin](docs/screenshots/v222-player-compare.png)
 
-![Run and report settings](docs/screenshots/v2-settings-raid-reports.png)
-
-The first-run wizard walks through report workflow and optional AI features.
-Empty Raid Report and Calibration pages explain what they need and provide a
-direct action to continue.
-
-![Clear first-run choices](docs/screenshots/v2-setup-ai-choice.png)
-<br><br>
-![Raid Report empty-state guide](docs/screenshots/v2-raid-report-empty.png)
-
----
-
-## 🔥 What's New in 1.8.0 — *"Grades on YOUR Curve"*
-
-Sparky's performance tiers used to be carved from a stock corpus of 800-some fights. Fine — but that's not *your* guild. **Now you can retune the entire grading curve to your own server, right from the Settings window. No spreadsheet, no code, no asking nicely.**
-
-Point the new **Calibration** tab at a pile of your `.evtc` logs, pick how many to grind through at once — up to **32 in parallel**, so a backlog that used to take *days* takes minutes — and when it's done it throws up a preview showing exactly how every tier moves: old → new, ↑ or ↓, color-coded, before you commit a thing. Run a sweat-lord guild? "Dominant" healing might jump +20% because your healers actually *heal*. Run a feeder comp? The bar drops to match reality. Either way it's **honest to a fault** — the numbers come straight out of your own fights, nothing invented, and a loud warning fires if you try to calibrate off too few of them. It even offers to recalibrate the *instant* an import finishes, because remembering to click a button is beneath you and we know it.
-
-The bot stops grading you against strangers and starts grading you against the only people who matter: your own squad, on its best and worst nights.
-
----
-
-## 🔥 What's New in 1.7.5 — *"It Remembers Its Own Tics"*
-
-Sparky now holds a *grudge*. It keeps a permanent rap sheet of its own verbal crutches across all of history — lean on a pet phrase too many times and it gets blacklisted automatically (no human maintains the list; it narcs on itself). And a player on cooldown now gets their stats **deleted from what the model can even see**, so it can't gush about the same hero under a fake nickname. Their numbers still count toward squad totals — they're benched from the spotlight, not erased.
-
-This builds on 1.7.0's **Anti-Slop Update**: an anti-repetition engine that benches any phrase, verb, or player name it reuses; a "Narrative Facts" prompt that hands the model curated truth instead of a JSON firehose; stochastic seeding to knock it off its favorite ruts; and a silent-failure guard that retries empty "I thought about it" responses. Overkill for jokes about a video game? Absolutely. Did we do it anyway? Obviously.
+*Player Compare in Studio Light. Same report, fewer cave walls.*
 
 ---
 
@@ -79,7 +50,8 @@ After a fight ends and ArcDPS writes a log, you get a full combat report in seco
 - **Squad & Enemy Summaries** — player counts by team color, total damage, DPS
 - **Detailed Stats** — damage, burst, strips, cleanses, heals, defense, CCs, downs/kills
 - **Boon Uptime** — defensive and offensive boons per subgroup
-- **Enemy Intel** — top damage skills, composition by profession and color
+- **Sparky Pro Report** — sortable fight summaries, player drilldowns, Player Compare, skill-share charts, and high scores
+- **Enemy Intel** — observed composition and pressure plus clearly labeled role, subgroup, and build estimates
 
 Discord gets color-coded code blocks with configurable guild icons; Twitch gets a plain-text summary plus commentary. **Enemy players are never named — only their professions. We roast comps, not strangers.**
 
