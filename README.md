@@ -28,8 +28,8 @@ at its job.
 
 ![Sparky Pro Enemy Intel comparing an anonymized squad with one enemy color](docs/screenshots/v222-enemy-intel.png)
 
-Enemy facts and estimates are labeled separately. Enemy player names stay out.
-Confident nonsense is still nonsense.
+Enemy facts and estimates are labeled separately. Confident nonsense is still
+nonsense.
 
 ![SparkyBot Raid Report settings in Workbench Dark](docs/screenshots/v2-settings-raid-reports.png)
 

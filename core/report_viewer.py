@@ -1783,7 +1783,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       "</span><h2>" + esc(compositionTitle) + "</h2></div>" +
       "<p>Representative average group from "+snapshots+" enemy snapshots. Profession frequency is observed; Subgroup placement and roles are estimated.</p></div>"+
       "<p class=\"role-validation-note\"><b>Role check:</b> " +
-      (scope ? "Role labels are profession-level role candidates from the night’s per-enemy DPS, skill casts, proven trait procs, and exposed consumables. They are not individual enemy identities; enemy healing totals still cannot be measured." :
+      (scope ? "Role labels are profession-level role candidates from the night’s per-enemy DPS, skill casts, proven trait procs, and exposed consumables. Enemy healing totals still cannot be measured." :
        actorAppearances ? fmt(actorAppearances)+" detailed enemy appearances were checked using per-enemy DPS and skill casts. " +
         "Enemy healing totals still cannot be measured." :
         "This recovered report did not retain per-enemy DPS or skill rotations, so its role labels stay Estimated.") + "</p>"+

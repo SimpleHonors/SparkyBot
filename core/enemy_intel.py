@@ -50,8 +50,8 @@ _ROLE_FAMILIES = {
 }
 _ROLE_ORDER = ("primary_support", "healer", "utility_support", "hybrid", "dps")
 
-# Skill ownership is used only to connect session-wide observed pressure to a
-# profession archetype.  It never identifies the individual enemy who used it.
+# Skill ownership connects session-wide observed pressure to a profession
+# archetype.
 _DAMAGE_SKILL_PROFESSIONS = {
     "Soul Spiral": {"Reaper"},
     "Gravedigger": {"Reaper"},
