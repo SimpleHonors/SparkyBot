@@ -1,284 +1,100 @@
 # SparkyBot
 
-### The unhinged AI shot-caller that watches your Guild Wars 2 WvW logs, does the math, and roasts your squad in real time — on Discord *and* Twitch, with a voice if you want one. When the raid's over, it builds a complete statistical autopsy of your entire run.
+### The unhinged Guild Wars 2 WvW log analyst for Discord, Twitch, and complete end-of-night reports.
 
-You fought. You died (a little). ArcDPS wrote a log. **Before you've finished typing "gg," SparkyBot has parsed the whole fight, found the one stat that actually mattered, and posted something meaner and funnier than your guildies were about to.**
+ArcDPS writes the log. SparkyBot parses the fight, posts the useful numbers,
+and says what your guildies were about to say—only faster and with receipts.
 
-Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good at its job.
+Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good
+at its job.
 
-> ⚠️ Sparky's default prompt talks trash. Loudly. It's competitive-gaming humor about a video game — and it roasts *your own squad* at least as hard as the enemy. Want it polite? Edit the system prompt in Settings. We won't judge. (We will, a little.)
+> Sparky's optional AI commentary talks trash by default. Edit the system prompt
+> if you want it polite. We won't judge. Much.
 
----
+![SparkyBot desktop app in Workbench Dark](docs/screenshots/v2-home.png)
 
-## What's New in 2.2.2 — *"The Spreadsheet Learned Espionage"*
-
-SparkyBot still posts the quick fight result. Now it also turns the whole night
-into one offline report that is actually worth opening.
+## Sparky Pro 2.2.2 — *The Spreadsheet Learned Espionage*
 
 - **Enemy Intel is the crown jewel.** Compare your squad with each enemy color,
-  inspect observed profession frequency and incoming skill pressure, then drill
-  into estimated subgroups, role candidates, strips, CC, and build fingerprints.
-  Observed facts and estimates are labeled separately because confident nonsense
-  is still nonsense.
-- **One file, three levels of nerd.** **Pro** is the complete guided analysis,
-  **Simple** keeps the useful highlights, and **Classic** preserves the original
-  report for the no-fun league. Nobody has to surrender their favorite table.
-- **Steal your best player's homework.** Player Compare puts two squad players
-  side by side with damage, support, healing, weapons, rotations, skill-share
-  charts, consumables, and provable trait evidence whenever the source exported it.
-- **Dress the crime scene.** Reports have Graphite, Midnight, Blackout, and
-  Studio Light skins. The desktop app has 11 themes of its own and remembers
-  which one you picked, as a civilized application should.
+  inspect observed professions and incoming skill pressure, then drill into
+  estimated subgroups, role candidates, strips, CC, and build fingerprints.
+- **One file, three levels of nerd.** Pro gives the complete guided analysis,
+  Simple keeps the highlights, and Classic remains for the no-fun league.
+- **Player Compare steals the homework.** Put two squad players side by side for
+  damage, support, healing, weapons, rotations, skill shares, consumables, and
+  provable trait evidence whenever the source exposes it.
+- **It has outfits.** Reports include Graphite, Midnight, Blackout, and Studio
+  Light skins. The desktop app has 11 themes and remembers your choice.
 
-![Sparky Pro Enemy Intel comparing an anonymized squad with a selected enemy color](docs/screenshots/v222-enemy-intel.png)
+![Sparky Pro Enemy Intel comparing an anonymized squad with one enemy color](docs/screenshots/v222-enemy-intel.png)
 
-*Enemy Intel: observed profession counts, estimated subgroup structure, and a
-clear trail into the evidence behind the guess. Enemy player names stay out of it.*
+Enemy facts and estimates are labeled separately. Enemy player names stay out.
+Confident nonsense is still nonsense.
 
-![Sparky Pro Player Compare in the Studio Light report skin](docs/screenshots/v222-player-compare.png)
+![SparkyBot Raid Report settings in Workbench Dark](docs/screenshots/v2-settings-raid-reports.png)
 
-*Player Compare in Studio Light. Same report, fewer cave walls.*
+## What it does
 
----
+- Watches ArcDPS logs and processes completed fights automatically.
+- Posts quick KDR, downs, kills, deaths, damage, and optional AI commentary.
+- Builds one offline night report with sortable fights, detailed player stats,
+  skill-share charts, boon/support/healing tables, high scores, and Enemy Intel.
+- Supports Discord webhooks, Twitch chat, optional voice, manual file processing,
+  one-button raid sessions, and guild setup files.
+- Keeps AI optional. Fight parsing and reports work without it.
 
-## What It Does
+## Install
 
-After a fight ends and ArcDPS writes a log, you get a full combat report in seconds:
+Requirements: [ArcDPS](https://www.deltaconnected.com/arcdps/) and the
+[.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
+used by the Guild Wars 2 Elite Insights parser.
 
-- **AI Fight Commentary** (optional) — hype, unhinged narration from any OpenAI-compatible LLM, never repeating its own bits, with optional TTS and Discord audio
-- **Quick Report** — KDR, duration, squad/enemy downs, kills, deaths
-- **Squad & Enemy Summaries** — player counts by team color, total damage, DPS
-- **Detailed Stats** — damage, burst, strips, cleanses, heals, defense, CCs, downs/kills
-- **Boon Uptime** — defensive and offensive boons per subgroup
-- **Sparky Pro Report** — sortable fight summaries, player drilldowns, Player Compare, skill-share charts, and high scores
-- **Enemy Intel** — observed composition and pressure plus clearly labeled role, subgroup, and build estimates
-
-Discord gets color-coded code blocks with configurable guild icons; Twitch gets a plain-text summary plus commentary. **Enemy players are never named — only their professions. We roast comps, not strangers.**
-
----
-
-## Setup
-
-### Prerequisites
-
-1. **.NET 8.0 Desktop Runtime** from [Microsoft](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
-2. **ArcDPS** from [deltaconnected.com/arcdps](https://www.deltaconnected.com/arcdps/)
-
-### Install
-
-1. Download `SparkyBot-v2.2.2-Setup.exe` from the [Releases page](https://github.com/SimpleHonors/SparkyBot/releases).
+1. Download `SparkyBot-v2.2.2-Setup.exe` from
+   [Releases](https://github.com/SimpleHonors/SparkyBot/releases).
 2. Double-click it.
-3. Launch SparkyBot.
+3. Follow the first-run setup.
 
-On first launch the setup wizard handles the essentials. You do not need
-Python or a command line. Source installs remain available for people who
-enjoy owning more screwdrivers than furniture.
+No Python scavenger hunt. No command prompt audition.
 
-### Discord
+## Basic setup
 
-Channel → gear icon (Edit Channel) → **Integrations** → **Webhooks** → **New Webhook** → **Copy Webhook URL**. Paste it into the setup wizard or Settings → Messaging.
+For Discord, create a webhook under **Channel Settings → Integrations →
+Webhooks**, then paste its URL into SparkyBot. Configure separate destinations
+for individual fights and the final night report if wanted.
 
-Guild admins configure the Discord destinations once and choose **File →
-Create Guild Setup File...**. A guildie chooses that file on first launch or
-uses **File → Use Guild Setup File...** later. SparkyBot shows exactly where
-individual fights and the end-of-night debrief will post. On first launch it
-then checks only the parser and fight-log folder on that computer; AI, voice,
-Twitch, and other extras stay off and can be added later in Settings.
+Start a run before the raid. End it afterward. SparkyBot gathers the fights,
+builds the report, and can post the overview before the report file.
 
-For every first-run setup—with or without a guild file—SparkyBot checks common
-and Steam GW2 locations, validates candidates with the real game executable,
-finds every ArcDPS setup it can prove, and reads ArcDPS's configured log
-folder. If there are multiple installs, you choose the right one. Nothing is
-saved until SparkyBot shows the exact locations and you accept them; unusual
-installs can point SparkyBot directly at `arcdps.ini`.
+Settings live inside the app. Guild leaders can export a safe guild setup file;
+tokens, passwords, account data, and history are not included.
 
-The setup file contains only the three Discord webhook slots, destination
-names/routing, enabled state, bot name, and embed color. It never contains AI
-provider keys, Twitch tokens, voice keys, or local paths.
+## Reports and privacy
 
-> **Treat an exported guild config like a password.** Its Discord webhook URLs
-> can post to your channels. Share it privately and revoke the webhooks in
-> Discord if the file is exposed.
+Reports are self-contained HTML files. Pro, Simple, and Classic are different
+views of the same night—not three separate exports.
 
-### Switching to or from another log tool
+SparkyBot labels missing data as unavailable instead of quietly turning it into
+zero. Enemy composition and skill pressure use observed combat data. Enemy
+subgroups and roles remain estimates because ArcDPS does not expose everything.
 
-SparkyBot should earn your use, not trap your setup. On first launch it quietly
-checks for AxiBridge, TopStatsAIO, PlenBot, MzFightReporter, WvW Insights, the
-Drevarr tools, and other supported ArcDPS workflows. When one is found, the
-first action names it plainly: **Found PlenBot — set me up from it**. When none
-is found, that feature is completely absent. A collapsed **Advanced** path asks
-experienced users which app they run, then opens that app's expected settings
-file and folder.
+Only services you configure receive data: Discord/Twitch destinations and an AI
+provider when AI commentary is enabled.
 
-Before anything moves, SparkyBot previews the exact log folder, named Discord
-routes, and every safe matching preference grouped by section. Bot tokens, API
-keys, passwords, account data, and history never transfer, and the source tool
-is never changed. These choices form the base setup; a guild file added next
-overrides its Discord channels and presentation while local paths, thresholds,
-and other non-overlapping preferences stay.
+## Help and source use
 
-Choose **File → Create Setup for Another Log Tool...** to go the other way.
-SparkyBot can create real settings for AxiBridge, TopStatsAIO, PlenBot,
-MzFightReporter, WvW Insights, EVTC_parser, and GW2 EI Log Combiner. Unknown
-settings are preserved, existing files are backed up, and the app clearly
-names anything that cannot transfer. This is a one-time, user-approved
-move—not a background sync process.
+- [In-app help pages](docs/help/README.md)
+- [Log-tool interoperability and credits](docs/WVW_LOG_TOOL_INTEROPERABILITY.md)
+- Source launch: install `requirements.txt`, then run `python bootstrap.py`
+- Bugs and requests: [GitHub Issues](https://github.com/SimpleHonors/SparkyBot/issues)
 
-SparkyBot directly relies on some projects, was genuinely influenced by a few,
-and simply interoperates with or documents others. The linked
-[interoperability guide](docs/WVW_LOG_TOOL_INTEROPERABILITY.md) names the exact
-relationship, says where each tool may be the better fit, lists every adapter,
-and documents the license boundary. No competitor source code or assets are
-copied by the migration feature.
+## Credits
 
-### Twitch
-
-1. Use (or make) a Twitch account for the bot
-2. Get an Access Token at [twitchtokengenerator.com](https://twitchtokengenerator.com)
-3. Settings → Messaging → enter Channel Name + Bot Token, check **Enable Twitch Bot**
-4. Hit **Test Connection** — a test message should land in your chat
-
----
-
-## Configuration
-
-Everything lives in the GUI (right-click the system tray icon → Settings); the wizard covers the essentials on first launch. Highlights:
-
-- **Messaging** — up to 3 Discord webhooks, Twitch channel/token, embed color, guild icon
-- **Paths** — ArcDPS log folder, GW2EI CLI path, network poll interval
-- **Thresholds** — min fight duration/downs/damage to filter trivial fights
-- **Display** — toggle individual report sections
-- **Behavior** — for hands-free: enable Start with Windows + Hide Console + Start Minimized + Start Watcher, then never think about it again
-
-**AI Settings:** pick a **Provider** preset or set a custom **base URL**, drop in your **API Key** (blank for local models), choose a **Model**, and tweak the **System Prompt** in the full editor (with Reset to Default). Commentary posts as a separate embed *after* the fight report, so it **never delays your stats** — it retries on failure, and the silent-failure guard catches empty responses.
-
-**TTS (optional):** reads commentary aloud and/or attaches audio to Discord. Choose `edge` (free Microsoft neural voices), `elevenlabs` (API key, with voice/stability/style controls), or `local` (a self-hosted OpenAI-compatible speech server — point it at your own voice-cloning endpoint such as Chatterbox, pick a voice from the server, or upload a short reference sample that gets cloned at generation time; free and fully private).
-
----
-
-## AI Model Recommendations
-
-Sparky works with **any** OpenAI-compatible API. Models were graded across real WvW fights on rule compliance, narrative quality, and variety.
-
-- **Free & great:** Gemini 2.5 Flash — fast (~1.4s), perfect 20/20, free key at [Google AI Studio](https://aistudio.google.com/apikey)
-- **Top quality:** GPT-5.4 Mini (20/20, ~1.4s) and Grok 4.20 (20/20, ~1.1s)
-- **Cheapest good pick:** DeepSeek V3.2 — 20/20 at ~$0.09 per 100 fights
-- **One key for all of them:** [OpenRouter](https://openrouter.ai/)
-
-A typical 20-fight night runs **less than a penny** on Gemini, ~2 cents on DeepSeek, ~6 cents on GPT-5.4 Mini. A full night of professional-grade roasting costs less than the repair bill on one bad push.
-
----
-
-## How It Works
-
-- **Watching** — local folders use OS-native events (`watchdog`) for instant detection; network shares fall back to polling. Files at startup are skipped; each new one is processed once.
-- **Parsing** — GW2 Elite Insights CLI turns ArcDPS `.evtc` logs into JSON.
-- **Pre-analysis** — before a single token hits the model, Sparky buckets the fight into qualitative tags (calibrated against recorded fights), applies player/topic cooldowns, and builds the "Narrative Facts" it's allowed to talk about. The AI gets *curated truth*, not a firehose.
-- **Posting** — Discord splits into batched embeds within API limits; Twitch sends plain-text within the 500-char cap, TLS by default.
-
-**Command line:** `python bootstrap.py` accepts `--verbose`, `--headless`, `--config PATH`, and `--debug-ai-prompt`.
-
----
-
-## How Sparky Knows You Balled Out
-
-Here's the problem with "good": 4,000 DPS is a war crime in a 90-second gank and a nap in a 10-minute slugfest, and a healer's sheet looks nothing like a zerker's. So Sparky does **not** do hardcoded "good = big number" garbage. It grades you **on a curve against 800+ real WvW fights** — every number gets ranked against everyone who's actually thrown down. No vibes. Receipts.
-
-Five tiers, by percentile. Clear the floor or Sparky doesn't even bring you up — no participation trophies in here:
-
-| Tier | You beat… | Translation |
-|------|:---------:|-------------|
-| `solid` | 25% | you showed up and did a thing |
-| `strong` | 50% | comfortably above the middle |
-| `dominant` | 75% | you're carrying |
-| `exceptional` | 90% | one of the best bodies on the field |
-| `legendary` | 95% | the stat line screenshotted into guild chat |
-
-And it grades **everything** independently — healing, cleanses, strips, hard CC, burst, downs, kills, stability, boon gen — all normalized per-second so the grind and the gank get a fair trial. *(For the nerds: clear ~5,500 DPS/sec and you're top-5% of every fight on record.)*
-
-**But here's what lazy stat sheets miss.** Standing in the blob mashing `1` racks up "damage" — *winning* happens at the decisive moment. So Sparky stalks two killer axes: damage into **downed** enemies (finishing the kill before they rally) and healing into your own **downed** bodies (ripping a teammate off the floor mid-wipe). Go off on either and you get tagged **clutch** — the closer.
-
-Then it fingerprints your stat shape against your class to figure out *what you actually were* — `burst evoker`, `rez druid`, `boon DPS` — and spotlights your single most unhinged number instead of parroting the damage chart.
-
-> **And it's YOUR blood, not some stranger's.** Don't like being graded against a stock corpus? **Settings → Calibration**: feed it a batch of your guild's logs (32 at a time), watch a preview show exactly how every tier moves up or down, and apply. The curve becomes *your* server's meta — the bar rises where your crew is filthy and drops where it isn't. Honest numbers, your fights, one click. (See *What's New in 1.8.0* up top.)
-
----
-
-## Raid Report
-
-Other tools make you wait. SparkyBot was already working the whole time you played — parsing every fight live, caching the results. By the time you call it a night, the heavy lifting is done. One click finishes the job.
-
-### How it works
-
-1. **Open the Raid Report tab** — it auto-discovers your logs and selects the last 12 hours. A line tells you how many fights are ready: *"N recent fights found — ready."*
-2. **Click the big button** — **"Make my raid report."** SparkyBot reuses everything it already parsed live, downloads the stats builder on first use (one-time), and bakes a single self-contained HTML file. That one file includes a guided **Sparky** view, a fast **Simple** view, and the untouched **Classic** report; every reader can switch at the top. Progress shows inline: reading fights, crunching numbers, building the page. **Raid ends, click, done.**
-3. **Post to Discord** — one more click sends a compact commander/run/K-D overview plus the report file to your guild's channel. You can also open the report in your browser first. Big reports auto-zip to fit Discord's attachment limit.
-
-SparkyBot enables the combiner's compressed standalone-HTML path by default,
-so a big end-of-night report often shrinks enough to post under Discord's
-standard unpaid attachment limit instead of requiring paid upload headroom.
-It stays one self-contained browser file. This compresses the generated
-report, not your raw `.evtc` logs. The upstream combiner's
-[v1.8.0 release](https://github.com/Drevarr/GW2_EI_log_combiner/releases/tag/v1.8.0)
-credits SimpleHonors for submitting that capability; SparkyBot uses the
-supported upstream option rather than maintaining a private fork.
-
-Need to cherry-pick fights or name your report ("Wolf Wednesday")? The **Advanced** link in the bottom-right expands the full fight list, selection buttons, and an optional name field. Your last 12 hours are pre-selected every time, so you never have to touch Advanced unless you want to.
-
-If anything goes wrong, you see a plain-text error right on the tab — no stack traces, no jargon. A **Show details** button reveals the full copyable message. Everything is also written to `sparkybot.log` next to the app.
-
-### What's in it
-
-The **Sparky** view starts with the night's totals and correctly labeled player rankings, then provides players, fights, poison coverage, and a direct path to every original detail. **Simple** keeps only the useful headlines. **Classic** is the byte-for-byte upstream report with its complete tables and charts. All three use **all the data from every fight in the session** and travel together in the same offline file.
-
-### Cache & storage
-
-The **parse cache** (on by default) means the Raid Report doesn't re-run GW2EI on logs SparkyBot already processed live. A full night's report generates in seconds. Cache entries live in a dated folder structure (`NightReportCache/YYYYMMDD/`), auto-clean after 48 hours, and a settings-change fingerprint silently invalidates them so you never serve stale data. The **records database** persists permanently — your best nights accumulate, not disappear.
-
-### Credits
-
-The stats engine is **GW2 Elite Insights** (baaron4/GW2-Elite-Insights-Parser) paired with the **GW2 EI Log Combiner** (Drevarr/GW2_EI_log_combiner). SparkyBot downloads the combiner at runtime with your consent — it is never vendored, imported, or redistributed. Both projects are linked in [Credits and neighboring tools](#credits-and-neighboring-tools).
-
----
-
-## Troubleshooting
-
-- **Logs not detected** — check the watcher is running and the folder path is right (usually a numbered subfolder in `arcdps.cbtlogs`). Network shares have up to 5s latency.
-- **GW2EI parse fails** — install .NET 8.0; huge logs (50+ players, 20+ min) can take 60s+; check for GW2EI updates.
-- **Discord/Twitch not posting** — verify the webhook/token, confirm the bot is enabled, check the console. Expired Twitch tokens regenerate at twitchtokengenerator.com; if TLS fails, disable secure connection.
-- **AI cut off / times out** — raise Max Tokens or API Timeout in Settings → AI; some reasoning models burn tokens thinking. Try a faster model.
-- **AI feels repetitive early** — the anti-repetition memory builds over a session, so the first couple fights have less history. Give it a few rounds; it gets meaner *and* more varied as the night goes.
-- **Team colors show as "Enemy"** — unmapped team ID; check the console and [open an issue](https://github.com/SimpleHonors/SparkyBot/issues).
-
----
-
-## Credits and neighboring tools
-
-SparkyBot directly relies on ArcDPS and GW2 Elite Insights, uses the GW2 EI Log
-Combiner for optional whole-night reports, and was directly inspired by
-MzFightReporter. The other entries below are independent neighboring tools we
-recognize for interoperability and comparison—not a claim that we used them,
-built on them, or copied their work. Here is where each may be the better fit:
-
-- **[MzFightReporter](https://github.com/Swedemon/MzFightReporter)** by Swedemon (MIT) — the original Java WvW reporter that directly inspired us; its compact live battle/Twitch workflow remains excellent.
-- **[GW2 Elite Insights](https://github.com/baaron4/GW2-Elite-Insights-Parser)** by baaron4 (MIT) — the authoritative parser powering SparkyBot and much of the ecosystem.
-- **[AxiBridge](https://github.com/darkharasho/axibridge)** (GPL-3.0) — a polished visual WvW experience with strong web publishing and graphical reports.
-- **[TopStatsAIO](https://github.com/darkharasho/TopStatsAIO)** (MIT) — a focused, hands-on interface for deep top-stat and session-analysis workflows.
-- **[PlenBot Log Uploader](https://github.com/Plenyx/PlenBotLogUploader)** by Plenyx (MIT) — mature uploading with excellent team, encounter, and webhook filtering.
-- **[WvW Insights](https://github.com/Retherichus/wvw-insights)** — convenient in-game Nexus batch uploading and session management.
-- **[GW2 EI Log Combiner](https://github.com/Drevarr/GW2_EI_log_combiner)** and **[EVTC_parser](https://github.com/Drevarr/EVTC_parser)** by Drevarr (GPL-3.0) — deep session aggregation and direct, inspectable automation.
-- **[ArcDPS](https://www.deltaconnected.com/arcdps/)** by deltaconnected — the combat logging addon that makes all of this possible.
-
-See **[WvW Log Tool Interoperability](docs/WVW_LOG_TOOL_INTEROPERABILITY.md)**
-for links to every supported neighbor, two-way migration coverage, honest
-differences, and license handling.
-
----
+SparkyBot uses the
+[GW2 Elite Insights Parser](https://github.com/baaron4/GW2-Elite-Insights-Parser)
+and interoperates with several community WvW log tools. Exact relationships and
+license boundaries are documented in the interoperability guide above.
 
 ## License
 
-MIT License — Copyright (c) 2025-2026 SimpleHonors. Provided "as is," without warranty of any kind. See [LICENSE](LICENSE) for full terms.
-
----
-
-*SparkyBot is not affiliated with or endorsed by ArenaNet, NCSOFT, or their partners. Guild Wars 2 and all associated logos are trademarks of NCSOFT Corporation.*
+[MIT](LICENSE). Third-party components retain their own licenses under
+`THIRD_PARTY_LICENSES/`.
