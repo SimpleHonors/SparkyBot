@@ -126,6 +126,17 @@ class FileProcessorWorker(QThread):
         gw2ei = GW2EIInvoker(self.config)
         discord = DiscordWebhookManager(self.config)
 
+        if not gw2ei.get_gw2ei_path():
+            from core.ei_updater import EIUpdater
+            ready, message = EIUpdater(gw2ei.get_gw2ei_folder()).ensure_installed()
+            if not ready:
+                logger.error("Cannot process selected logs: %s", message)
+                for file_path in self.file_paths:
+                    self.file_finished.emit(file_path, ProcessResult.ERROR_OTHER.value,
+                                            "Fight-log parser download failed. Reopen SparkyBot to retry.")
+                self.all_done.emit(len(self.file_paths))
+                return
+
         for i, file_path in enumerate(self.file_paths, 1):
             self.file_started.emit(i, len(self.file_paths), file_path.name)
             try:
@@ -699,6 +710,9 @@ class SparkyBotApp(QApplication):
         self.update_flow.sig_launch_available.connect(self._show_update_dialog)
         self.update_flow.sig_ei_launch_available.connect(self._show_ei_update_dialog)
         self.update_flow.sig_staged.connect(self._on_update_complete)
+        self.update_flow.sig_parser_status.connect(self._show_parser_progress)
+        self.update_flow.sig_parser_ready.connect(self._on_parser_ready)
+        self._parser_progress = None
 
         # Setup components
         self.watcher_thread: Optional[QThread] = None
@@ -947,6 +961,38 @@ class SparkyBotApp(QApplication):
         """
         self.update_flow.check_on_launch()
 
+    def _show_parser_progress(self, message):
+        from PySide6.QtWidgets import QProgressDialog
+        if self._parser_progress is None:
+            self._parser_progress = QProgressDialog(message, "", 0, 0, self.settings_window)
+            self._parser_progress.setWindowTitle("SparkyBot setup")
+            self._parser_progress.setCancelButton(None)
+            self._parser_progress.setMinimumDuration(0)
+        self._parser_progress.setLabelText(message)
+        self._parser_progress.show()
+
+    def _on_parser_ready(self, success, message):
+        if self._parser_progress is not None:
+            self._parser_progress.close()
+            self._parser_progress.deleteLater()
+            self._parser_progress = None
+        if success:
+            self.logger.info(message)
+            if self.config.start_watcher_on_startup and not (
+                    self.watcher_worker is not None and self.watcher_worker.is_running()):
+                self.toggle_watcher()
+        else:
+            from PySide6.QtWidgets import QMessageBox
+            self.logger.error("Fight-log parser setup failed: %s", message)
+            result = QMessageBox.warning(
+                self.settings_window, "Fight-log parser download failed",
+                "SparkyBot could not download its required fight-log parser. "
+                "Check your internet connection, then click Retry. "
+                "Your combat logs have not been changed.\n\n" + message,
+                QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Close)
+            if result == QMessageBox.StandardButton.Retry:
+                self.update_flow.repair_parser_on_launch()
+
     def _show_update_dialog(self, latest_version: str, release_data: dict):
         """Show update prompt to user."""
         from PySide6.QtWidgets import QMessageBox
@@ -1109,8 +1155,7 @@ class SparkyBotApp(QApplication):
         else:
             QTimer.singleShot(500, self.show_settings)
 
-        if self.config.start_watcher_on_startup:
-            QTimer.singleShot(600, self.toggle_watcher)
+        QTimer.singleShot(600, self.update_flow.repair_parser_on_launch)
 
         # Check for updates after GUI is ready
         QTimer.singleShot(2000, self._check_updates_on_launch)

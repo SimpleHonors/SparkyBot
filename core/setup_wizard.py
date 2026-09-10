@@ -152,8 +152,6 @@ class SetupWizard(QWizard):
             include_discord=self.imported_guild_config is None,
         )
         self.imported_competitor_plan = plan
-        if plan.parser_executable:
-            self.gw2ei_page.path_edit.setText(str(plan.parser_executable))
         if plan.log_folder:
             self.log_folder_page.use_imported_folder(plan.log_folder)
         self.discord_page.load_from_config()
@@ -171,9 +169,7 @@ class SetupWizard(QWizard):
         """Save all wizard values to config on finish"""
         cfg = self.config.update
         imported_setup = self.has_basic_import()
-        ei_path = self.field("gw2ei_path")
-        if ei_path:
-            cfg('Paths', 'gw2eiExe', ei_path)
+        cfg('Paths', 'gw2eiExe', 'GuildWars2EliteInsights-CLI.exe')
         log_folder = self.field("log_folder")
         if log_folder:
             cfg('Paths', 'logFolder', log_folder)
@@ -1068,13 +1064,13 @@ class GW2EIPage(QWizardPage):
         # Description - NOT in setSubTitle so it wraps properly
         desc = QLabel(
             "SparkyBot needs GW2 Elite Insights to turn game logs into reports. "
-            "The recommended button handles the setup automatically."
+            "SparkyBot downloads and manages it automatically."
         )
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         # PRIMARY: Download and install
-        rec_label = QLabel("<b>Automatic setup (recommended)</b>")
+        rec_label = QLabel("<b>Automatic setup</b>")
         rec_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(rec_label)
 
@@ -1100,74 +1096,18 @@ class GW2EIPage(QWizardPage):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        self.advanced_toggle = QPushButton("I already have the parser (advanced)")
-        self.advanced_toggle.setCheckable(True)
-        self.advanced_toggle.toggled.connect(self._toggle_advanced)
-        layout.addWidget(self.advanced_toggle)
-
-        self.advanced_divider = QFrame()
-        self.advanced_divider.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(self.advanced_divider)
-
-        # SECONDARY: Manual path
-        self.advanced_label = QLabel(
-            "<b>Use an existing GW2EI installation</b>"
-        )
-        self.advanced_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.advanced_label)
-
-        self.advanced_description = QLabel(
-            "Only use this if you want to point SparkyBot to an existing "
-            "parser. Leave this blank after using automatic setup."
-        )
-        self.advanced_description.setWordWrap(True)
-        theme.mark_hint(self.advanced_description)
-        layout.addWidget(self.advanced_description)
-
-        row = QHBoxLayout()
-        self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText(
-            "Optional existing GuildWars2EliteInsights-CLI.exe"
-        )
-        self.path_edit.setToolTip(
-            "Only for people who already installed Elite Insights "
-            "themselves: the full path to its CLI .exe. Leave blank if you "
-            "used the automatic install above."
-        )
-        # No prefill - do not expose user's personal folder structure
-        self.browse_btn = QPushButton("Browse...")
-        self.browse_btn.setToolTip(
-            "Find your existing GuildWars2EliteInsights-CLI.exe on this "
-            "computer."
-        )
-        self.browse_btn.clicked.connect(self._browse)
-        row.addWidget(self.path_edit)
-        row.addWidget(self.browse_btn)
-        layout.addLayout(row)
-
-        self._toggle_advanced(False)
-
         layout.addStretch()
-        self.registerField("gw2ei_path", self.path_edit)
 
         # Determine initial button state by checking install and version
         self._check_initial_state()
 
-    def _toggle_advanced(self, visible: bool):
-        for widget in (
-            self.advanced_divider,
-            self.advanced_label,
-            self.advanced_description,
-            self.path_edit,
-            self.browse_btn,
-        ):
-            widget.setVisible(visible)
+    def initializePage(self):
+        if not self.is_ready() and self.download_btn.isEnabled():
+            self._do_download()
 
     def _check_initial_state(self):
         """Check if GW2EI is installed and whether it needs updating."""
-        default_exe = __import__("core.apppaths", fromlist=["gw2ei_dir"]).gw2ei_dir() / "GuildWars2EliteInsights-CLI.exe"
-
-        if not default_exe.exists():
+        if not self.is_ready():
             self.download_btn.setText("Install Fight-Log Parser")
             return
 
@@ -1230,26 +1170,7 @@ class GW2EIPage(QWizardPage):
             invoker = GW2EIInvoker(self.config)
             updater = EIUpdater(invoker.get_gw2ei_folder())
 
-            # Always fetch latest release info - user explicitly requested download
-            has_update, latest_version, download_url = updater.check_for_update()
-
-            # If no update found, check_for_update may return empty URL.
-            # Force fetch the latest URL directly if needed.
-            if not download_url:
-                import requests
-                resp = requests.get(
-                    "https://api.github.com/repos/baaron4/GW2-Elite-Insights-Parser/releases/latest",
-                    timeout=10
-                )
-                data = resp.json()
-                latest_version = data.get("tag_name", "").lstrip("v")
-                for asset in data.get("assets", []):
-                    if asset.get("name", "").endswith(".zip"):
-                        download_url = asset.get("browser_download_url", "")
-                        break
-
-            if not download_url:
-                raise ValueError("Could not find download URL from GitHub releases")
+            latest_version, download_url = updater.latest_release()
 
             self.sig_status.emit(f"Downloading GW2EI v{latest_version}...")
 
@@ -1272,6 +1193,8 @@ class GW2EIPage(QWizardPage):
     def _on_download_complete(self, success: bool, message: str):
         self.progress_bar.setVisible(False)
         self.download_btn.setEnabled(True)
+        success = success and self.is_ready()
+        self._install_success = success
         if success:
             self._install_success = True
             theme.set_state(self.download_status, "ok")
@@ -1282,29 +1205,20 @@ class GW2EIPage(QWizardPage):
             self.download_status.setText(f"Download failed: {message}")
             self.download_btn.setText("Install Fight-Log Parser")
 
-    def _browse(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select GW2EI CLI", "", "Executables (*.exe)"
-        )
-        if path:
-            self.path_edit.setText(path)
-
     def validatePage(self):
-        path = self.path_edit.text()
-        if path and Path(path).exists():
-            return True
-        if self._install_success:
+        if self.is_ready():
             return True
         theme.set_state(self.download_status, "warn")
         self.download_status.setText(
             "The fight-log parser is required. Click Install Fight-Log Parser "
-            "above, or choose an existing copy under Advanced."
+            "above to retry the automatic download."
         )
         return False
 
     def is_ready(self) -> bool:
-        path = self.path_edit.text().strip()
-        return bool((path and Path(path).is_file()) or self._install_success)
+        from core.apppaths import gw2ei_dir
+        from core.ei_updater import EIUpdater
+        return EIUpdater(gw2ei_dir()).is_installed()
 
     def nextId(self):
         wizard = self.wizard()

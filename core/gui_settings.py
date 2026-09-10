@@ -2863,6 +2863,10 @@ class SettingsWindow(QWidget):
             current_version = updater.get_current_version()
 
             if not has_update:
+                if not latest_version:
+                    self.sig_status_text.emit("Could not check for parser updates. Check your internet connection and retry.")
+                    self.sig_button_state.emit("Retry Parser Update", True)
+                    return
                 if current_version:
                     self.sig_status_text.emit(f"You have the latest Elite Insights (v{current_version}).")
                 else:

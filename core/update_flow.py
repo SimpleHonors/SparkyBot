@@ -62,6 +62,8 @@ class UpdateFlow(QObject):
     sig_staged = Signal(str)                     # version
     # Check/download/staging failure (terminal)
     sig_error = Signal(str)
+    sig_parser_status = Signal(str)
+    sig_parser_ready = Signal(bool, str)
 
     RELEASES_LATEST_URL = "https://github.com/SimpleHonors/SparkyBot/releases/latest"
     API_LATEST_URL = "https://api.github.com/repos/SimpleHonors/SparkyBot/releases/latest"
@@ -101,6 +103,26 @@ class UpdateFlow(QObject):
     # ------------------------------------------------------------------
     # Launch check (silent)
     # ------------------------------------------------------------------
+
+    def repair_parser_on_launch(self):
+        """Required dependency repair is independent of optional update checks."""
+        threading.Thread(target=self._repair_parser_sync, daemon=True).start()
+
+    def _repair_parser_sync(self):
+        from core.ei_updater import EIUpdater
+        from core.apppaths import gw2ei_dir
+        updater = EIUpdater(gw2ei_dir())
+        if updater.is_installed():
+            self.sig_parser_ready.emit(True, "Fight-log parser is ready")
+            return
+        self.sig_parser_status.emit("Preparing the fight-log parser automatically...")
+        try:
+            success, message = updater.ensure_installed(
+                lambda pct: self.sig_parser_status.emit(f"Downloading fight-log parser: {int(pct)}%"),
+                retry=True)
+        except Exception as exc:
+            success, message = False, str(exc)
+        self.sig_parser_ready.emit(success, message)
 
     def check_on_launch(self):
         """Check for updates on startup if enabled.
@@ -181,10 +203,10 @@ class UpdateFlow(QObject):
                     release_data = {
                         "tag_name": f"v{latest}",
                         "assets": [{
-                            "name": f"SparkyBot-{latest}.zip",
+                            "name": f"SparkyBot-v{latest}.zip",
                             "browser_download_url": (
                                 "https://github.com/SimpleHonors/SparkyBot/"
-                                f"releases/download/v{latest}/SparkyBot-{latest}.zip"
+                                f"releases/download/v{latest}/SparkyBot-v{latest}.zip"
                             ),
                         }],
                     }

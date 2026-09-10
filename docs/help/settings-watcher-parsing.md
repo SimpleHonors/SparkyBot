@@ -11,9 +11,9 @@ Where SparkyBot looks for fight logs, how they get parsed, and which fights are 
 
 ### Elite Insights parser
 
-- **CLI executable** — the path to `GuildWars2EliteInsights-CLI.exe`, the program that reads game logs (path box plus **Browse...**).
+- SparkyBot manages its own parser in the `GW2EI` folder beside the application. No parser path needs to be configured.
 - **Max parse memory** (MB) — a memory cap for parsing, so a huge log can't eat all your RAM.
-- Installing and updating Elite Insights lives on the **Updates** page.
+- Missing parser files are repaired automatically on launch. Optional parser updates are available on the **Updates** page.
 
 ### Which fights get posted
 

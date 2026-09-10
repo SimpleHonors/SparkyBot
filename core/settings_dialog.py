@@ -423,9 +423,8 @@ class SettingsDialog(QDialog):
 
         parser = QGroupBox("Elite Insights parser")
         pform = QFormLayout(parser)
-        pform.addRow("CLI executable", self._pair(e.gw2ei_exe, e.gw2ei_browse_btn))
         pform.addRow("Max parse memory", e.max_parse_memory)
-        ei_hint = QLabel("Elite Insights install and updates live on the Updates page.")
+        ei_hint = QLabel("SparkyBot installs and repairs its fight-log parser automatically in its own program folder. Parser updates are available on the Updates page.")
         ei_hint.setWordWrap(True)
         theme.mark_hint(ei_hint)
         pform.addRow("", ei_hint)

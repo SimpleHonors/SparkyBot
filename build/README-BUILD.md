@@ -40,7 +40,7 @@ Outputs are written to `dist\release\`:
 exact digest for the ZIP, manifest, and installer; a missing, extra, or changed
 artifact fails the release gate.
 
-`GW2EI` is downloaded by SparkyBot after the user opts in. It is never copied
+`GW2EI` is downloaded and repaired automatically by SparkyBot. It is never copied
 into a release. Config files, logs, `.evtc`/`.zevtc` files, caches, and other
 runtime state are also excluded.
 

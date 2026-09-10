@@ -47,16 +47,8 @@ def local_machine_dir() -> Path:
 
 
 def gw2ei_dir() -> Path:
-    """Directory the GW2EI folder lives in.
-
-    Frozen: app_dir()/GW2EI if it exists there (the writable copy placed
-    next to the exe by the build), otherwise the bundled copy under
-    _MEIPASS/GW2EI.  Dev: same as bundle_dir().
-    """
-    candidate = app_dir() / "GW2EI"
-    if is_frozen() and candidate.exists():
-        return candidate
-    return bundle_dir() / "GW2EI"
+    """SparkyBot owns a writable parser beside the app, even before install."""
+    return app_dir() / "GW2EI"
 
 
 def no_window_kwargs() -> dict:

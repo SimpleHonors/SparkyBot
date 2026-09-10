@@ -20,5 +20,5 @@ Keeping SparkyBot and the Elite Insights parser current. Opening this page runs 
 
 - **"Checking GitHub..." never resolves / errors** — no internet or GitHub briefly unavailable. Try the check button again later.
 - **Installed an update but the version didn't change** — restart SparkyBot; the **Restart Required** button means the new version loads on next launch.
-- **"GuildWars2EliteInsights-CLI.exe not found" / "Not installed"** — the parser is missing. Click **Check for Elite Insights Update** to install it, or point at your own copy in **Settings → Watcher & Parsing → CLI executable**.
+- **"GuildWars2EliteInsights-CLI.exe not found" / "Not installed" in an older version** — update SparkyBot and restart. SparkyBot automatically downloads the correct parser into its own folder. If the download fails, check your internet connection and click **Retry**; no separate parser setup is needed.
 - **Worried an update will wipe your setup** — parser updates keep your settings ("Settings preserved"), and SparkyBot updates never touch your configuration.

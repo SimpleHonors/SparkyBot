@@ -62,19 +62,10 @@ class GW2EIInvoker:
         self.home_dir = app_dir()
 
     def get_gw2ei_path(self) -> Optional[Path]:
-        """Find GW2EI CLI executable"""
-        # Check in GW2EI subfolder
-        gw2ei_subfolder = gw2ei_dir()
-        if gw2ei_subfolder.exists():
-            gw2ei_path = gw2ei_subfolder / "GuildWars2EliteInsights-CLI.exe"
-            if gw2ei_path.exists():
-                return gw2ei_path
-
-        # Check in current directory
-        gw2ei_path = self.home_dir / self.config.gw2ei_exe
-        if gw2ei_path.exists():
-            return gw2ei_path
-
+        """Use only the complete parser managed by SparkyBot."""
+        from core.ei_updater import EIUpdater, CLI_NAME
+        if EIUpdater(gw2ei_dir()).is_installed():
+            return gw2ei_dir() / CLI_NAME
         return None
 
     def get_gw2ei_folder(self) -> Path:
@@ -132,8 +123,14 @@ class GW2EIInvoker:
         """
         gw2ei_path = self.get_gw2ei_path()
         if not gw2ei_path:
-            logger.error("GW2EI executable not found")
-            return None
+            from core.ei_updater import EIUpdater
+            logger.info("Preparing the fight-log parser automatically...")
+            ready, message = EIUpdater(self.get_gw2ei_folder()).ensure_installed()
+            if not ready:
+                raise RuntimeError(
+                    "SparkyBot could not prepare its fight-log parser. "
+                    "Check your internet connection and reopen SparkyBot to retry. " + message)
+            gw2ei_path = self.get_gw2ei_path()
 
         log_file = Path(log_file)
         parse_lock = _same_log_lock(log_file)

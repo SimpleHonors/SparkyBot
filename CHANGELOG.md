@@ -2,6 +2,19 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.2.3] — 2026-09-09
+
+### Fixed
+
+- SparkyBot now automatically repairs missing or incomplete fight-log parsers
+  when it starts, including installations affected by the v2.2.2 setup bug.
+- First-time setup downloads the correct Elite Insights CLI package into
+  SparkyBot's own program folder. No parser location needs to be selected.
+- Setup verifies the required parser files before reporting success. Failed
+  downloads preserve the previous installation and its settings.
+- Processing waits for automatic parser preparation instead of failing every
+  selected combat log because the parser is missing.
+
 ## [2.2.2] — 2026-08-30
 
 ### Fixed
