@@ -73,6 +73,7 @@ text; numbers may carry commas and a trailing percent.
 import copy
 import re
 from dataclasses import asdict
+from html.parser import HTMLParser
 
 from core import poison_tab
 from core.boon_generation import parse_boon_generation
@@ -265,6 +266,114 @@ def _table_lines(tiddlers, suffix):
 # ---------------------------------------------------------------- meta
 
 
+class _TagSummaryHTML(HTMLParser):
+    """Small inert tree for exported cards, with explicit nesting validation."""
+
+    _VOID = frozenset(('area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+                       'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'))
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = {'classes': set(), 'children': [], 'text': ''}
+        self.stack = [('', self.root)]
+        self.invalid = False
+
+    def handle_starttag(self, tag, attrs):
+        node = {'classes': set((dict(attrs).get('class') or '').split()),
+                'children': [], 'text': ''}
+        self.stack[-1][1]['children'].append(node)
+        if tag not in self._VOID:
+            self.stack.append((tag, node))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self._VOID:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if tag in self._VOID:
+            return
+        if len(self.stack) == 1 or self.stack[-1][0] != tag:
+            self.invalid = True
+            return
+        self.stack.pop()
+
+    def handle_data(self, data):
+        for _, node in self.stack:
+            node['text'] += data
+
+
+def _tag_nodes(node, class_name):
+    matches = []
+    for child in node['children']:
+        if class_name in child['classes']:
+            matches.append(child)
+        matches.extend(_tag_nodes(child, class_name))
+    return matches
+
+
+def _tag_summary_cards(tiddlers):
+    """Read complete, uniquely identified cards; never guess partial totals.
+
+    Format/formula: Drevarr/GW2_EI_log_combiner output_functions.py,
+    output_tag_summary_two / build_tag_summary. Each fight belongs to one
+    tag (including No Tag); the producer computes kills/deaths, or kills
+    when deaths is zero. Its current card output omits the computed totals.
+    """
+    tiddler = _find_tiddler(tiddlers, '-Tag_Stats')
+    parser = _TagSummaryHTML()
+    parser.feed((tiddler or {}).get('text') or '')
+    parser.close()
+    lists = _tag_nodes(parser.root, 'tag-summary-list')
+    if not lists:
+        return None
+    if parser.invalid or len(parser.stack) != 1 or len(lists) != 1:
+        raise ValueError('Tag_Stats malformed card list')
+    cards = lists[0]['children']
+    if (not cards or any('tag-summary-card' not in c['classes'] for c in cards)
+            or len(_tag_nodes(parser.root, 'tag-summary-card')) != len(cards)):
+        raise ValueError('Tag_Stats ambiguous card structure')
+
+    def field(node, class_name):
+        matches = _tag_nodes(node, class_name)
+        if len(matches) != 1:
+            raise ValueError('Tag_Stats missing or duplicate ' + class_name)
+        return matches[0]['text'].strip()
+
+    labels = {'Fights': 'fights', 'Enemy Downed': 'enemy_downs',
+              'Enemy Killed': 'enemy_kills', 'Squad Downed': 'ally_downs',
+              'Squad Deaths': 'ally_deaths'}
+    rows, identities = [], set()
+    for order, card in enumerate(cards):
+        raw_name = field(card, 'tag-summary-name')
+        name = _plain(_PROF_TIDDEL_RE.sub('', raw_name))
+        account = field(card, 'tag-summary-account')
+        identity = (('', 'No Tag', None) if account == 'No Tag'
+                    else (name, account, _prof(raw_name)))
+        if ((not name and account != 'No Tag') or not account
+                or identity in identities):
+            raise ValueError('Tag_Stats missing or duplicate card identity')
+        identities.add(identity)
+        row = {'name': name, 'account': account, 'source_order': order}
+        seen = set()
+        for metric in _tag_nodes(card, 'tag-summary-metric'):
+            label = ' '.join(field(metric, 'tag-summary-label').split())
+            text = field(metric, 'tag-summary-value')
+            if label in seen:
+                raise ValueError('Tag_Stats duplicate card metric')
+            seen.add(label)
+            if label not in labels:
+                continue  # KDR / Down Conversion are not additive counts.
+            value = _num(text)
+            if not isinstance(value, int) or value < 0:
+                raise ValueError('Tag_Stats unavailable card count: ' + label)
+            row[labels[label]] = value
+        if not set(labels.values()).issubset(row):
+            raise ValueError('Tag_Stats incomplete card counts')
+        rows.append(row)
+    return rows
+
+
 def _commander_candidates(tiddlers):
     """Return command-tag rows with their reported fight counts."""
     lines = _table_lines(tiddlers, "-Tag_Stats") or []
@@ -276,7 +385,14 @@ def _commander_candidates(tiddlers):
         None,
     )
     if not header:
-        return []
+        try:
+            cards = _tag_summary_cards(tiddlers) or []
+        except ValueError:
+            return []
+        return [row for row in cards
+                if row['name'].casefold() != 'no tag'
+                and row['account'].casefold() != 'no tag'
+                and '.' in row['account']]
 
     headers = [_plain(cell).casefold() for cell in _cells(header)]
     try:
@@ -409,7 +525,15 @@ def _parse_totals(tiddlers):
     header = next((l for l in lines
                    if _ends(l) == "|h" and "KDR" in l), None)
     if not header:
-        raise ValueError("Tag_Stats header row missing")
+        cards = _tag_summary_cards(tiddlers)
+        if cards is None:
+            raise ValueError("Tag_Stats header row missing")
+        out = {key: sum(row[key] for row in cards)
+               for key in ('fights', 'enemy_downs', 'enemy_kills',
+                           'ally_downs', 'ally_deaths')}
+        out['kdr'] = (out['enemy_kills'] / out['ally_deaths']
+                      if out['ally_deaths'] else float(out['enemy_kills']))
+        return out
     cols = {}
     for i, c in enumerate(_cells(header)):
         low = c.lower()
@@ -427,9 +551,14 @@ def _parse_totals(tiddlers):
         raise ValueError("Tag_Stats Totals row missing")
     cells = _cells(totals_row)
     out = {}
+    if set(cols) != {'fights', 'enemy_downs', 'enemy_kills',
+                     'ally_downs', 'ally_deaths', 'kdr'}:
+        raise ValueError('Tag_Stats incomplete Totals columns')
     for key, i in cols.items():
         v = _num(cells[i]) if i < len(cells) else None
-        out[key] = v if v is not None else (0.0 if key == "kdr" else 0)
+        if v is None or v < 0 or (key != 'kdr' and not isinstance(v, int)):
+            raise ValueError('Tag_Stats unavailable Totals value: ' + key)
+        out[key] = v
     out["kdr"] = float(out["kdr"])
     return out
 

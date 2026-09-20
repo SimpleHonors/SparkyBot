@@ -2,6 +2,22 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.3.1] — 2026-09-19
+
+### Fixed
+
+- Restored report summary totals and commander headings when the log combiner
+  exports command-tag summaries as HTML cards instead of the older table.
+- Combined tagged and untagged fights correctly and calculated overall K/D
+  from aggregate kills and deaths, rather than adding individual tag ratios.
+- Kept support for older table exports. Incomplete or ambiguous summaries remain
+  unavailable instead of silently producing invented zero values.
+- Added regression coverage for both formats, multiple tags, untagged fights,
+  commander selection, zero deaths, and malformed or missing values.
+
+Existing HTML reports are snapshots: regenerate and repost affected reports
+after updating. No new AI analysis is required to restore the summary values.
+
 ## [2.3.0] — 2026-09-19
 
 ### Added
