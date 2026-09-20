@@ -92,6 +92,7 @@ def make_runner(config):
         augment_json = augment_file
 
     return RaidReportRunner(
+        ai_enabled=getattr(config, "enable_ai_analysis", False),
         log_folder=log_folder,
         cache=cache,
         parse_log=_parse_log,
@@ -216,6 +217,7 @@ def run_headless_raid_report(config):
         augment_json = augment_file
 
     runner = RaidReportRunner(
+        ai_enabled=getattr(config, "enable_ai_analysis", False),
         log_folder=log_folder,
         cache=cache,
         parse_log=_parse_log,

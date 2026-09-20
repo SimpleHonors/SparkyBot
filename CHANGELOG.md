@@ -2,6 +2,37 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.3.0] — 2026-09-19
+
+### Added
+
+- Wall of Fame collects player mentions from saved final AI fight comments and
+  includes them in reports covering those fights. It records new commentary;
+  it does not invent historical quotes or run a separate end-of-night AI review.
+- Squad boon-generation comparisons retain per-player and per-profession
+  breakdowns, including a visible profession summary in Simple.
+
+### Improved
+
+- Refreshed Pro and Simple with consistent table surfaces, readable headers,
+  matching profession colors, and full-width ranking bars.
+- Detailed comparison tables show totals and rates together, with numeric
+  sorting and compact expandable details on smaller screens.
+- Cleansing and boon removal now have independent support rankings. The DPS
+  scatter retains real coordinates, player identification, and keyboard access.
+- Report timestamps display in US Central time, including daylight saving time.
+- Reworked the README with current setup, report, sharing, and AI guidance.
+
+### Fixed
+
+- Enemy team colors and composition now use each fight's Elite Insights mapping
+  consistently across native and Classic reports.
+- Enemy trait evidence stays scoped to the selected team and eligible observed
+  actors; missing or ambiguous mappings are not guessed.
+- Final AI comments are saved before Discord, Twitch, or voice delivery, so a
+  delivery failure does not lose already-generated commentary. Finish AI
+  processing before generating a report to include its latest comments.
+
 ## [2.2.3] — 2026-09-09
 
 ### Fixed

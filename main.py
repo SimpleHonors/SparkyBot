@@ -425,6 +425,8 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                 # inside this try, where it is caught).
                 summary = ai_summary if ai_summary is not None else report.get_ai_summary()
                 global _last_ai_response
+                from core.sparky_wall import capture_session_id
+                commentary_session_id = capture_session_id(config)
                 analysis = analyst.analyze(summary, previous_response=_last_ai_response)
                 if analysis:
                     _last_ai_response = analysis
@@ -448,6 +450,12 @@ def process_log_file(file_path: Path, config: Config, gw2ei: GW2EIInvoker,
                             truncated.rfind('.'), truncated.rfind('!'), truncated.rfind('?')
                         )
                         analysis = truncated[:last_period + 1] if last_period > 0 else truncated + "..."
+
+                    # Capture the exact final text once, not planned outliers,
+                    # provider drafts, or one copy per Discord/Twitch target.
+                    from core.sparky_wall import record_final_comment
+                    record_final_comment(report_data, analysis, config,
+                                         session_id=commentary_session_id)
 
                     ai_label = config.discord_webhook_label or "SparkyBot"
                     ai_embed = {

@@ -75,6 +75,7 @@ import re
 from dataclasses import asdict
 
 from core import poison_tab
+from core.boon_generation import parse_boon_generation
 from core.enemy_intel import PRO_NAVIGATION, build_enemy_intel
 
 SCHEMA_VERSION = 2
@@ -1099,7 +1100,14 @@ def _parse_stat_tables(tiddlers, player_skill_evidence=None):
                     or suffix.replace("-", " ")
                 ).strip()
             )
-            profile = _STAT_PROFILES.get(suffix, {})
+            profile = dict(_STAT_PROFILES.get(suffix, {}))
+            if suffix == "Uptimes":
+                for row in rows:
+                    if "might" in row.get("metrics", {}):
+                        row.setdefault("metric_units", {}).setdefault("might", "stacks")
+                might_units = {row.get("metric_units", {}).get("might") for row in rows if "might" in row.get("metrics", {})}
+                if might_units == {"stacks"}:
+                    profile.update(rate_label="Might average stacks", rate_unit="stacks")
             total_label = profile.get("total_label")
             rate_label = profile.get("rate_label")
             # ``value``/``value_label`` remain the legacy primary column;
@@ -1108,6 +1116,8 @@ def _parse_stat_tables(tiddlers, player_skill_evidence=None):
                 suffix,
                 rate_label if profile.get("rate_key") else total_label,
             )
+            if suffix == "Uptimes" and profile.get("rate_unit") == "stacks":
+                value_label = rate_label
             for row in rows:
                 metrics = row.get("metrics", {})
                 participation_time = (
@@ -1699,4 +1709,16 @@ def build_night_model(
             "ai_analysis": None,
         }
 
+    try:
+        model['boon_generation'] = parse_boon_generation(tiddlers, _session_tag(tiddlers))
+    except (ValueError, TypeError, SyntaxError, RecursionError):
+        warnings.append('boon_generation: exported weighted chart unavailable')
+        model['boon_generation'] = None
+
+    from core.sparky_wall import build_wall
+    try:
+        model['sparky_wall'] = build_wall(tiddlers, model['fights'])
+    except (ValueError, TypeError, KeyError):
+        warnings.append('sparky_wall: commentary history unavailable')
+        model['sparky_wall'] = {'enabled': False, 'players': []}
     return model

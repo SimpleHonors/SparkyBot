@@ -57,6 +57,45 @@ def _sanitize_filename(name: str) -> str:
     return safe
 
 
+def _stage_combiner_json(source: Path, destination: Path) -> None:
+    """Adapt only the private subprocess input to the combiner's color IDs.
+
+    Its composition/Overview parser uses a static team-ID palette even when
+    other stats use wvWMapData. Translate each fight independently into known
+    palette IDs, including the map and friendly actors, so both paths agree.
+    Original EI/cache files remain authoritative for native evidence and IDs.
+    No external GPL code is imported, patched, or bundled by this adapter.
+    """
+    from core.enemy_role_evidence import _enemy_team
+
+    if source.resolve() == destination.resolve():
+        raise ValueError("Combiner staging must not overwrite an original EI file")
+    data = json.loads(source.read_text(encoding="utf-8"))
+    transport_ids = {"red": 705, "blue": 432, "green": 2739}
+    # Resolve against original maps BEFORE changing them (IDs can swap colors).
+    for collection in ("targets", "players"):
+        for actor in data.get(collection, []) or []:
+            if isinstance(actor, dict) and "teamID" in actor:
+                _, color = _enemy_team(actor, data)
+                actor["teamID"] = transport_ids.get(color, 0)
+    for key in ("wvWMapData", "wvwMapData"):
+        if key in data:
+            mapping = data[key] if isinstance(data[key], dict) else {}
+            data[key] = {**mapping, **{
+                f"{color}TeamID": team_id
+                for color, team_id in transport_ids.items()
+            }}
+    # Upstream requires the correctly capitalized EI key. Unknown actors stay
+    # 0 (Unk), never a guessed static color; original unknown IDs are retained
+    # in the untouched source and native evidence, not this transport copy.
+    if "wvWMapData" not in data:
+        data["wvWMapData"] = dict(data.get("wvwMapData") or {
+            f"{color}TeamID": team_id
+            for color, team_id in transport_ids.items()
+        })
+    destination.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
 class RaidReportRunner:
 
     def __init__(self, *,
@@ -77,6 +116,7 @@ class RaidReportRunner:
                  augment_json=None,         # callable(Path) -> dict | None
                  viewer_factory=None,      # callable() -> Path (lazy resolve)
                  report_default_view="sparky",
+                 ai_enabled=False,
                  parse_concurrency=4):
         self.log_folder = Path(log_folder)
         self.cache = cache
@@ -95,6 +135,7 @@ class RaidReportRunner:
         self.augment_json = augment_json
         self._viewer_factory = viewer_factory
         self.report_default_view = report_default_view
+        self.ai_enabled = bool(ai_enabled)
         self.parse_concurrency = max(1, min(int(parse_concurrency), 8))
 
     def _emit(self, stage: str, done: int, total: int, msg: str = ""):
@@ -245,7 +286,7 @@ class RaidReportRunner:
 
         self._emit("collect", 0, len(json_paths))
         for index, jp in enumerate(json_paths, start=1):
-            shutil.copy2(jp, input_dir)
+            _stage_combiner_json(jp, input_dir / jp.name)
             self._emit("collect", index, len(json_paths))
 
         self._check_cancelled()
@@ -333,6 +374,13 @@ class RaidReportRunner:
             )
             if not isinstance(current_tiddlers, list):
                 raise ValueError("combined report data is not a list")
+            from core.sparky_wall import WALL_TIDDLER, report_tiddler
+            from core.ai_helpers import _atomic_write_json
+            current_tiddlers = [t for t in current_tiddlers
+                                if t.get('title') != WALL_TIDDLER]
+            current_tiddlers.append(report_tiddler(
+                json_paths, enabled=self.ai_enabled))
+            _atomic_write_json(dragdrop_json, current_tiddlers)
             convert_report_file(
                 standalone_html,
                 current_tiddlers,

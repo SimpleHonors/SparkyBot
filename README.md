@@ -8,28 +8,31 @@ and says what your guildies were about to say—only faster and with receipts.
 Not affiliated with ArenaNet. Barely affiliated with good taste. Extremely good
 at its job.
 
-> Sparky's optional AI commentary talks trash by default. Edit the system prompt
-> if you want it polite. We won't judge. Much.
+> Sparky's optional AI commentary talks trash by default. The numbers work
+> without the mouth. Your call.
 
 ![SparkyBot desktop app in Workbench Dark](docs/screenshots/v2-home.png)
 
-## Sparky Pro 2.2.2 — *The Spreadsheet Learned Espionage*
+## The report got a glow-up. Sparky kept the receipts.
 
-- **Enemy Intel is the crown jewel.** Compare your squad with each enemy color,
+- **Less squinting, more answers.** Refreshed Simple and Pro views put totals
+  beside rates, make damage and support rankings easier to read, and keep the
+  important numbers visible on smaller screens.
+- **Wall of Fame. Yes, even that guy.** See who Sparky called out, what for,
+  and the original commentary from fights in the report. It uses saved AI
+  comments—not newly invented memories of your raid.
+- **Enemy Intel still has receipts.** Compare your squad with each enemy color,
   inspect observed professions and incoming skill pressure, then drill into
   estimated subgroups, role candidates, strips, CC, and build fingerprints.
-- **One file, three levels of nerd.** Pro gives the complete guided analysis,
+- **One file, three levels of nerd.** Pro gives the detailed analysis,
   Simple keeps the highlights, and Classic remains for the no-fun league.
 - **Player Compare steals the homework.** Put two squad players side by side for
   damage, support, healing, weapons, rotations, skill shares, consumables, and
-  provable trait evidence whenever the source exposes it.
+  observed trait evidence when the logs include it.
 - **It has outfits.** Reports include Graphite, Midnight, Blackout, and Studio
-  Light skins. The desktop app has 11 themes and remembers your choice.
+  Light skins. The desktop app has its own themes and remembers your choice.
 
 ![Sparky Pro Enemy Intel comparing an anonymized squad with one enemy color](docs/screenshots/v222-enemy-intel.png)
-
-Enemy facts and estimates are labeled separately. Confident nonsense is still
-nonsense.
 
 ![SparkyBot Raid Report settings in Workbench Dark](docs/screenshots/v2-settings-raid-reports.png)
 
@@ -37,54 +40,85 @@ nonsense.
 
 - Watches ArcDPS logs and processes completed fights automatically.
 - Posts quick KDR, downs, kills, deaths, damage, and optional AI commentary.
-- Builds one offline night report with sortable fights, detailed player stats,
+- Builds a local HTML night report with sortable fights, detailed player stats,
   skill-share charts, boon/support/healing tables, high scores, and Enemy Intel.
 - Supports Discord webhooks, Twitch chat, optional voice, manual file processing,
-  one-button raid sessions, and guild setup files.
+  raid sessions, optional dps.report links, and guild setup files.
 - Keeps AI optional. Fight parsing and reports work without it.
 
 ## Install
 
-Requirements: [ArcDPS](https://www.deltaconnected.com/arcdps/) and the
+For Windows, you'll need [ArcDPS](https://www.deltaconnected.com/arcdps/) with
+combat logging enabled and the
 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
 used by the Guild Wars 2 Elite Insights parser.
 
-1. Download `SparkyBot-v2.2.2-Setup.exe` from
-   [Releases](https://github.com/SimpleHonors/SparkyBot/releases).
+1. Download the Windows installer (the file ending in `-Setup.exe`) from the
+   [latest release](https://github.com/SimpleHonors/SparkyBot/releases/latest).
 2. Double-click it.
 3. Follow the first-run setup.
 
 No Python scavenger hunt. No command prompt audition.
 
-## Basic setup
+## Your first raid
 
-For Discord, create a webhook under **Channel Settings → Integrations →
-Webhooks**, then paste its URL into SparkyBot. Configure separate destinations
-for individual fights and the final night report if wanted.
+1. **Point Sparky at your ArcDPS log folder** in the setup wizard or Settings.
+2. **Choose where to post.** For Discord, create a webhook under **Channel
+   Settings → Integrations → Webhooks**, then paste its URL into SparkyBot.
+   Individual fights and the night report can go to different destinations.
+3. **Want commentary? Enable AI before the fights are processed.** Choose a
+   provider or a compatible local server in Settings. Leave it off for stats
+   without the heckling.
+4. **Click Start Run before the raid.** After the last fight, let processing
+   and any AI commentary finish, then click **End Run** to build the report.
+   You can also select logs manually from the report page.
+5. **Open the HTML in your browser or post it to Discord.** When posting,
+   Sparky sends the overview followed by the report file; large reports may
+   arrive as a ZIP—extract it first.
 
-Start a run before the raid. End it afterward. SparkyBot gathers the fights,
-builds the report, and can post the overview before the report file.
+Guild leaders can share Discord routing through **File → Create Guild Setup
+File**. Members load it with **File → Use Guild Setup File**.
 
-Settings live inside the app. Guild leaders can export a safe guild setup file;
-tokens, passwords, account data, and history are not included.
+## Reading the report
 
-## Reports and privacy
+**Simple**, **Pro**, and **Classic** are views of the same night in one HTML
+file. Simple gets you to the highlights; Pro adds the detailed comparisons
+and drilldowns. Report data and the Simple/Pro interface are embedded for
+local viewing; Classic may still need an internet connection for external
+assets.
 
-Reports are self-contained HTML files. Pro, Simple, and Classic are different
-views of the same night—not three separate exports.
+Enemy composition and skill pressure come from observed combat data; enemy
+subgroups and roles are estimates. Trait evidence means an observed signal,
+not a complete equipment inspection. Confident nonsense is still nonsense.
 
-SparkyBot labels missing data as unavailable instead of quietly turning it into
-zero. Enemy composition and skill pressure use observed combat data. Enemy
-subgroups and roles remain estimates because ArcDPS does not expose everything.
+**Wall of Fame** appears when AI is enabled for report generation and draws
+from locally saved final fight comments. Only comments matching the report's
+fights are included. Old logs without saved commentary won't grow quotes just
+because you generate a report. If you built it before the last AI response
+finished, regenerate it to pick up that comment.
 
-Only services you configure receive data: Discord/Twitch destinations and an AI
-provider when AI commentary is enabled.
+High Scores describe the selected night. Long-term leaderboards, when present,
+are labeled separately and use accumulated history across raids.
+
+## Data and sharing
+
+Parsing and report generation run locally. Shared reports include player names,
+account identifiers, combat stats, and any included AI comments or leaderboards.
+Guild setup exports include Discord webhooks, but not AI keys, Twitch credentials,
+player history, or local paths.
+
+Optional integrations send their inputs to the services you select: posts to
+Discord/Twitch, fight summaries and prompt context to AI, spoken text to voice,
+and combat logs to dps.report when uploads are enabled. AI and voice can use
+compatible local endpoints. Updates and tool downloads use GitHub; Classic
+report assets may also load from the web.
 
 ## Help and source use
 
 - [In-app help pages](docs/help/README.md)
 - [Log-tool interoperability and credits](docs/WVW_LOG_TOOL_INTEROPERABILITY.md)
-- Source launch: install `requirements.txt`, then run `python bootstrap.py`
+- Source launch: install `requirements.txt` in a Python virtual environment,
+  then run `python bootstrap.py` from the repository folder.
 - Bugs and requests: [GitHub Issues](https://github.com/SimpleHonors/SparkyBot/issues)
 
 ## Credits

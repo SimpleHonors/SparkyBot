@@ -8,8 +8,8 @@ per-enemy damage and rotations, which support a narrower inference:
 * low DPS plus role-specific healing/support casts can validate support intent;
 * low DPS alone never proves healing.
 
-The result is aggregated by profession because the combined night report keeps
-profession counts but intentionally discards enemy identity.
+Results retain night-wide team/profession aggregates without publishing enemy
+identity. Counts are actor-fight appearances, not unique players.
 """
 
 from __future__ import annotations
@@ -372,13 +372,50 @@ def collect_player_skill_evidence(json_paths):
     return _finish_player_skill_evidence(players)
 
 
+def _enemy_team(target, data):
+    """Resolve only EI's explicit target teamID and WvW color mapping.
+
+    Upstream JsonActor.cs defines TeamID=0 as unknown; JsonWvWMapData.cs
+    defines RedTeamID/BlueTeamID/GreenTeamID (serialized camelCase).
+    https://github.com/baaron4/GW2-Elite-Insights-Parser
+    """
+    team_id = target.get("teamID")
+    if type(team_id) is not int or team_id <= 0:
+        return None, "unknown"
+    # EI serializes WvWMapData as wvWMapData. Retain the historical alias
+    # used by saved fixtures, but never resolve contradictory mappings.
+    mappings = [data[key] for key in ("wvWMapData", "wvwMapData") if key in data]
+    resolved = []
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            return team_id, "unknown"
+        matches = [color for color in ("red", "blue", "green")
+                   if type(mapping.get(f"{color}TeamID")) is int
+                   and mapping[f"{color}TeamID"] == team_id]
+        resolved.append(matches[0] if len(matches) == 1 else "unknown")
+    return team_id, resolved[0] if resolved and len(set(resolved)) == 1 else "unknown"
+
+
 def _accumulate_enemy_role_evidence(data, actors):
     skill_map = data.get("skillMap") or {}
     buff_map = data.get("buffMap") or {}
     duration_ms = int(data.get("durationMS") or 0)
+    # EI's instanceID identifies an actor within a fight. An anonymized name
+    # (and NPC species id) does not: never deduplicate by either of those.
+    friendly_ids = {p.get("instanceID") for p in data.get("players") or []
+                    if isinstance(p, dict) and type(p.get("instanceID")) is int
+                    and p["instanceID"] > 0}
+    seen = set()
     for target in data.get("targets") or []:
         if not isinstance(target, dict) or target.get("name", "").startswith("Dummy"):
             continue
+        if target.get("enemyPlayer") is False:
+            continue
+        instance = target.get("instanceID")
+        if type(instance) is int and instance > 0:
+            if instance in friendly_ids or instance in seen:
+                continue
+            seen.add(instance)
         profession = target.get("profession") or str(target.get("name") or "").split(" ", 1)[0]
         if not profession:
             continue
@@ -388,8 +425,11 @@ def _accumulate_enemy_role_evidence(data, actors):
         rotation = _rotation_counts(target, skill_map)
         damage_skills = _damage_skill_counts(target, skill_map)
         consumables = _consumable_rows(target, buff_map, enemy=True)
+        team_id, team = _enemy_team(target, data)
         actors.append({
             "profession": profession,
+            "team_id": team_id,
+            "team": team,
             "dps": float(dps_row.get("dps") or 0),
             "damage": int(dps_row.get("damage") or 0),
             "active_ms": active_ms,
@@ -401,7 +441,7 @@ def _accumulate_enemy_role_evidence(data, actors):
         })
 
 
-def _finish_enemy_role_evidence(actors):
+def _summarize_enemy_role_evidence(actors):
     meaningful = [row["dps"] for row in actors if row["active_ms"] >= 15_000 and row["damage"] > 0]
     median_dps = statistics.median(meaningful) if meaningful else 0.0
     upper_count = max(1, math.ceil(len(meaningful) / 3))
@@ -455,9 +495,16 @@ def _finish_enemy_role_evidence(actors):
                 existing = consumable_totals.setdefault(consumable["id"], {**consumable, "actor_appearances": 0, "observations": 0})
                 existing["actor_appearances"] += 1
                 existing["observations"] += consumable["observations"]
+            seen_traits = set()
             for trait in row["traits"]:
-                existing = trait_totals.setdefault(trait["observed_skill_id"], {**trait, "actor_appearances": 0})
-                existing["actor_appearances"] += 1
+                trait_id = trait["trait_id"]
+                existing = trait_totals.setdefault(trait_id, {
+                    **trait, "actor_appearances": 0, "observed_skill_ids": set(),
+                })
+                existing["observed_skill_ids"].add(trait["observed_skill_id"])
+                if trait_id not in seen_traits:
+                    existing["actor_appearances"] += 1
+                    seen_traits.add(trait_id)
         signals = []
         for role, votes in role_votes.most_common():
             matching = [f"{name} ×{count}" for name, count in skill_totals.most_common()
@@ -474,6 +521,7 @@ def _finish_enemy_role_evidence(actors):
         professions[profession] = {
             "actor_appearances": len(rows),
             "meaningful_appearances": meaningful_rows,
+            "trait_eligible_appearances": meaningful_rows,
             "median_dps": round(statistics.median([row["dps"] for row in rows]), 2),
             "profession_average_dps": round(statistics.mean(profession_meaningful), 2)
             if profession_meaningful else 0,
@@ -485,6 +533,10 @@ def _finish_enemy_role_evidence(actors):
             "consumables": sorted(consumable_totals.values(), key=lambda item: (item["classification"], item["name"])),
             "traits": sorted(trait_totals.values(), key=lambda item: (item["specialization"], item["trait"])),
         }
+        for trait in professions[profession]["traits"]:
+            trait["observed_skill_ids"] = sorted(trait["observed_skill_ids"])
+            trait["eligible_actor_appearances"] = meaningful_rows
+            trait["observed_percent"] = round(100 * trait["actor_appearances"] / meaningful_rows, 2)
     return {
         "source": "detailed_gw2ei_json",
         "enemy_actor_appearances": len(actors),
@@ -499,38 +551,77 @@ def _finish_enemy_role_evidence(actors):
     }
 
 
+def _finish_enemy_role_evidence(actors):
+    result = _summarize_enemy_role_evidence(actors)
+    by_team = defaultdict(list)
+    for actor in actors:
+        by_team[actor.get("team") or "unknown"].append(actor)
+    result["teams"] = {
+        team: {
+            **_summarize_enemy_role_evidence(rows),
+            "team": team,
+            "team_ids": sorted({row["team_id"] for row in rows if row.get("team_id")}),
+            "source_scope": "night_team" if team != "unknown" else "night_unknown_team",
+        }
+        for team, rows in sorted(by_team.items())
+    }
+    result["unknown_team_actor_appearances"] = len(by_team.get("unknown", []))
+    result["trait_measurement"] = {
+        "unit": "actor_fight_appearances",
+        "minimum_active_ms": 15000,
+        "denominator": "same team and profession appearances with at least 15 seconds active time",
+        "limitations": "Observed proc percentages are not exact equip prevalence. Non-procs are unknown, not unequipped. Repeated players count once per fight.",
+    }
+    return result
+
+
 def collect_enemy_role_evidence(json_paths):
     """Return profession-level role signals from detailed EI JSON paths.
 
     Bad/missing/non-detailed files are ignored. The function is deliberately
     pure and makes no network calls.
     """
-    actors = []
-    for path in json_paths:
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        _accumulate_enemy_role_evidence(data, actors)
-    return _finish_enemy_role_evidence(actors)
+    return collect_report_evidence(json_paths)[0]
 
 
 def collect_report_evidence(json_paths):
     """Collect enemy and squad evidence while decoding each fight once."""
     actors = []
     players = {}
+    composition = []
+    seen_paths = set()
     for path in json_paths:
+        path = Path(path).resolve()
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
         if not isinstance(data, dict):
             continue
-        _accumulate_enemy_role_evidence(data, actors)
+        fight_actors = []
+        _accumulate_enemy_role_evidence(data, fight_actors)
+        actors.extend(fight_actors)
+        # Preserve zero-enemy detailed fights too: stale captions must not win.
+        # Join with Overview by EI's literal end clock, never input list order.
+        if data.get("timeEnd") and isinstance(data.get("targets"), list):
+            teams = defaultdict(list)
+            for actor in fight_actors:
+                teams[actor["team"]].append(actor)
+            composition.append({
+                "time_end": data["timeEnd"],
+                "teams": [{
+                    "color": color,
+                    "team_ids": sorted({r["team_id"] for r in rows if r["team_id"] is not None}),
+                    "counts": dict(Counter(r["profession"] for r in rows)),
+                } for color, rows in sorted(teams.items())],
+            })
         _accumulate_player_skill_evidence(data, players)
+    enemy = _finish_enemy_role_evidence(actors)
+    enemy["composition_fights"] = composition
     return (
-        _finish_enemy_role_evidence(actors),
+        enemy,
         _finish_player_skill_evidence(players),
     )

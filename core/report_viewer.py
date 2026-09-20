@@ -1,4 +1,4 @@
-"""Build one offline night report with three viewer-selectable presentations.
+"""Build one offline report with three core views and optional AI commentary.
 
 The upstream report remains byte-for-byte available as Classic. A compact
 skin-ready model powers the native Simple and Sparky views. Nothing is fetched
@@ -100,6 +100,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   <button type="button" data-view="sparky">Pro</button>
   <button type="button" data-view="simple">Simple</button>
   <button type="button" data-view="classic">Classic</button>
+  <button type="button" data-view="wall" hidden>Wall of Fame</button>
   <label id="theme-label" for="theme-picker">Theme</label>
   <select id="theme-picker" aria-label="Report theme">
     <option value="graphite">Graphite</option>
@@ -200,13 +201,24 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     if (!hours && seconds) parts.push(seconds + "s");
     return parts.join(" ") || text;
   }
-  function fightClock(value) {
-    var match=String(value || "").match(/(?:^|\s)(\d{1,2}):(\d{2})(?::\d{2})?(?:\s|$)/);
-    if (!match) return "";
-    var hour=Number(match[1]), minute=match[2], suffix=hour>=12 ? "PM" : "AM";
-    hour=hour%12 || 12;
-    return hour+":"+minute+" "+suffix;
+  function reportInstant(value) {
+    var text=String(value || "").trim();
+    // EI overview clocks are UTC; explicit offsets in recorded comments win.
+    var match=text.match(/^(\d{4}-\d{2}-\d{2})(?:\s+-\s+|[T ])(\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(?:\s*(Z|[+-]\d{2}(?::?\d{2})?))?/);
+    if (!match) return null;
+    var offset=match[3] || 'Z';
+    if (/^[+-]\d{2}$/.test(offset)) offset+=':00';
+    var date=new Date(match[1]+'T'+match[2]+offset);
+    return Number.isFinite(date.getTime()) ? date : null;
   }
+  function reportTimestamp(value, includeDate) {
+    var date=reportInstant(value);
+    if (!date) return String(value || "");
+    var options={timeZone:(model.session || {}).display_timezone || 'America/Chicago',hour:'numeric',minute:'2-digit',hour12:true};
+    if (includeDate) {options.month='short';options.day='numeric';options.timeZoneName='short';}
+    return new Intl.DateTimeFormat('en-US',options).format(date);
+  }
+  function fightClock(value) { return reportTimestamp(value,false); }
   function fightKd(fight) {
     var kills=Number(fight && fight.kills || 0),deaths=Number(fight && fight.ally_deaths || 0);
     if (deaths > 0) return fmt(kills/deaths);
@@ -220,7 +232,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   function drillAttrs(kind, title, body, evidence, ref) {
     return " tabindex=\"0\" data-drill data-drill-kind=\"" + esc(kind) +
       "\" data-drill-title=\"" + esc(title) + "\" data-drill-body=\"" +
-      esc(body) + "\" data-drill-evidence=\"" + esc(evidence || "Report evidence") + "\"" +
+      esc(body) + "\" data-drill-evidence=\"" + "" + "\"" +
       (ref == null ? "" : " data-drill-ref=\"" + esc(ref) + "\"");
   }
   function professionBase(profession) {
@@ -239,6 +251,21 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     return Object.keys(families).filter(function (base) {
       return families[base].indexOf(value) >= 0;
     })[0] || "unknown";
+  }
+  function professionColor(profession) {
+    var palette = model.profession_colors || {}, name = String(profession || "Unknown").trim().toLowerCase();
+    var base = professionBase(name);
+    // Read a validated source shade; new known specs inherit their base.
+    function sourceColor(key) {
+      var color = palette[key];
+      return /^#[0-9a-f]{6}$/i.test(color || "") ? color : null;
+    }
+    // React's bubble chart separates families; Classic's pale elite shades are
+    // useful as a small spec tint, not as the dominant color. Keep Ele red.
+    var anchors={guardian:"#72C1C1",warrior:"#FFD166",revenant:"#D12705",ranger:"#8EEB2E",thief:"#C08F95",engineer:"#D09C59",elementalist:"#EC5752",mesmer:"#B679D5",necromancer:"#52A76F"};
+    var shade=sourceColor(name) || sourceColor(base), anchor=anchors[base];
+    if (shade && anchor) return "#"+[1,3,5].map(function(i){return Math.round(parseInt(anchor.slice(i,i+2),16)*.85+parseInt(shade.slice(i,i+2),16)*.15).toString(16).padStart(2,"0");}).join("");
+    return shade || (base === "unknown" ? (sourceColor("unknown") || "var(--faint)") : "var(--"+base+")");
   }
   function professionGlyph(profession) {
     var base = professionBase(profession);
@@ -274,12 +301,13 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     return "<span class=\"profession-inline\">" + professionGlyph(profession) +
       (showName === false ? "" : "<span>" + esc(profession) + "</span>") + "</span>";
   }
+  function tablePlayer(row) {
+    row=row || {};
+    return '<span class="table-player" title="'+esc([row.profession || row.prof || "Unknown",row.account || ""].filter(Boolean).join(" · "))+'"><span role="img" aria-label="'+esc(row.profession || row.prof || "Unknown")+'">'+professionGlyph(row.profession || row.prof || "Unknown")+'</span><b>'+esc(row.name || "Player")+'</b></span>';
+  }
   function playerBarLabel(row) {
     row=row || {};
-    return "<span class=\"bar-label player-bar-label\">" +
-      professionGlyph(row.profession || "Unknown") +
-      "<span class=\"metric-player-text\"><b>" + esc(row.name || "Entry") +
-      "</b><small>" + esc(row.profession || "Class unavailable") + "</small></span></span>";
+    return '<span class="bar-label player-bar-label">'+tablePlayer(row)+'</span>';
   }
   function roleClass(role) {
     var value = String(role || "unknown").toLowerCase();
@@ -366,7 +394,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       }).join("") + "</div>";
   }
   function boardCard(board, limit) {
-    var rows = (board.rows || []).slice();
+    var rows = (board.rows || []).filter(function(row){return [row.total,row.value,row.rate,row.participation_weighted_rate,row.value_per_minute,row.per_minute].some(function(v){return finiteMetric(v) != null;});});
+    if (!rows.length) return "";
     var initialLimit = 5;
     var metric = board.metric || {};
     var boardLabel = metric.label || board.display_label || titleCase(board.stat);
@@ -382,10 +411,12 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       /uptime|percent|%/i.test(rateLabel) ? "Uptime %" :
       /\/\s*(?:sec|second)s?\b/i.test(rateLabel) ? "Per Sec" :
       /\/\s*(?:min|minute)s?\b/i.test(rateLabel) ? "Per Min" : "Rate";
-    var rateSuffix = metric.rate_unit === "percent" ? "%" : "";
+    var rateSuffix = metric.rate_unit === "percent" ? "%" : metric.rate_unit === "stacks" ? " stacks" : "";
+    if (metric.rate_unit === "stacks") compactRateLabel = "Average stacks";
+    function rowRate(row) { return row.rate != null ? row.rate : row.participation_weighted_rate != null ? row.participation_weighted_rate : row.value_per_minute != null ? row.value_per_minute : row.per_minute; }
     rows.sort(function(a,b) {
-      var aRate = a.rate != null ? a.rate : (a.participation_weighted_rate != null ? a.participation_weighted_rate : null);
-      var bRate = b.rate != null ? b.rate : (b.participation_weighted_rate != null ? b.participation_weighted_rate : null);
+      var aRate = rowRate(a);
+      var bRate = rowRate(b);
       if (aRate != null || bRate != null) return (Number(bRate) || 0) - (Number(aRate) || 0);
       return (Number(b.total != null ? b.total : b.value) || 0) - (Number(a.total != null ? a.total : a.value) || 0);
     });
@@ -401,6 +432,10 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     });
     var hasPullHits = isPullBoard && rows.some(function(row) { return row.pull_skill_logged_hit_events != null; });
     var hasPullCasts = isPullBoard && rows.some(function(row) { return row.pull_skill_casts != null; });
+    var maxTotal=Math.max.apply(null,rows.map(function(r){return Number(r.total!=null?r.total:r.value)||0;}).concat([0]));
+    var maxRate=Math.max.apply(null,rows.map(function(r){return Number(rowRate(r))||0;}).concat([0]));
+    var selectedMetric = hasRate ? "rate" : "total";
+    var switchRateLabel = compactRateLabel === "DPS" || compactRateLabel === "HPS" || compactRateLabel === "Per Sec" ? "Per second" : compactRateLabel === "Per Min" ? "Per minute" : compactRateLabel;
     var body = rows.map(function (row, index) {
       var title = (row.name || "Entry") + " · " + boardLabel;
       var total = hasTotal ? (row.total != null ? row.total : row.value) : null;
@@ -425,66 +460,66 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         "\" data-participation=\"" + esc(participation == null ? "" : participation) +
         "\" data-fights=\"" + esc(fights == null ? "" : fights) + "\"" +
         (index >= initialLimit ? " class=\"board-extra\" hidden" : "") +
-        "><td class=\"rank\">" + esc(row.rank || index + 1) +
-        "</td><td class=\"player-cell\"><b>" + esc(row.name) + "</b>" +
-        (row.account ? "<small>" + esc(row.account) + "</small>" : "") +
-        "</td><td class=\"class-cell\">" + professionInline(row.profession || "Unknown") +
-        "</td>" + (hasTotal ? "<td class=\"number\" data-label=\"" + esc(totalLabel) + "\">" + fmt(total) + "</td>" : "") +
+        "><td class=\"rank\" data-rank-cell>" + esc(index + 1) +
+        "</td><td class=\"player-cell\">" + tablePlayer(row) +
+        "</td>" +
+        (hasTotal ? '<td class="number" data-ranking-cell data-value-kind="total" title="'+esc(totalLabel+': '+fmt(total))+'"'+(!hasRate?numericBarStyle(total,maxTotal,row.profession):'')+'>'+compactMetric(total)+'</td>' : '') +
+        (hasRate ? '<td class="number" data-ranking-cell data-value-kind="rate" title="'+esc(rateLabel+': '+fmt(rate)+rateSuffix)+'"'+numericBarStyle(rate,maxRate,row.profession)+'>'+compactMetric(rate)+rateSuffix+'</td>' : '') +
         (hasPullHits ? "<td class=\"number\" data-label=\"Logged Hits\">" + fmt(row.pull_skill_logged_hit_events) + "</td>" +
           "<td class=\"number\" data-label=\"Connection Rate\">" + fmt(row.pull_skill_connection_rate) + "%</td>" : "") +
         (hasPullCasts ? "<td class=\"number\" data-label=\"Casts\">" + fmt(row.pull_skill_casts) + "</td>" +
           "<td class=\"number\" data-label=\"Connected Hits / Cast\">" + fmt(row.pull_skill_connected_hits_per_cast) + "</td>" : "") +
-        (hasRate ? "<td class=\"number\" data-label=\"" + esc(compactRateLabel) + "\">" + fmt(rate) + rateSuffix + "</td>" : "") +
+
         (hasParticipation ? "<td class=\"number\" data-label=\"Fight Time\">" + humanDuration(Number(participation)) + "</td>" : "") +
-        (hasFights ? "<td class=\"number\" data-label=\"Fights\">" + fmt(fights) + "</td>" : "") + "</tr>";
+        (hasFights ? "<td class=\"number\" data-label=\""+esc(board.count_label || "Fights")+"\">" + fmt(fights) + "</td>" : "") + "</tr>";
     }).join("");
-    return "<article class=\"board\"><h3>" + esc(boardLabel) +
-      "</h3>" + (boardNote ? "<p class=\"board-note\">" + esc(boardNote) + "</p>" : "") +
+    return "<article class=\"board ranking-board\"><h3>" + esc(boardLabel) +
+      "</h3>" +
       "<div class=\"table-wrap\"><table data-board-table><colgroup>" +
-      "<col class=\"col-rank\"><col class=\"col-player\"><col class=\"col-class\">" +
-      (hasTotal ? "<col class=\"col-total\">" : "") +
-      (hasPullHits ? "<col class=\"col-total\"><col class=\"col-rate\">" : "") +
-      (hasPullCasts ? "<col class=\"col-total\"><col class=\"col-rate\">" : "") +
-      (hasRate ? "<col class=\"col-rate\">" : "") +
+      "<col class=\"col-rank\"><col class=\"col-player\">" +
+      (hasTotal ? '<col class="col-total">' : '') + (hasRate ? '<col class="col-rate">' : '') +
+      (hasPullHits ? "<col class=\"col-logged\"><col class=\"col-connection\">" : "") +
+      (hasPullCasts ? "<col class=\"col-casts\"><col class=\"col-hit-cast\">" : "") +
+
       (hasParticipation ? "<col class=\"col-time\">" : "") +
       (hasFights ? "<col class=\"col-fights\">" : "") +
-      "</colgroup><thead><tr><th>#</th><th>Player</th><th>Class</th>" +
-      (hasTotal ? "<th class=\"number\"><button type=\"button\" data-sort-key=\"total\" title=\"" + esc(totalLabel) +
-        "\">" + esc(isPullBoard ? "Connected Hits" : "Total") + "</button></th>" : "") +
-      (hasPullHits ? "<th class=\"number\">Logged Hits</th><th class=\"number\">Connection Rate</th>" : "") +
-      (hasPullCasts ? "<th class=\"number\">Casts</th><th class=\"number\">Connected Hits / Cast</th>" : "") +
-      (hasRate ? "<th class=\"number\" aria-sort=\"descending\"><button type=\"button\" data-sort-key=\"rate\" title=\"" + esc(rateLabel) + "\">" + esc(compactRateLabel) + "</button></th>" : "") +
+      "</colgroup><thead><tr><th>#</th><th>"+esc(board.identity_label || "Player")+"</th>" +
+      (hasTotal ? '<th class="number" aria-sort="'+(!hasRate?'descending':'none')+'"><button type="button" data-sort-key="total" title="'+esc(totalLabel)+'">'+esc(isPullBoard?'Hits':'Total')+'</button></th>' : '') +
+      (hasRate ? '<th class="number" aria-sort="descending"><button type="button" data-sort-key="rate" title="'+esc(rateLabel)+'">'+esc(compactRateLabel)+'</button></th>' : '') +
+      (hasPullHits ? "<th class=\"number\">Logged Hits</th><th class=\"number\" title=\"Connection Rate\">Connect %</th>" : "") +
+      (hasPullCasts ? "<th class=\"number\">Casts</th><th class=\"number\" title=\"Connected Hits / Cast\">Hits / Cast</th>" : "") +
+
       (hasParticipation ? "<th class=\"number\"><button type=\"button\" data-sort-key=\"participation\">Fight Time</button></th>" : "") +
-      (hasFights ? "<th class=\"number\"><button type=\"button\" data-sort-key=\"fights\">Fights</button></th>" : "") +
+      (hasFights ? "<th class=\"number\"><button type=\"button\" data-sort-key=\"fights\">"+esc(board.count_label || "Fights")+"</button></th>" : "") +
       "</tr></thead><tbody>" + body + "</tbody></table></div>" +
       (rows.length > initialLimit ? "<footer class=\"board-actions\"><button type=\"button\" data-expand-board " +
         "aria-expanded=\"false\">Expand all " + rows.length + "</button></footer>" : "") + "</article>";
   }
+  function compactMetric(value) {
+    var n=finiteMetric(value);
+    if(n == null)return '—';
+    var scale=Math.abs(n)>=1000000 ? 1000000 : Math.abs(n)>=10000 ? 1000 : 1;
+    return fmt(n/scale)+(scale===1000000?'M':scale===1000?'k':'');
+  }
+  function numericBarStyle(value,max,profession) {
+    if(value==null || value<=0 || !max)return '';
+    var width=Math.min(100,value/max*100),color=professionColor(profession);
+    return ' style="--comparison-color:'+color+';background-image:linear-gradient(to right,var(--comparison-color) '+width+'%,transparent '+width+'%),linear-gradient(var(--comparison-track),var(--comparison-track));background-repeat:no-repeat;background-size:100% 9px;background-position:left bottom 2px"';
+  }
   function totalsCards(compact) {
-    var t = model.totals || {};
-    var fights = Number(t.fights) || 0;
-    var cards = [
-      ["fights", "Modeled fights", t.fights, "Fight logs included in this combined report", "Selected night · fight summaries"],
-      ["downs", "Enemy downs", t.enemy_downs, "Enemies downed by the squad across " + fmt(t.fights) + " fights" +
-        (fights ? " · " + fmt(Number(t.enemy_downs || 0) / fights) + " per fight" : ""),
-        "Selected night · combined fight summaries"],
-      ["kills", "Enemy kills", t.enemy_kills, "Enemies killed by the squad across " + fmt(t.fights) + " fights" +
-        (fights ? " · " + fmt(Number(t.enemy_kills || 0) / fights) + " per fight" : ""),
-        "Selected night · combined fight summaries"],
-      ["ally_downs", "Our downs", t.ally_downs, "Squad members downed across " + fmt(t.fights) + " fights" +
-        (fights ? " · " + fmt(Number(t.ally_downs || 0) / fights) + " per fight" : ""),
-        "Selected night · combined fight summaries"],
-      ["ally_deaths", "Our deaths", t.ally_deaths, "Squad member deaths across " + fmt(t.fights) + " fights" +
-        (fights ? " · " + fmt(Number(t.ally_deaths || 0) / fights) + " per fight" : ""),
-        "Selected night · combined fight summaries"],
-      ["kdr", "K/D", t.kdr, "Enemy kills divided by squad deaths", "Selected night · calculated from combined fight summaries"]
-    ];
-    return "<div class=\"kpis" + (compact ? " compact" : "") + "\">" +
-      cards.map(function (item, index) {
-        return "<button type=\"button\" class=\"kpi metric-" + index + "\"" +
-          drillAttrs("summary-metric:" + item[0], item[1] + " · " + fmt(item[2]), item[3], item[4]) +
-          "><strong>" + fmt(item[2]) + "</strong><span>" + esc(item[1]) + "</span></button>";
-      }).join("") + "</div>";
+    var t=model.totals||{};
+    function count(value){var n=finiteMetric(value);return n!=null && n>=0 ? n : null;}
+    var kills=count(t.enemy_kills),deaths=count(t.ally_deaths),known=kills!=null && deaths!=null;
+    var total=known ? kills+deaths : 0,split=total ? kills/total*100 : 0;
+    function score(label,value,key,cls){return '<button type="button" class="'+cls+'"'+drillAttrs('summary-metric:'+key,label+' · '+fmt(value),label+': '+fmt(value),'')+'><span>'+label+'</span><strong>'+fmt(value)+'</strong></button>';}
+    return '<section class="kill-comparison" aria-label="Combat scoreboard"><div class="combat-duel">'+
+      score('Our kills',kills,'kills','combat-score combat-kills')+
+      score('K/D',count(t.kdr),'kdr','combat-ratio')+
+      score('Our deaths',deaths,'ally_deaths','combat-score combat-deaths')+
+      '</div><div class="kill-split" role="img" data-split-state="'+(!known?'missing':total?'populated':'zero')+'" aria-label="Our kills '+fmt(kills)+' · Our deaths '+fmt(deaths)+'"><i style="width:'+split+'%;background:var(--summary-kills)"></i><i style="width:'+(total?100-split:0)+'%;background:var(--summary-deaths)"></i></div><div class="combat-support">'+
+      score('Enemy downs',count(t.enemy_downs),'downs','combat-enemy-downs')+
+      score('Fights',count(t.fights),'fights','combat-fights')+
+      score('Our downs',count(t.ally_downs),'ally_downs','combat-our-downs')+'</div></section>';
   }
   function nightMvpCards() {
     var source = model.night_mvps || [];
@@ -497,7 +532,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     }
     if (!rows.length) return "";
     return "<section class=\"mvp-section\"><div class=\"section-head\"><div><span class=\"eyebrow\">Night MVPs</span>" +
-      "<h2>Category leaders</h2></div><p>Separate winners by metric; no invented universal score.</p></div>" +
+      "<h2>Category leaders</h2></div></div>" +
       "<div class=\"mvp-grid\">" + rows.map(function(row){
         var winner=row.winner || row.player || row.name || {}, name=typeof winner === "string" ? winner : winner.name;
         var total=row.total != null ? row.total : (row.value != null ? row.value : winner.total);
@@ -516,7 +551,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           /crowd|control/.test(categoryKey) ? "CC/min" :
           /pull/.test(categoryKey) ? "connected hits/min" : readableLabel(row.rate_unit || "rate");
         var totalLabel=row.metric_label || row.total_label || "Total";
-        var reason=row.why || row.reason || "Highest session total";
+        var reason="";
         var detail=totalLabel + " " + fmt(total) +
           (rate != null ? " · " + rateLabel + " " + fmt(rate) : "") +
           (fightTime ? " · Fight Time " + humanDuration(Number(fightTime)) : "") +
@@ -531,17 +566,19 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           fmt(total) + "</strong>" + (rate != null ? "<small>" + esc(rateLabel) + " " + fmt(rate) + "</small>" : "") +
           (fightTime ? "<small>Fight Time " + humanDuration(Number(fightTime)) +
             (fights != null ? " · " + fmt(fights) + " fights" : "") + "</small>" : "") +
-          "<p>" + esc(reason) + "</p></button>";
+          "</button>";
       }).join("") + "</div></section>";
   }
   function reportHeading(kicker) {
     var s = model.session || {};
     var title = esc(s.report_title || "Night report");
-    var bits = [s.date, s.total_duration ? "Combat time " + humanDuration(s.total_duration) : null]
-      .filter(Boolean).map(esc);
-    return "<header class=\"hero\"><span class=\"eyebrow\">" +
-      esc(kicker) + "</span><h1>" + title + "</h1><p>" +
-      (bits.join(" · ") || "Combined WvW fight log summary") + "</p></header>";
+    var date=s.date;
+    var wall=model.sparky_wall||{},comments=(wall.players||[]).flatMap(function(p){return p.comments||[];});
+    var posted=comments.map(function(c){return String(c.timestamp||'');}).filter(function(t){return /^\d{4}-\d{2}-\d{2} .* [+-]\d{2}(?::\d{2})?$/.test(t);});
+    var dates=Array.from(new Set(posted.map(function(t){return t.slice(0,10);})));
+    if(dates.length===1)date=dates[0];
+    var bits=[date,s.total_duration ? 'Combat time '+humanDuration(s.total_duration):null].filter(Boolean).map(esc);
+    return '<header class="hero"><h1>'+title+'</h1><p>'+bits.join(' · ')+'</p></header>';
   }
 
   function applyTheme(theme) {
@@ -631,39 +668,157 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     ".fights-table,.fights-table tbody{display:block;width:100%}.fights-table colgroup,.fights-table thead{display:none}.fights-table tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px;margin:0;padding:12px;border-bottom:1px solid var(--line-soft)}.fights-table td{display:flex;justify-content:space-between;gap:10px;min-width:0;padding:7px 0;border-bottom:1px dotted var(--line-soft);text-align:right;white-space:normal}.fights-table td:before{content:attr(data-label);color:var(--faint);font-size:10px;font-weight:700;letter-spacing:.05em;text-align:left;text-transform:uppercase}.fights-table td[data-label=Fight],.fights-table td[data-label=Time],.fights-table td[data-label=Duration]{grid-column:1/-1}.fights-table td[data-label=Fight]{font-size:14px;font-weight:800}.history-table{min-width:560px}}"
   ].join("");
 
+  function utilityStabilityBoard() {
+    var board=tableBySource("Stability-Generation");
+    if (!board) return null;
+    // Only this mixed utility grid changes display units; preserve source data.
+    return Object.assign({},board,{metric:Object.assign({},board.metric,{rate_label:"Stability Generation / min",rate_unit:"per_minute"}),rows:(board.rows || []).map(function(row){return Object.assign({},row,{rate:finiteMetric(row.rate) == null ? null : row.rate*60});})});
+  }
+  function curatedBoards(group) {
+    var groups={damage:[
+      derivedDamageBoard("Damage to Enemy Players","targetdamage","targetdamageps","DPS"),
+      derivedDamageBoard("Power Damage","targetpower","targetpowerps","Power DPS"),
+      derivedDamageBoard("Condition Damage","targetcondition","targetconditionps","Condition DPS"),
+      derivedMetricBoard("Down-Contribution Damage","Offensive-Summary","downcontribution",null,"Down Contribution / sec",false)
+    ],healing:[
+      healMetric("Healing","healing","healingps","Healing / sec"),
+      healMetric("Downed-Ally Healing","downedhealing","downedhealingps","Downed Healing / sec")
+    ],utility:[
+      supportMetric("Condition Cleanses","condicleanse","Cleanses / min"),
+      supportMetric("Boons Removed","boonstrips","Boons Removed / min"),
+      utilityStabilityBoard(),
+      supportMetric("Resurrects","resurrects","Resurrects / min"),
+      offensiveMetric("Outgoing Crowd Control","appliedcrowdcontrol","Crowd Control / min")
+    ],strips:[
+      supportMetric("Boons Removed","boonstrips","Boons Removed / min"),
+      supportMetric("Boon Duration Removed (seconds)","boonstripstime","Boon Duration Removed / min (seconds)"),
+      supportMetric("Boons Removed from Downed Enemies","boonstripsdowned","Downed-Enemy Boons Removed / min"),
+      supportMetric("Downed-Enemy Boon Duration Removed (seconds)","boonstripstimedowned","Downed-Enemy Boon Duration Removed / min (seconds)"),
+      offensiveMetric("Outgoing Crowd Control","appliedcrowdcontrol","Crowd Control / min")
+    ]};
+    return (groups[group] || []).filter(Boolean);
+  }
+  function metricIdentity(row) {
+    // Keep character/profession variants distinct; never join on account alone.
+    return JSON.stringify([String(row.account || "").replace(/^:/,""),row.name || "",row.profession || ""]);
+  }
+  function finiteMetric(value) {
+    return value == null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
+  }
+  function compareMetricValues(a,b,direction) {
+    a=finiteMetric(a);b=finiteMetric(b);
+    if (a == null) return b == null ? 0 : 1;
+    if (b == null) return -1;
+    return (a-b)*(direction === "ascending" ? 1 : -1);
+  }
+  // Local metric artwork: decorative cues always accompany a readable label.
+  function metricCue(label) {
+    var kind=/Down-Contribution/.test(label)?'down':/Power/.test(label)?'power':/Condition Damage/.test(label)?'condition':/Damage/.test(label)?'damage':/Cleanses/.test(label)?'cleanse':/Removed/.test(label)?'strip':/Stability/.test(label)?'stability':/Resurrects/.test(label)?'res':/Crowd Control/.test(label)?'cc':'healing';
+    var paths={damage:'M4 20L19 5V3h-2L3 17m1-5 8 8M3 21l3-3',power:'M13 2L5 13h6l-1 9 9-13h-6z',condition:'M12 2s-7 8-7 13a7 7 0 0014 0c0-5-7-13-7-13zm-3 13a3 3 0 003 3',down:'M12 3v13m-5-5 5 5 5-5M5 21h14',cleanse:'M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5zM19 3v4m-2-2h4',strip:'M12 3l8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6zM3 21L21 3',stability:'M12 3l8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6zM8 12l3 3 5-6',res:'M12 20V5m-5 5 5-5 5 5M5 19v3h14v-3',cc:'M5 9V6a2 2 0 014 0v5-7a2 2 0 014 0v7-6a2 2 0 014 0v7-3a2 2 0 014 0v7l-4 6H9l-6-8a2 2 0 012-3l4 4',healing:'M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'};
+    return {kind:kind,icon:'<svg class="metric-cue-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="'+paths[kind]+'"/></svg>'};
+  }
+  function metricGrid(group) {
+    var compactLabels={"Damage to Enemy Players":["Damage","DPS"],"Power Damage":["Power","Power DPS"],"Condition Damage":["Condition","Condi DPS"],"Down-Contribution Damage":["Down contrib.","Down dmg/sec"],"Healing":["Healing","HPS"],"Downed-Ally Healing":["Downed healing","Downed HPS"],"Condition Cleanses":["Cleanses","Cleanses/min"],"Boons Removed":["Strips","Strips/min"],"Boon Duration Removed (seconds)":["Duration removed (s)","Removed seconds/min"],"Boons Removed from Downed Enemies":["Downed strips","Downed strips/min"],"Downed-Enemy Boon Duration Removed (seconds)":["Downed duration (s)","Downed seconds/min"],"Stability Generation":["Stability","Stab/min"],"Resurrects":["Resurrects","Res/min"],"Outgoing Crowd Control":["Crowd control","CC/min"]};
+    var boards=curatedBoards(group).filter(function(board){return (board.rows || []).some(function(row){return finiteMetric(row.total) != null || finiteMetric(row.rate) != null;});}),players=new Map();
+    boards.forEach(function(board,index){(board.rows || []).forEach(function(row){
+      var key=metricIdentity(row),item=players.get(key) || {row:row,values:[]};
+      item.values[index]=row;players.set(key,item);
+    });});
+    var rows=Array.from(players.values()).sort(function(a,b){return compareMetricValues(
+      a.values[0] && a.values[0].rate,b.values[0] && b.values[0].rate,"descending");});
+    if (!rows.length) return "";
+    var title={damage:"Damage & down contribution",healing:"Healing & downed allies",utility:"Utility & support",strips:"Boon removal & control summary"}[group];
+    var primaryMax=Math.max.apply(null,rows.map(function(item){return finiteMetric(item.values[0] && item.values[0].rate) || 0;}));
+    var columns='<colgroup><col class="grid-player-col">'+boards.map(function(board,index){var label=board.metric && board.metric.label || board.stat,totalWidth=group==='utility' ? ({'Condition Cleanses':80,'Stability Generation':90}[label] || 60) : ({'Down-Contribution Damage':96,'Downed-Ally Healing':96}[label] || 82);return '<col class="grid-total-col" style="width:'+totalWidth+'px!important"><col class="grid-rate-col'+(index===0?' grid-primary-col':'')+'">';}).join('')+'<col class="grid-time-col"></colgroup>';
+    var heads=boards.map(function(board,index){var label=board.metric && board.metric.label || board.stat;
+      var rateLabel=board.metric && board.metric.rate_label || "Rate";
+      var names=compactLabels[label] || compactLabels[board.stat] || [label,rateLabel];
+      var shortLabels={"Damage to Enemy Players":["Total","DPS"],"Power Damage":["Power","DPS"],"Condition Damage":["Condi","DPS"],"Down-Contribution Damage":["Down dmg","/s"],"Healing":["Total","HPS"],"Downed-Ally Healing":["Down heal","HPS"],"Condition Cleanses":["Cleanses","/min"],"Boons Removed":["Strips","/min"],"Boon Duration Removed (seconds)":["Removed s","s/min"],"Boons Removed from Downed Enemies":["Down strips","/min"],"Downed-Enemy Boon Duration Removed (seconds)":["Down s","s/min"],"Stability Generation":["Stability","/min"],"Resurrects":["Res","/min"],"Outgoing Crowd Control":["CC","/min"]};
+      names=shortLabels[label] || shortLabels[board.stat] || names;
+      var cue=metricCue(label),cueNames={'Damage to Enemy Players':'Damage','Healing':'Healing','Condition Cleanses':'Cleanse'};
+      names=[cueNames[label] || names[0],names[1]];
+      return ['total','rate'].map(function(kind){
+        var selected=index===0 && kind==='rate',name=names[kind==='total'?0:1];
+        return '<th scope="col" class="pair-'+kind+' metric-cue-'+cue.kind+'" aria-sort="'+(selected?'descending':'none')+'"><button type="button"'+(selected?' data-sort-direction="descending"':'')+' data-sort-key="m'+index+'-'+kind+'" data-detail-label="'+esc((compactLabels[label] || compactLabels[board.stat] || [label,rateLabel])[kind==='total'?0:1])+'" aria-label="'+esc(kind==='total'?label+' · Total':rateLabel)+'" title="'+esc(kind==='total'?label+' · Total':rateLabel)+'"><span class="metric-cue-label">'+(kind==='total'?cue.icon:'')+esc(name)+'</span></button></th>';
+      }).join('');
+    }).join("");
+    return "<article class=\"board metric-grid-board\"><h3>"+esc(title)+"</h3>"+"<div class=\"metric-grid-scroll\" tabindex=\"0\" role=\"region\" aria-label=\""+esc(title)+" sortable table\"><table class=\"metric-grid metric-grid-compact\" data-metric-grid=\""+group+"\" data-initial-limit=\"5\" style=\"--grid-min-width:"+Math.max(925,315+boards.length*122)+"px\">"+columns+"<thead><tr><th scope=\"col\">Player</th>"+heads+"<th scope=\"col\"><button type=\"button\" data-sort-key=\"participation\" title=\"Fight time\">Time</button></th></tr></thead><tbody>"+
+      rows.map(function(item,index){var attrs="",cells=boards.map(function(board,i){var row=item.values[i] || {},total=finiteMetric(row.total),rate=finiteMetric(row.rate);
+        attrs+=" data-m"+i+"-total=\""+(total == null ? "" : total)+"\" data-m"+i+"-rate=\""+(rate == null ? "" : rate)+"\"";
+        var label=board.metric && board.metric.rate_label || "Rate",tip=(board.stat || "Metric")+" total: "+(total == null ? "unavailable" : fmt(total))+"; "+label+": "+(rate == null ? "unavailable" : fmt(rate));
+        return ['total','rate'].map(function(kind){var value=kind==='total'?total:rate;
+          var primary=i===0 && kind==='rate';
+          return '<td class="number pair-'+kind+(primary?' grid-primary-value':'')+'"'+(primary?numericBarStyle(value,primaryMax,item.row.profession):'')+' data-metric-cell="'+i+'" data-value-kind="'+kind+'" tabindex="0" title="'+esc(tip)+'" aria-label="'+esc(tip)+'">'+compactMetric(value)+'</td>';
+        }).join('');
+      }).join("");
+      var times=item.values.map(function(row){return finiteMetric(row.participation_time);}).filter(function(v){return v != null;});
+      var seconds=times.length ? Math.max.apply(null,times) : null, varied=times.some(function(t){return t !== seconds;});
+      return "<tr"+attrs+" data-participation=\""+(seconds == null ? "" : seconds)+"\""+(index>=5 ? " class=\"board-extra\" hidden" : "")+"><th scope=\"row\">"+tablePlayer(item.row)+"</th>"+cells+"<td class=\"number\" title=\"Fight time\">"+(seconds == null ? "—" : humanDuration(seconds))+"</td></tr>";
+      }).join("")+"</tbody></table></div>"+(rows.length>5 ? "<footer class=\"board-actions\"><button type=\"button\" data-expand-board aria-expanded=\"false\">Expand all "+rows.length+"</button></footer>" : "")+"</article>";
+  }
+  var refreshCss = ".metric-grid-scroll{overflow:auto;max-width:100%}.metric-grid{min-width:900px;table-layout:auto}.metric-grid th{white-space:normal;text-transform:none;min-width:110px}.metric-grid th:first-child{min-width:170px;position:sticky;left:0;background:var(--panel);z-index:1}.metric-grid th small{display:block;color:var(--muted);font-weight:400}.metric-grid td b{font-weight:600}.metric-grid td small{color:var(--muted)}.metric-grid button{min-height:28px}.metric-grid th[aria-sort] button:after{content:none}.metric-grid button[data-sort-direction=ascending]:after{content:' ↑'}.metric-grid button[data-sort-direction=descending]:after{content:' ↓'}.metric-grid-board{margin:20px 0}.secondary-support{margin:24px 0}.secondary-support summary{cursor:pointer;padding:14px;color:var(--muted)}";
+  refreshCss += ".boon-generation,.boon-uptimes{margin:26px 0}.boon-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px}.boon-card,.generation-card{padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:12px 0}.boon-card .chart-title,.generation-card .chart-title{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}.chart-title span,.boon-stat-row small{color:var(--muted);font-size:12px}.boon-stat-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(140px,2fr);align-items:center;gap:14px;padding:10px 0}.boon-stat-row small{display:block}.sparky-boon-bar{position:relative;display:flex;align-items:center;gap:12px;min-height:30px;font-variant-numeric:tabular-nums}.sparky-boon-bar>b{font-size:12px;min-width:70px;text-align:right}.boon-track{flex:1;display:block;height:14px;border-radius:3px;background:var(--panel-2);overflow:hidden}.boon-track i{height:100%;display:block;background:var(--boon-color);border-radius:3px}.chart-tooltip{display:none;position:absolute;z-index:20;bottom:100%;right:0;max-width:440px;padding:10px;background:var(--surface);color:var(--text);border:1px solid var(--line);box-shadow:0 4px 18px #0004;font-size:12px;white-space:normal}.sparky-boon-bar:hover .chart-tooltip,.sparky-boon-bar:focus .chart-tooltip{display:block}@media(max-width:620px){.boon-stat-row{grid-template-columns:1fr;gap:4px}.generation-card .sparky-boon-bar>b{min-width:130px}}";
+  refreshCss += ".bubble-card{padding:20px;margin:20px 0;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.bubble-card h3{margin:0}.bubble-card p{color:var(--muted);font-size:12px}.bubble-scroll{overflow:auto}.bubble-scroll svg{display:block;width:100%;min-width:560px;max-height:480px}.bubble-scroll text{fill:var(--muted);font:12px Segoe UI,sans-serif}.bubble-gridline{stroke:var(--line);stroke-width:1;fill:none}.bubble-scroll circle{stroke:var(--point-color);stroke-width:1.5;fill-opacity:1;cursor:pointer}.bubble-scroll circle:hover,.bubble-scroll circle:focus{stroke:var(--text);stroke-width:3;fill-opacity:1}.bubble-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px}.bubble-legend span:before{content:'';display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:50%;background:var(--point-color)}";
+  refreshCss += ".multiboon-chart{margin:24px 0}.multiboon-chart p{font-size:12px;color:var(--muted)}.multiboon-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;margin:16px 0}.multiboon-legend span{display:flex;align-items:center;gap:5px}.multiboon-legend i{width:10px;height:10px;border-radius:2px}.multiboon-row{display:grid;grid-template-columns:minmax(110px,190px) minmax(80px,1fr) 60px;gap:10px;align-items:center;margin:9px 0;font-size:12px}.multiboon-name small{display:block;color:var(--muted)}.multiboon-bar{position:relative;min-width:0;padding:6px 0;outline-offset:3px}.multiboon-track{display:flex;width:100%;height:18px;background:var(--panel-2);border-radius:3px;overflow:hidden}.multiboon-track i{height:100%;flex-shrink:0}.multiboon-bar .chart-tooltip{display:none;position:absolute;left:0;bottom:100%;z-index:20;white-space:pre-line;max-width:min(440px,70vw);width:max-content;padding:12px;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:7px;box-shadow:0 6px 24px #0005;pointer-events:none}.multiboon-bar:hover .chart-tooltip,.multiboon-bar:focus .chart-tooltip{display:block}.multiboon-row:first-child .chart-tooltip{bottom:auto;top:100%}@media(max-width:600px){.multiboon-row{grid-template-columns:110px minmax(60px,1fr) 42px;gap:5px}.multiboon-chart{padding:10px}}";
+  refreshCss += ".metric-grid-compact{min-width:760px}.metric-grid-compact th{white-space:nowrap;min-width:90px}.metric-grid-compact td{font-size:14px}.metric-mode{display:flex;justify-content:flex-end;gap:0;margin:10px 0}.metric-mode button{padding:6px 15px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer}.metric-mode button:first-child{border-radius:6px 0 0 6px}.metric-mode button:last-child{border-radius:0 6px 6px 0}.metric-mode button[aria-pressed=true]{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}.comparison-head,.bubble-comparison-row{display:grid;grid-template-columns:minmax(180px,1.1fr) minmax(160px,1fr) minmax(160px,1fr) 150px;gap:24px;align-items:center}.comparison-head{padding:12px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}.comparison-head small{display:block;font-size:11px;color:var(--faint);margin-top:5px}.bubble-comparison-row{position:relative;width:100%;border:0;border-bottom:1px solid var(--line-soft);background:transparent;color:var(--text);font:inherit;text-align:left;padding:12px;cursor:pointer}.bubble-comparison-row:hover,.bubble-comparison-row:focus{background:var(--panel-2)}.bubble-identity .profession-glyph{flex:0 0 26px;width:26px;height:26px;margin:0}.bubble-identity{display:flex;gap:10px;align-items:center;min-width:0}.bubble-player-name{display:block;font-size:13px;overflow-wrap:anywhere}.bubble-identity small{display:block;font-size:11px;color:var(--muted)}.comparison-value{display:flex;align-items:center;gap:10px}.comparison-value b{min-width:58px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums}.comparison-track{display:block;flex:1;height:8px;background:var(--panel-2);border-radius:2px}.comparison-track i{height:100%;display:block;background:var(--point-color);border-radius:2px}.comparison-size{display:flex;align-items:center;gap:10px;font-size:12px;font-variant-numeric:tabular-nums}.comparison-size svg{width:32px;height:32px;flex:0 0 32px}.bubble-comparison-row:hover .chart-tooltip,.bubble-comparison-row:focus .chart-tooltip{display:block;pointer-events:none}.bubble-zero{margin:16px 0;padding:12px;border:1px solid var(--line);border-radius:6px;color:var(--muted);font-size:12px}.bubble-zero summary{cursor:pointer}.bubble-zero ul{columns:2;padding-left:18px}.bubble-zero li{padding:5px 0}.comparison-scroll{overflow:visible}.comparison-rows{max-height:570px;overflow-y:auto;scrollbar-gutter:stable}.comparison-head{scrollbar-gutter:stable;overflow-y:auto}@media(max-width:760px){.bubble-card{padding:14px}.comparison-head{display:none}.comparison-rows{max-height:none;overflow:visible}.bubble-comparison-row{grid-template-columns:1fr 1fr;gap:10px 16px;padding:14px 0}.bubble-identity{grid-column:1/-1}.comparison-value{display:grid;grid-template-columns:1fr auto;gap:5px}.comparison-value:before{content:attr(data-label);grid-column:1/-1;color:var(--muted);font-size:11px}.comparison-value b{display:block;grid-column:1/-1;text-align:left;font-size:14px}.comparison-track{grid-column:1/-1;width:100%}.comparison-size{grid-column:1/-1}.comparison-size:after{content:attr(data-label);color:var(--muted);font-size:11px}.bubble-zero ul{columns:1}}";
+  refreshCss += ".bubble-name-key{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:5px;margin:12px 0}.bubble-name-key button{font:inherit;font-size:12px;text-align:left;padding:6px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--text);cursor:pointer}.bubble-name-key button{display:flex;align-items:center;gap:6px}.bubble-name-key button:before,.bubble-identity:before{content:'';display:block;flex:0 0 9px;width:9px;height:9px;border-radius:50%;background:var(--point-color)}.bubble-name-key .profession-glyph{flex:0 0 24px;width:24px;height:24px;margin:0}.bubble-name-key small{display:block;color:var(--muted)}.bubble-number{font-size:10px!important;pointer-events:none}.bubble-scatter.has-highlight circle:not(.point-highlight){opacity:.12}.bubble-scatter circle.point-highlight{stroke:var(--text);stroke-width:4;fill-opacity:1}.bubble-companion summary{cursor:pointer;padding:10px}";
+  refreshCss += "table th.number,table th.numeric-header,table th.number button,table th.numeric-header button,.metric-grid thead th:not(:first-child),.metric-grid thead th:not(:first-child) button{text-align:right}.metric-grid thead th:first-child,.metric-grid tbody th{text-align:left}.metric-grid{table-layout:fixed;width:100%}.metric-grid thead button{display:block;width:100%;padding-left:0;padding-right:0;position:relative;white-space:normal}.metric-grid thead button:after{position:absolute;right:-12px}.damage-composition-row strong{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:right}@media(max-width:620px){.damage-composition-row{grid-template-columns:minmax(0,1fr) 78px!important;gap:8px}.damage-composition-row .damage-player{grid-column:1/-1}.damage-composition-row .damage-player>span:last-child{flex:1}.damage-composition-row strong{font-size:11px}}";
+  refreshCss += ".chart-tooltip{display:none!important}#chart-popup{position:fixed;z-index:2147483647;pointer-events:none;max-width:min(290px,calc(100vw - 16px));box-sizing:border-box;padding:9px 12px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:12px/1.5 Segoe UI,sans-serif;box-shadow:0 6px 20px #0005;overflow-wrap:anywhere}#chart-popup[hidden]{display:none}.multiboon-track i:focus{outline:2px solid var(--text);outline-offset:-2px}";
+  refreshCss += "table,.comparison-head{--table-head:color-mix(in srgb,var(--panel) 92%,var(--text) 8%);--table-selected:color-mix(in srgb,var(--panel) 88%,var(--text) 12%);--table-hover:color-mix(in srgb,var(--panel) 84%,var(--text) 16%)}thead th,.metric-grid thead th:first-child{background:var(--table-head)!important;color:var(--text)!important;border-bottom:2px solid var(--line)}thead th[aria-sort=ascending],thead th[aria-sort=descending]{background:var(--table-selected)!important}thead th:has(button[data-sort-key]):is(:hover,:focus-within){background:var(--table-hover)!important}.metric-grid tbody th{color:var(--text)}.metric-grid tbody tr:is(:hover,:focus-within)>*,.ranking-board tbody tr:is(:hover,:focus-within)>*{background-color:var(--panel-2)}.metric-grid tbody tr[hidden]{display:none!important}thead button[data-sort-key]{min-height:34px;padding:4px 22px 4px 0!important;position:relative;white-space:nowrap}thead button[data-sort-key]:after,.metric-grid thead th button[data-sort-key]:after{content:'↕';position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:17px;line-height:1;color:var(--text);opacity:1}thead th[aria-sort=ascending] button[data-sort-key]:after,.metric-grid thead th[aria-sort=ascending] button[data-sort-key]:after{content:'↑'}thead th[aria-sort=descending] button[data-sort-key]:after,.metric-grid thead th[aria-sort=descending] button[data-sort-key]:after{content:'↓'}thead button[data-sort-key]:focus-visible{outline:2px solid var(--text);outline-offset:2px}.table-player{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;text-transform:none;letter-spacing:normal}.table-player b{font-size:14px;line-height:24px;white-space:nowrap;overflow:visible}.table-player .profession-glyph{display:inline-grid;flex:0 0 24px;width:24px;height:24px;margin:0}.metric-grid thead th:first-child,.metric-grid tbody th{width:250px;min-width:250px}.metric-grid tbody th{padding-top:5px;padding-bottom:5px}.metric-grid{min-width:960px}.metric-grid tbody td{padding-top:5px;padding-bottom:5px}";
+  refreshCss += ".table-player>span{display:inline-flex;flex-shrink:0}.table-wrap{overflow-x:auto!important}.table-wrap table{min-width:850px}.table-wrap td:has(.table-player){white-space:nowrap;width:280px}.score-context{color:var(--muted);font-size:12px;margin-left:8px}.bubble-name-key{grid-template-columns:repeat(auto-fit,minmax(265px,1fr))}.bubble-name-key button{white-space:nowrap;font-size:14px}.comparison-scroll{overflow-x:auto}.comparison-head,.bubble-comparison-row{min-width:940px;grid-template-columns:minmax(280px,1.3fr) minmax(170px,1fr) minmax(170px,1fr) 150px}.comparison-head{background:var(--table-head);color:var(--text)}.bubble-comparison-row{padding-top:6px;padding-bottom:6px}.multiboon-chart{overflow-x:auto}.multiboon-row{min-width:720px;grid-template-columns:270px minmax(200px,1fr) 60px}.boon-stat-row{grid-template-columns:minmax(260px,1fr) minmax(140px,2fr)}.generation-card,.boon-card{overflow-x:auto}.col-player{width:280px}.poison-player{width:280px}@media(max-width:760px){.table-wrap table{display:table!important;min-width:850px!important}.table-wrap table colgroup{display:table-column-group!important}.table-wrap table thead{display:table-header-group!important}.table-wrap table tbody{display:table-row-group!important}.table-wrap table tr{display:table-row!important}.table-wrap table td,.table-wrap table th{display:table-cell!important;padding:7px 11px!important}.table-wrap table td:before{display:none!important}.comparison-head{display:grid;overflow:visible}.comparison-rows{overflow:visible}.bubble-comparison-row{display:grid;gap:24px}.bubble-identity,.comparison-size,.comparison-value,.comparison-value b,.comparison-track{grid-column:auto}.comparison-value{display:flex}.comparison-value:before,.comparison-size:after{display:none}.comparison-value b{text-align:right}.comparison-track{width:auto}}";
+  refreshCss += ".compare-player-card,.compare-head>div.compare-player-card:last-child{display:flex;min-width:0;overflow-x:auto}.bar-card{overflow-x:auto}.metric-row:has(.table-player){min-width:650px;grid-template-columns:270px minmax(150px,1fr) auto}.player-bar-label{overflow:visible}.strip-contributors{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}.damage-player .table-player b{overflow:visible;text-overflow:clip}.table-player .profession-glyph{width:24px;height:24px}.boon-stat-row:has(.table-player){min-width:520px}.compare-player-card .table-player b{font-size:15px}";
+  refreshCss += ".kill-comparison{--summary-kills:color-mix(in srgb,#66869f 75%,var(--panel));--summary-deaths:color-mix(in srgb,#a16d7b 75%,var(--panel))}.boards{grid-template-columns:minmax(0,1fr)!important}.ranking-board{grid-column:1/-1;min-width:0}.ranking-board .metric-mode{padding:0 12px}.ranking-board tr[hidden]{display:none!important}.ranking-board table[data-board-table]{min-width:640px}.ranking-board .table-wrap table[data-board-table]{min-width:640px!important}.ranking-board .col-player{width:40%}.ranking-board .col-total{width:28%}";
+  refreshCss += ".kill-comparison{--summary-kills:#70c5dc;--summary-deaths:#e79c91;margin:20px 0 28px;padding:18px 28px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.kill-comparison button{background:none;border:0;color:var(--text);font:inherit;cursor:pointer;padding:0;min-height:44px;font-variant-numeric:tabular-nums}.kill-comparison button:focus-visible{outline:2px solid var(--text);outline-offset:4px;border-radius:3px}.kill-comparison button:hover strong{text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:5px}.combat-duel{display:grid;grid-template-columns:minmax(0,1fr) 132px minmax(0,1fr);align-items:center;gap:28px}.kill-comparison .combat-score{display:flex;align-items:center;justify-content:center;gap:24px}.combat-score span{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.combat-score strong{font-size:56px;line-height:1.1;letter-spacing:-.045em;font-weight:750}.combat-deaths span{order:2}.kill-comparison .combat-ratio{display:flex;flex-direction:column-reverse;align-items:center;justify-content:center;position:relative;padding:13px 18px;isolation:isolate}.combat-ratio:before{content:'';position:absolute;inset:0;background:var(--panel-2);border:1px solid var(--line);clip-path:polygon(12px 0,calc(100% - 12px) 0,100% 12px,100% calc(100% - 12px),calc(100% - 12px) 100%,12px 100%,0 calc(100% - 12px),0 12px);z-index:-1}.combat-ratio strong{font-size:34px;line-height:1.2;letter-spacing:-.035em}.combat-ratio span{font-size:11px;letter-spacing:.15em;color:var(--muted);margin-top:3px}.kill-split{display:flex;height:5px;overflow:hidden;margin:16px 0 1px;background:var(--line)}.kill-split i{display:block;height:100%;flex-shrink:0}.kill-split i:first-child{box-shadow:inset -2px 0 var(--panel)}.combat-support{display:grid;grid-template-columns:minmax(0,1fr) 132px minmax(0,1fr);gap:28px;align-items:center}.combat-support button{display:flex;align-items:center;gap:9px;font-size:13px}.combat-support span{font-size:12px;color:var(--muted)}.combat-support strong{font-weight:650}.combat-enemy-downs{justify-content:flex-start}.combat-fights{justify-content:center}.combat-our-downs{justify-content:flex-end}@media(max-width:700px){.kill-comparison{padding:16px 16px 8px}.combat-duel,.combat-support{grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr);gap:10px}.kill-comparison .combat-score{flex-direction:column;gap:8px}.combat-deaths span{order:0}.combat-score strong{font-size:42px}.combat-score span{font-size:10px;letter-spacing:.07em;white-space:nowrap}.kill-comparison .combat-ratio{padding:13px 8px}.combat-ratio strong{font-size:28px}.combat-support{gap:8px;grid-template-columns:minmax(0,1fr) 62px minmax(0,1fr)}.combat-support button{gap:4px;font-size:13px;flex-wrap:wrap;align-content:center;line-height:1.4}.combat-support span{font-size:10px}.kill-split{margin-top:17px}}";
+  refreshCss += ".ranking-board{width:100%}.ranking-board .table-wrap table[data-board-table]:not(.responsive-condensed){width:100%;table-layout:fixed;min-width:640px!important}.ranking-board .table-wrap table[data-board-table]:has(.col-logged):not(.responsive-condensed){min-width:930px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-rank{width:32px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-player{width:230px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-total{width:auto!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-rate{width:88px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-time{width:100px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-fights{width:64px!important}.ranking-board table[data-board-table] col.col-logged{width:82px!important}.ranking-board table[data-board-table] col.col-connection{width:96px!important}.ranking-board table[data-board-table] col.col-casts{width:60px!important}.ranking-board table[data-board-table] col.col-hit-cast{width:86px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) th,.ranking-board table[data-board-table]:not(.responsive-condensed) td{width:auto;padding-left:7px;padding-right:7px}";
+  // Compact native metric grids without shrinking names, icons or numeric text.
+  refreshCss += ".metric-grid-board{width:fit-content;max-width:100%;min-width:0;justify-self:start}.metric-grid,.metric-grid-compact{width:max-content;min-width:0;table-layout:auto}.metric-grid th,.metric-grid td{width:112px;min-width:90px;padding:3px 9px;line-height:1.2;white-space:nowrap}.metric-grid thead th:first-child,.metric-grid tbody th{width:auto;min-width:210px}.metric-grid tbody th,.metric-grid tbody td{padding:3px 9px}.metric-grid .table-player{vertical-align:middle;gap:6px;line-height:1.2}.metric-grid .table-player b{line-height:1.2}.metric-grid button{min-height:0}.metric-grid thead button[data-sort-key]{min-height:0;padding:4px 20px 4px 0!important;line-height:1.2}.metric-grid thead th{padding-top:5px;padding-bottom:5px}.kill-comparison{--summary-kills:#20c9f3;--summary-deaths:#ff685e}.combat-kills strong,.combat-enemy-downs strong{color:var(--summary-kills)}.combat-deaths strong,.combat-our-downs strong{color:var(--summary-deaths)}html[data-theme=studio-light] .kill-comparison{--summary-kills:#007caa;--summary-deaths:#c83735}";
+  refreshCss += ".ranking-board .table-wrap table[data-board-table].responsive-metrics,.table-wrap table.responsive-metrics{width:max-content;min-width:0!important;table-layout:auto}.ranking-board .table-wrap table[data-board-table].responsive-metrics{width:100%}.metric-grid.responsive-condensed .responsive-identity{width:calc(100% - 108px)!important}.responsive-metrics col{width:auto!important}.table-wrap .responsive-metrics th,.table-wrap .responsive-metrics td{width:auto;white-space:nowrap}.row-metric-details{display:none;font-size:12px;font-weight:400;white-space:normal}.row-metric-details summary{cursor:pointer;color:var(--muted);padding:3px 0;min-height:24px}.row-metric-details dl{margin:4px 0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 10px}.row-metric-details dt{overflow-wrap:anywhere}.row-metric-details dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}.table-wrap table.responsive-condensed,.metric-grid.responsive-condensed{width:100%!important;min-width:0!important;table-layout:fixed!important}.responsive-condensed colgroup,.responsive-condensed col{display:none!important}.responsive-condensed .responsive-extra{display:none!important}.responsive-condensed .responsive-identity{width:calc(100% - 136px)!important;min-width:0!important;white-space:normal!important}.responsive-condensed .responsive-primary{overflow-wrap:anywhere;width:108px!important;min-width:0!important;white-space:normal!important}.responsive-condensed .responsive-rank{width:28px!important;min-width:0!important;padding-left:5px!important;padding-right:3px!important}.responsive-condensed .table-player{max-width:100%;white-space:normal;align-items:center}.responsive-condensed .table-player b{white-space:normal;overflow-wrap:anywhere;line-height:1.25}.responsive-condensed .row-metric-details{display:block}.responsive-condensed .responsive-identity{position:static}.responsive-condensed th button{white-space:normal!important}.responsive-condensed tbody tr[hidden]{display:none!important}";
+  // Share the identity/time footprint; spare width separates pairs, not total from rate.
+  refreshCss += ".metric-grid-board{width:100%;justify-self:stretch}.metric-grid.metric-grid-compact{width:100%;min-width:var(--grid-min-width);table-layout:fixed}.metric-grid col.grid-player-col{width:230px!important}.metric-grid col.grid-rate-col{width:60px!important}.metric-grid col.grid-time-col{width:85px!important}.metric-grid thead th:first-child,.metric-grid tbody th{width:230px;min-width:0}.metric-grid:not(.responsive-condensed) .pair-total{padding-right:4px!important}.metric-grid:not(.responsive-condensed) .pair-rate{padding-left:4px!important}.metric-grid[data-metric-grid=healing] col.grid-rate-col{width:78px!important}.metric-grid:not(.responsive-condensed) thead button[data-sort-key]{display:flex;flex-direction:row-reverse;justify-content:flex-start;gap:4px;padding-left:0!important;padding-right:0!important}.metric-grid:not(.responsive-condensed) thead th button[data-sort-key]:after{position:static;transform:none}";
+  // One header line, adjacent total/rate columns, and compact sort targets.
+  refreshCss += ".table-wrap table thead th,.metric-grid thead th{padding:3px 7px!important;font-size:12px;line-height:1.2;text-transform:none;letter-spacing:normal}.table-wrap table thead button[data-sort-key],.metric-grid thead button[data-sort-key]{min-height:22px!important;line-height:1.2!important;padding:2px 17px 2px 0!important;font-size:inherit}.metric-grid th,.metric-grid td{width:auto;min-width:0;padding:3px 7px}.metric-grid .pair-total{border-left:1px solid var(--line)}.metric-grid thead th:first-child,.metric-grid tbody th{min-width:195px}.ranking-board .table-wrap table[data-board-table].responsive-metrics{width:max-content}.ranking-board .responsive-metrics td,.ranking-board .responsive-metrics tbody th{padding:3px 7px!important;font-size:14px;line-height:1.25}.ranking-board .responsive-metrics .player-cell{min-width:210px}.ranking-board .responsive-metrics .number{min-width:70px}.ranking-board .responsive-metrics .rank{min-width:20px}.responsive-condensed[data-primary-count='2'] .responsive-primary{width:80px!important;min-width:0!important;white-space:nowrap!important}.responsive-condensed[data-primary-count='2'] .responsive-identity{width:calc(100% - 188px)!important;min-width:0!important}.metric-grid.responsive-condensed[data-primary-count='2'] .responsive-identity{width:calc(100% - 160px)!important}.responsive-condensed[data-primary-count='2'] .player-cell{min-width:0!important}.responsive-condensed[data-primary-count='2'] thead .responsive-primary button{white-space:nowrap!important}.responsive-condensed[data-primary-count='2'] .row-metric-details dl{grid-template-columns:minmax(0,1fr);gap:2px}.responsive-condensed[data-primary-count='2'] .row-metric-details dd{text-align:left;margin-bottom:5px}";
+  refreshCss += ".metric-grid thead th{padding-left:4px!important;padding-right:4px!important}.metric-grid tbody th,.metric-grid tbody td{padding:3px 4px}.metric-grid thead th:first-child,.metric-grid tbody th{padding-left:8px!important;padding-right:8px!important}";
+  refreshCss += ".responsive-condensed tbody tr:has(.row-metric-details[open]) .responsive-primary{vertical-align:top;padding-top:8px!important}";
+  // Header-only pair cues; no additional data bars or reduced numeric type.
+  refreshCss += ".metric-grid[data-metric-grid=utility]:not(.responsive-condensed) col.grid-rate-col:not(.grid-primary-col){width:52px!important}.metric-grid[data-metric-grid=utility]:not(.responsive-condensed) tbody .pair-rate:not(.grid-primary-value){padding-right:4px!important}";
+  refreshCss += ".metric-grid:not(.responsive-condensed) col.grid-primary-col{width:auto!important}.metric-grid .grid-primary-value{font-weight:750}.metric-grid tbody th,.metric-grid tbody td{padding-top:6px;padding-bottom:6px}.metric-grid:not(.responsive-condensed) .pair-rate:not(.grid-primary-value){padding-right:10px!important}.metric-grid:not(.responsive-condensed) .grid-primary-value{padding-right:8px!important}.metric-grid thead .pair-total,.metric-grid thead .pair-rate{border-bottom-color:var(--line)!important}.metric-grid tbody td.pair-total{color:var(--muted)}";
+  refreshCss += ".metric-grid .metric-cue-label{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}.metric-grid .metric-cue-icon{width:12px;height:12px;flex:0 0 12px;fill:none;stroke:var(--metric-cue);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.metric-grid thead .pair-total,.metric-grid thead .pair-rate{border-bottom-color:color-mix(in srgb,var(--metric-cue) 55%,var(--line))}.metric-grid .metric-cue-damage{--metric-cue:#db987f}.metric-grid .metric-cue-power{--metric-cue:#d5b16f}.metric-grid .metric-cue-condition{--metric-cue:#c79cca}.metric-grid .metric-cue-down{--metric-cue:#b3a5c9}.metric-grid .metric-cue-cleanse,.metric-grid .metric-cue-healing{--metric-cue:#7fbcac}.metric-grid .metric-cue-strip{--metric-cue:#c9a28b}.metric-grid .metric-cue-stability{--metric-cue:#c7b77e}.metric-grid .metric-cue-res{--metric-cue:#93bda2}.metric-grid .metric-cue-cc{--metric-cue:#89b6cd}.metric-grid thead th button[data-sort-key]:after{font-size:11px;opacity:.45}.metric-grid thead th[aria-sort=descending] button:after,.metric-grid thead th[aria-sort=ascending] button:after{opacity:.8}.metric-grid:not(.responsive-condensed) thead button[data-sort-key]{gap:2px}.metric-grid thead th:last-child button,.metric-grid tbody td:last-child{color:var(--muted)}.metric-grid[data-metric-grid=damage] [data-sort-key=m0-rate],.metric-grid[data-metric-grid=damage] td[data-metric-cell='0'][data-value-kind=rate]{font-weight:750}";
+  refreshCss += ".ranking-board .table-wrap table[data-board-table].responsive-metrics:not(.responsive-condensed){width:100%;table-layout:fixed;min-width:640px!important}.ranking-board .table-wrap table[data-board-table].responsive-metrics:has(.col-logged):not(.responsive-condensed){min-width:930px!important}";
+  refreshCss += ".ranking-board table[data-board-table]:not(.responsive-condensed) col.col-fights{width:80px!important}";
+  refreshCss += ".ranking-board table[data-board-table]:not(.responsive-condensed):not(:has(.col-total)) col.col-rate{width:auto!important}";
+  // Give surplus ranking width to the one comparison bar, never a blank total column.
+  refreshCss += ".ranking-board table[data-board-table]:not(.responsive-condensed):has(.col-rate) col.col-total{width:112px!important}.ranking-board table[data-board-table]:not(.responsive-condensed) col.col-rate{width:auto!important}";
   function renderSimple() {
-    var boards = allBoards().slice(0, 8);
+    var barrier=healMetric("Barrier","barrier","barrierps","Barrier / sec");
     var body = "<div class=\"simple-briefing\">" +
       reportHeading("Nightly briefing · essential results") +
-      "<p class=\"brief-deck\">A quick, readable pass through the night’s most useful " +
-      "squad results. Open Pro when you want comparisons, charts, and evidence.</p>" +
+      "" +
       totalsCards(true) +
-      (boards.length ? "<section class=\"boards\">" +
-        boards.map(function (b) { return boardCard(b, 10); }).join("") +
-        "</section>" : "<p class=\"empty\">No headline boards were found. " +
-        "Classic still contains every source table.</p>") +
-      "<p class=\"foot\">Simple intentionally skips the fight-by-fight wall. " +
-      "Choose Pro for the full tactical review or Classic for the untouched source.</p></div>";
+      "<section class=\"boards\">" + ["damage","healing","utility"].map(function(group){return metricGrid(group);}).join("") + "</section>" +
+      boonGenerationCharts(true) +
+      (barrier ? "<details class=\"secondary-support\" open><summary>Barrier</summary>" + boardCard(barrier,10) + "</details>" : "") +
+      "</div>";
     var simpleCss = [
       ".simple-briefing{--brief-accent:var(--accent-2);max-width:1120px;margin:0 auto;counter-reset:brief-board}",
-      ".simple-briefing .hero{position:relative;padding:34px 38px 32px;border:0;border-left:6px solid var(--brief-accent);",
+      ".simple-briefing .hero{position:relative;padding:20px 24px;border:0;border-left:4px solid var(--brief-accent);",
       "border-radius:0;background:var(--surface)}.simple-briefing .hero:after{content:'';position:absolute;left:38px;right:38px;bottom:0;height:1px;background:var(--line)}",
       ".simple-briefing .eyebrow{color:var(--brief-accent);letter-spacing:.22em}",
-      ".simple-briefing .hero h1{max-width:820px;margin:11px 0 10px;font:500 clamp(34px,5vw,58px)/1.02 Georgia,'Times New Roman',serif;letter-spacing:-.025em}",
-      ".brief-deck{max-width:720px;margin:20px 0 30px;padding-left:22px;border-left:2px solid var(--line);color:var(--muted);font:18px/1.55 Georgia,'Times New Roman',serif}",
-      ".simple-briefing .kpis{grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin:0 0 42px;padding:1px;background:var(--line)}",
-      ".simple-briefing .kpi,.simple-briefing .kpi[class*=metric-]{min-height:92px;padding:17px 20px;border:0;border-radius:0;background:var(--surface);cursor:default}",
+      ".simple-briefing .hero h1{max-width:820px;margin:8px 0;font:500 clamp(28px,4vw,40px)/1.08 Georgia,'Times New Roman',serif;letter-spacing:-.025em}",
+      ".brief-deck{margin:14px 0;color:var(--muted);font-size:14px}",
+      ".simple-briefing .kpis{grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;margin:0 0 16px;padding:1px;background:var(--line)}",
+      ".simple-briefing .kpi,.simple-briefing .kpi[class*=metric-]{min-height:76px;padding:12px 16px;border:0;border-radius:0;background:var(--surface);cursor:default}",
       ".simple-briefing .kpi strong{color:var(--brief-accent);font:600 27px/1 Georgia,'Times New Roman',serif}",
       ".simple-briefing .kpi span{display:block;margin-top:9px;letter-spacing:.035em}",
-      ".simple-briefing .boards{gap:38px}.simple-briefing .board{counter-increment:brief-board;border:0;border-radius:0;background:transparent;overflow:visible}",
-      ".simple-briefing .board h3{display:flex;gap:14px;align-items:baseline;padding:0 0 12px;border-bottom:2px solid var(--text);font:600 22px/1.2 Georgia,'Times New Roman',serif}",
-      ".simple-briefing .board h3:before{content:counter(brief-board,decimal-leading-zero);color:var(--brief-accent);font:800 11px/1 Segoe UI,system-ui,sans-serif;letter-spacing:.12em}",
-      ".simple-briefing .table-wrap{border-bottom:1px solid var(--line)}.simple-briefing th{padding-top:11px;padding-bottom:11px;color:var(--faint);background:transparent}",
-      ".simple-briefing td{padding-top:11px;padding-bottom:11px}.simple-briefing tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface) 62%,transparent)}",
-      ".simple-briefing .board-actions{padding:11px 0 0;border:0}.simple-briefing .board-actions button{border-radius:0;border-color:var(--line);background:transparent}",
+      ".simple-briefing .boards{gap:16px}.simple-briefing .board{counter-increment:brief-board;border:0;border-radius:0;background:var(--table-surface);overflow:visible}",
+      ".simple-briefing .board h3{display:flex;gap:14px;align-items:baseline;padding:0 0 12px;border-bottom:2px solid var(--table-rule);font:600 22px/1.2 Georgia,'Times New Roman',serif}",
+      ".simple-briefing .board h3:before{content:counter(brief-board,decimal-leading-zero);color:var(--table-label);font:800 11px/1 Segoe UI,system-ui,sans-serif;letter-spacing:.12em}",
+      ".simple-briefing .table-wrap{border-bottom:1px solid var(--table-rule)}.simple-briefing th{padding-top:11px;padding-bottom:11px;color:var(--text);background:transparent}",
+      ".simple-briefing td{padding-top:11px;padding-bottom:11px}",
+      ".simple-briefing .board-actions{padding:11px 0 0;border:0}.simple-briefing .board-actions button{border-radius:0;border-color:var(--line);background:var(--panel-2)}",
       ".simple-briefing .foot{margin:44px 0 0;padding:20px 0;border-top:1px solid var(--line);color:var(--muted);font-family:Georgia,'Times New Roman',serif}",
-      "@media(max-width:850px){.simple-briefing .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.simple-briefing .hero{padding:28px 26px}.simple-briefing .hero:after{left:26px;right:26px}}",
-      "@media(max-width:520px){.simple-briefing .kpis{grid-template-columns:1fr}.brief-deck{font-size:16px}.simple-briefing .hero h1{font-size:36px}",
+      ".simple-briefing .metric-grid tbody th{font-size:14px;color:var(--text);font-weight:600}.simple-briefing .metric-grid thead th{color:var(--muted)}",
+      "@media(max-width:850px){.simple-briefing .kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.simple-briefing .hero{padding:20px}.simple-briefing .hero:after{left:20px;right:20px}}",
+      "@media(max-width:520px){.simple-briefing .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.brief-deck{font-size:13px}.simple-briefing .hero h1{font-size:28px}",
       ".simple-briefing .table-wrap{overflow:visible;border-bottom:0}.simple-briefing table[data-board-table],.simple-briefing table[data-board-table] tbody{display:block;width:100%}",
       ".simple-briefing table[data-board-table] colgroup,.simple-briefing table[data-board-table] thead{display:none}",
       ".simple-briefing table[data-board-table] tbody tr{display:grid;grid-template-columns:32px minmax(0,1fr);gap:4px 10px;padding:14px 0;border-bottom:1px solid var(--line-soft);background:transparent}",
@@ -675,7 +830,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     return "<!doctype html><html><head><meta charset=\"utf-8\">" +
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
       "<title>Simple report</title><style>" + commonCss +
-      simpleCss + "</style></head><body class=\"simple-report\"><main class=\"wrap\">" +
+      simpleCss + refreshCss + "</style></head><body class=\"simple-report\"><main class=\"wrap\">" +
       body + "</main></body></html>";
   }
 
@@ -719,7 +874,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       "</tr></thead><tbody>" + fights.map(function (f,index) {
         var reportUrl = f.report_url || f.log_url,outcome=fightOutcome(f);
         return "<tr class=\"fight-outcome-" + outcome + (index >= 5 && !showAll ? " board-extra" : "") + "\"" +
-          " data-index=\"" + esc(f.index || 0) + "\" data-time=\"" + esc(f.index || 0) +
+          " data-index=\"" + esc(f.index || 0) + "\" data-time=\"" + esc(reportInstant(f.time_label) ? reportInstant(f.time_label).getTime() : f.index || 0) +
           "\" data-duration=\"" + esc(fightDurationMs(f.duration)) + "\" data-squad=\"" + esc(f.squad || 0) +
           "\" data-enemy=\"" + esc(f.enemy || 0) + "\" data-downs=\"" + esc(f.downs || 0) +
           "\" data-kills=\"" + esc(f.kills || 0) + "\" data-damage-out=\"" + esc(f.damage_out || 0) +
@@ -727,10 +882,10 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           drillAttrs("fight-row", "Fight " + (f.index || "—"),
           "Squad " + fmt(f.squad) + " vs " + fmt(f.enemy) + " · " +
           fmt(f.downs) + " downs · " + fmt(f.kills) + " kills",
-          "Observed fight summary · " + (f.time_label || "time unavailable")) +
+          "Observed fight summary · " + (reportTimestamp(f.time_label,true) || "time unavailable")) +
           (index >= 5 && !showAll ? " hidden" : "") +
           "><td class=\"number\" data-label=\"Fight\">" + fmt(f.index) + "</td><td data-label=\"Time\">" +
-          "<span title=\"" + esc(f.time_label || "Time unavailable") + "\">" +
+          "<span title=\"" + esc(reportTimestamp(f.time_label,true) || "Time unavailable") + "\">" +
           esc(fightClock(f.time_label) || "—") + "</span></td><td data-label=\"Duration\">" + fmt(f.duration) + "</td>" +
           "<td class=\"number\" data-label=\"Squad\">" + fmt(f.squad) + "</td>" +
           "<td class=\"number\" data-label=\"Enemy\">" + fmt(f.enemy) + "</td>" +
@@ -748,13 +903,13 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var rows = (model.poison || []).slice().sort(function (a, b) {
       return (b.apps_per_min || 0) - (a.apps_per_min || 0);
     });
-    if (!rows.length) return "<p class=\"empty\">No poison coverage data was found.</p>";
+    if (!rows.length) return "";
     var initialLimit=5;
     return "<article class=\"board poison-board\"><h3>Poison Applications</h3>" +
       "<div class=\"table-wrap\"><table class=\"poison-table\" data-board-table><colgroup>" +
-      "<col class=\"poison-rank\"><col class=\"poison-player\"><col class=\"poison-class\">" +
+      "<col class=\"poison-rank\"><col class=\"poison-player\">" +
       "<col class=\"poison-apps\"><col class=\"poison-rate\"><col class=\"poison-output\"></colgroup>" +
-      "<thead><tr><th>#</th><th>Player</th><th>Class</th>" +
+      "<thead><tr><th>#</th><th>Player</th>" +
       "<th class=\"number\"><button type=\"button\" data-sort-key=\"total\">Applications</button></th>" +
       "<th class=\"number\" aria-sort=\"descending\"><button type=\"button\" data-sort-key=\"rate\">Apps / min</button></th>" +
       "<th class=\"number\">Poison / sec</th></tr></thead><tbody>" + rows.map(function (r, i) {
@@ -763,9 +918,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           "Observed poison output; relic trigger attribution unavailable") +
           " data-total=\"" + esc(r.apps || 0) + "\" data-rate=\"" + esc(r.apps_per_min || 0) + "\"" +
           (i >= initialLimit ? " class=\"board-extra poison-extra\" hidden" : "") +
-          "><td class=\"number\">" + (i + 1) + "</td><td class=\"poison-player-cell\"><b>" +
-          esc(r.name) + "</b><small>" + esc(r.account) + "</small></td><td>" +
-          professionInline(r.prof || r.profession || "Unknown") +
+          "><td class=\"number\">" + (i + 1) + "</td><td class=\"poison-player-cell\">" + tablePlayer(r) +
           "</td><td class=\"number\">" + fmt(r.apps) +
           "</td><td class=\"number\">" + fmt(r.apps_per_min) +
           "</td><td class=\"number\">" + fmt(r.output) + "</td></tr>";
@@ -821,11 +974,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     });
   }
   function boardGrid(terms, limit, emptyText) {
-    var boards = boardsFor(terms);
-    return boards.length ? "<div class=\"boards\">" + boards.map(function (board) {
-      return boardCard(board, limit || 10);
-    }).join("") + "</div>" : "<p class=\"empty\">" + esc(emptyText ||
-      "No matching source table was available for this report.") + "</p>";
+    var cards=boardsFor(terms).map(function(board){return boardCard(board,limit || 10);}).filter(Boolean);
+    return cards.length ? "<div class=\"boards\">"+cards.join("")+"</div>" : "";
   }
   function tableBySource(sourceKey) {
     return (model.stat_tables || []).find(function(board) {
@@ -836,13 +986,13 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var source=tableBySource(sourceKey);
     if (!source) return null;
     var rows=(source.rows || []).map(function(row) {
-      var metrics=row.metrics || {}, hasTotal=metrics[totalKey] != null;
-      var hasRate=rateKey && metrics[rateKey] != null;
+      var metrics=row.metrics || {}, hasTotal=finiteMetric(metrics[totalKey]) != null;
+      var hasRate=rateKey && finiteMetric(metrics[rateKey]) != null;
       if (!hasTotal && !hasRate) return null;
       var total=hasTotal ? Number(metrics[totalKey]) : null;
-      var participation=Number(row.participation_time || metrics.fighttime || metrics.activetime || 0);
+      var participation=finiteMetric(row.participation_time || metrics.fighttime || metrics.activetime) || 0;
       var rate=hasRate ? Number(metrics[rateKey]) :
-        (total != null && participation ? total / participation * (perMinute ? 60 : 1) : null);
+        (total != null && participation>0 ? total / participation * (perMinute ? 60 : 1) : null);
       return Object.assign({},row,{total:total,rate:rate,value:rate != null ? rate : total,
         participation_time:participation || null,
         fight_count:row.fight_count != null ? row.fight_count : metrics.numfights});
@@ -862,20 +1012,21 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     }).slice(0,5);
     var max=Math.max.apply(null,rows.map(function(row){return Math.abs(weightedRowValue(row));}).concat([1]));
     var rateLabel=board.metric && board.metric.rate_label || board.value_label || titleCase(board.stat);
-    return "<div class=\"metric-chart-grid\"><div class=\"bar-card tone-" + esc(tone || "accent") +
-      "\"><div class=\"chart-title\"><b>" + esc(board.stat) + "</b><span>" + esc(rateLabel) +
-      " · highest first</span></div>" + rows.map(function(row){
-        var value=weightedRowValue(row),width=Math.max(2,Math.abs(value)/max*100);
-        return "<button type=\"button\" class=\"metric-row\"" + drillAttrs("session-player",
+    return "<div class=\"metric-chart-grid\"><article class=\"board rate-ranking-card tone-" + esc(tone || "accent") +
+      "\"><h3>" + esc(board.stat) + "</h3><div class=\"rate-ranking-head\"><span>"+(/by profession/i.test(board.stat)?"Profession":"Player")+"</span><span>" + esc(rateLabel) +
+      "</span></div>" + rows.map(function(row,index){
+        var value=weightedRowValue(row),width=Math.abs(value)/max*100;
+        return "<button type=\"button\" class=\"rate-ranking-row\"" + drillAttrs("session-player",
           row.name || board.stat, rateLabel + " " + fmt(value) +
           (row.total != null ? " · Total " + fmt(row.total) : ""),
           "Selected night · " + (board.source_tiddler || board.stat)) +
-          ">" + playerBarLabel(row) + "<i><em style=\"width:" +
-          width.toFixed(1) + "%\"></em></i><b>" + fmt(value) + "</b></button>";
-      }).join("") + "</div></div>";
+          " style=\"--comparison-color:"+professionColor(row.profession)+"\"><span class=\"rate-ranking-rank\">"+(index+1)+"</span>" + playerBarLabel(row) + "<b>" + fmt(value) + "</b><i class=\"rate-ranking-track\"><em style=\"width:" +
+          width + "%\"></em></i></button>";
+      }).join("") + "</article></div>";
   }
+  refreshCss += '.rate-ranking-card{padding:0!important;overflow:hidden}.rate-ranking-card h3{margin:0;padding:14px 16px;border-bottom:1px solid var(--line)}.rate-ranking-head{display:flex;justify-content:space-between;gap:12px;padding:8px 16px 8px 48px;color:var(--muted);font-size:12px}.rate-ranking-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;padding:10px 16px;border:0;border-top:1px solid var(--line-soft);background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer}.rate-ranking-row:hover,.rate-ranking-row:focus-visible{background:var(--panel-2)}.rate-ranking-rank{color:var(--muted);font-size:12px}.rate-ranking-row>b{font-size:14px;font-variant-numeric:tabular-nums;text-align:right}.rate-ranking-row .player-bar-label{min-width:0}.rate-ranking-track{grid-column:1/-1;display:block;height:8px;background:var(--panel-2);border-radius:3px;overflow:hidden}.rate-ranking-track em{display:block;height:100%;background:var(--accent);border-radius:3px}.rate-ranking-row .table-player,.rate-ranking-row .table-player b{white-space:normal;overflow-wrap:anywhere}.rate-ranking-row .table-player>span{flex-shrink:0}@media(max-width:620px){.rate-ranking-row{padding:10px 12px;gap:7px;grid-template-columns:20px minmax(0,1fr) auto}.rate-ranking-head{padding-left:39px;padding-right:12px}}';
   function metricBoardView(board, tone, includeTable) {
-    if (!board) return "<p class=\"empty\">This metric was not exported for the selected night.</p>";
+    if (!board) return "";
     return metricBoardBars(board,tone) + (includeTable === false ? "" :
       "<div class=\"boards\">" + boardCard(board,100) + "</div>");
   }
@@ -890,22 +1041,65 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       (applications ? sectionHead("Applications", "Conditions Applied", "Application counts are separate from Condition Damage.") +
         "<div class=\"boards\">" + boardCard(applications,100) + "</div>" : "");
   }
+  refreshCss += ".bubble-card h4{margin:16px 0 8px}.bubble-paired{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:12px;align-items:start}.bubble-paired>h4{grid-column:1/-1}.bubble-scroll .bubble-scatter{width:100%;max-width:900px;min-width:0}.bubble-key-scroll{max-height:430px;overflow:auto}.bubble-identity-table{width:100%;min-width:0!important;table-layout:fixed}.bubble-identity-table th,.bubble-identity-table td{padding:5px!important;font-size:12px;text-align:right;white-space:normal!important}.bubble-identity-table th:first-child{width:46%;text-align:left}.bubble-identity-table thead th{overflow-wrap:anywhere;text-transform:none}.bubble-scroll text{font-size:16px}.bubble-identity-table thead{position:sticky;top:0;z-index:1}.bubble-identity-table .bubble-identity{display:flex;align-items:center;gap:4px;width:100%;padding:0;border:0;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}.bubble-identity-table .table-player{min-width:0;white-space:normal}.bubble-identity-table .table-player b{white-space:normal;overflow-wrap:anywhere}.bubble-identity:focus-visible{outline:2px solid var(--accent)}.bubble-scatter .bubble-number{display:none}.bubble-scatter .point-highlight+.bubble-number{display:block}.bubble-scatter.has-highlight [data-bubble]:not(.point-highlight){opacity:.12}.bubble-scatter .point-highlight{stroke-width:2}@media(max-width:1200px){.bubble-paired{grid-template-columns:minmax(0,1fr)}.bubble-key-scroll{max-height:280px}}@media(max-width:600px){.bubble-card{padding:12px}.bubble-scroll text{font-size:24px}.bubble-identity-table th,.bubble-identity-table td{padding:4px 2px!important}}";
+  function bubbleChart(group) {
+    var support=group === "support";
+    var xBoard=support ? supportMetric("Boons Removed","boonstrips","Boons Removed / min") : derivedDamageBoard("DPS","targetdamage","targetdamageps","DPS");
+    var yBoard=support ? supportMetric("Condition Cleanses","condicleanse","Cleanses / min") : derivedMetricBoard("Down contribution","Offensive-Summary","downcontribution",null,"Down contribution / sec",false);
+    var sizeBoard=support ? supportMetric("Resurrects","resurrects","Resurrects / min") : derivedMetricBoard("Damage to downed enemies","Offensive-Summary","againstdowneddamage",null,"Damage to downed enemies / sec",false);
+    function indexed(board){var map=new Map();if(board)(board.rows||[]).forEach(function(row){map.set(metricIdentity(row),row);});return map;}
+    var xs=indexed(xBoard),ys=indexed(yBoard),sizes=indexed(sizeBoard);
+    var keys=Array.from(new Set(Array.from(xs.keys()).concat(Array.from(ys.keys()),Array.from(sizes.keys()))));
+    function value(row){var n=finiteMetric(row && row.rate);return n!=null && n>=0 ? n : null;}
+    var all=keys.map(function(key){return {key:key,row:xs.get(key)||ys.get(key)||sizes.get(key),x:value(xs.get(key)),y:value(ys.get(key)),size:value(sizes.get(key))};});
+    var maxX=Math.max.apply(null,all.map(function(p){return p.x||0;}).concat([0]));
+    var maxY=Math.max.apply(null,all.map(function(p){return p.y||0;}).concat([0]));
+    var maxSize=Math.max.apply(null,all.map(function(p){return p.size||0;}).concat([0]));
+    var xLabel=support ? "Boons removed / min" : "DPS",yLabel=support ? "Cleanses / min" : "Down contribution / sec";
+    var sizeLabel=support ? "resurrects / min" : "damage to downed enemies / sec";
+    function shown(v){return v==null ? "—" : fmt(v);}
+    function detail(p){return p.row.name+" · "+p.row.profession+" · "+xLabel+": "+shown(p.x)+" · "+yLabel+": "+shown(p.y)+" · "+sizeLabel+": "+shown(p.size);}
+    function attrs(p){return ' data-overview-name="'+esc(p.row.name)+'" data-identity="'+esc(p.key)+'" data-x="'+(p.x==null?'':p.x)+'" data-y="'+(p.y==null?'':p.y)+'" data-size="'+(p.size==null?'':p.size)+'"';}
+    function radius(p){return p.size>0 ? 18*Math.sqrt(p.size/maxSize) : 3;}
+    function circle(p,cx,cy,index){return '<circle data-bubble data-point-index="'+index+'" data-point-name="'+esc(p.row.name)+'" data-size="'+(p.size==null?'':p.size)+'" data-tooltip="'+esc(detail(p))+'" tabindex="0" role="button" aria-label="'+esc(detail(p))+'" cx="'+cx.toFixed(3)+'" cy="'+cy.toFixed(3)+'" r="'+radius(p).toFixed(3)+'" fill="'+(p.size>0?'var(--point-color)':'none')+'" stroke="var(--point-color)"'+(p.size==null?' stroke-dasharray="2 2"':'')+drillAttrs('session-player',p.row.name,detail(p),'Selected night')+'/>';}
+    var points=[],missing=[];
+    all.forEach(function(p){
+      if(p.x==null||p.y==null){missing.push(p);return;}
+      if(p.x!==0||p.y!==0)points.push(p);
+    });
+    points.sort(function(a,b){return b.y-a.y||b.x-a.x;});
+    var scatter='';
+    if(points.length){
+      scatter='<section class="bubble-paired"><div class="bubble-scroll"><svg class="bubble-scatter" viewBox="0 0 900 480" role="img" aria-label="'+esc(xLabel+' versus '+yLabel)+'">';
+      for(var tick=0;tick<=4;tick++) {
+        var tx=75+tick*190,ty=410-tick*90;
+        scatter+='<path class="bubble-gridline" d="M '+tx+' 50 V 410 M 75 '+ty+' H 835"/><text x="'+tx+'" y="432" text-anchor="middle">'+fmt(maxX*tick/4)+'</text><text x="65" y="'+(ty+4)+'" text-anchor="end">'+fmt(maxY*tick/4)+'</text>';
+      }
+      scatter+='<text x="455" y="468" text-anchor="middle">'+esc(xLabel)+'</text><text x="75" y="22">'+esc(yLabel)+'</text>';
+      scatter+=points.slice().sort(function(a,b){return (b.size||0)-(a.size||0);}).map(function(p){var index=points.indexOf(p),cx=75+(maxX?p.x/maxX*760:0),cy=410-(maxY?p.y/maxY*360:0);return '<g style="--point-color:'+professionColor(p.row.profession)+'"'+attrs(p)+'>'+circle(p,cx,cy,index)+'<text class="bubble-number" x="'+(cx+radius(p)+3).toFixed(3)+'" y="'+(cy-4).toFixed(3)+'">'+(index+1)+'</text></g>';}).join('')+'</svg></div><div class="bubble-key-columns">'+identityTable(points.slice(0,Math.ceil(points.length/2)),true)+identityTable(points.slice(Math.ceil(points.length/2)),true)+'</div></section>';
+    }
+    function identityTable(list,paired){
+      if(!list.length)return '';
+      return '<div class="bubble-key-scroll"><table class="bubble-identity-table"><thead><tr><th>Player</th><th title="'+esc(xLabel)+'">'+(support?'Removed / min':'DPS')+'</th><th title="'+esc(yLabel)+'">'+(support?'Cleanses / min':'Down / sec')+'</th><th title="'+esc(sizeLabel)+'">'+(support?'Res / min':'Downed / sec')+'</th></tr></thead><tbody>'+list.map(function(p){var index=points.indexOf(p);return '<tr style="--point-color:'+professionColor(p.row.profession)+'"'+(paired?'':attrs(p))+'><th><button type="button" class="bubble-identity" '+(paired?'data-highlight-point="'+index+'" ':'')+'data-tooltip="'+esc(detail(p))+'"'+drillAttrs('session-player',p.row.name,detail(p),'Selected night')+'>'+(paired?'<span>'+(index+1)+'.</span>':'')+tablePlayer(p.row)+'</button></th><td>'+compactMetric(p.x)+'</td><td>'+compactMetric(p.y)+'</td><td>'+compactMetric(p.size)+'</td></tr>';}).join('')+'</tbody></table></div>';
+    }
+    return '<article class="bubble-card bubble-comparison" data-bubble-chart="'+group+'"><h3>'+(support?'Boon removal & cleansing':'Damage & down pressure')+'</h3><p class="bubble-size-key">Area: '+esc(sizeLabel)+' · ○ 0 · ◌ —</p>'+scatter+(missing.length?'<h4>Incomplete data</h4>'+identityTable(missing,false):'')+'</article>';
+  }
+  refreshCss += ".bubble-comparison .bubble-paired{display:block}.bubble-comparison .bubble-scroll{overflow:visible}.bubble-comparison .bubble-scatter{margin:0 auto;max-width:100%;height:auto;max-height:520px}.bubble-comparison .bubble-key-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:16px}.bubble-comparison .bubble-key-scroll{max-height:none;overflow:visible;min-width:0}.bubble-comparison .bubble-identity-table th,.bubble-comparison .bubble-identity-table td{font-size:14px;padding:6px 5px!important}.bubble-comparison .bubble-identity-table th:first-child{width:52%}.bubble-comparison .bubble-identity-table td{font-variant-numeric:tabular-nums}.bubble-comparison .bubble-identity-table thead{position:static}.bubble-comparison .bubble-identity-table tbody tr:has(.bubble-identity:focus-visible),.bubble-comparison .bubble-identity-table tbody tr:hover{background:color-mix(in srgb,var(--text) 6%,transparent)}.bubble-comparison .bubble-size-key{font-size:14px;margin:8px 0 18px}@media(max-width:1100px){.bubble-comparison .bubble-key-columns{grid-template-columns:minmax(0,1fr);gap:0}.bubble-comparison .bubble-key-columns>.bubble-key-scroll+ .bubble-key-scroll thead{display:none}}@media(max-width:600px){.bubble-comparison .bubble-identity-table th,.bubble-comparison .bubble-identity-table td{padding:6px 2px!important}.bubble-comparison .bubble-identity-table th:first-child{width:46%}}";
   function damageCompositionView() {
     var source=tableBySource("Damage");
-    if (!source) return "<p class=\"empty\">No player Damage table was exported.</p>";
+    if (!source) return "";
     var rows=(source.rows || []).map(function(row){var metrics=row.metrics || {};
       return {row:row,total:Number(metrics.targetdamageps || 0),power:Number(metrics.targetpowerps || 0),
         condition:Number(metrics.targetconditionps || 0)};}).sort(function(a,b){return b.total-a.total;}).slice(0,5);
     var max=Math.max.apply(null,rows.map(function(item){return item.total;}).concat([1]));
-    return "<article class=\"bar-card damage-composition-card\"><div class=\"chart-title\"><b>Total DPS · Power + Condition</b>" +
-      "<span>Sorted by total DPS · colored segments show the damage profile</span></div><div class=\"damage-composition-legend\"><span class=\"power\">Power DPS</span><span class=\"condition\">Condition DPS</span><span>Total DPS</span></div>" +
-      rows.map(function(item){var row=item.row,totalWidth=Math.max(2,item.total/max*100),powerShare=item.total ? item.power/item.total*100 : 0,
+    return "<article class=\"board damage-composition-card\"><h3>Total DPS · Power + Condition</h3>" +
+      "<div class=\"damage-composition-legend\"><span class=\"power\">Power</span><span class=\"condition\">Condition</span></div>" +
+      rows.map(function(item,index){var row=item.row,totalWidth=Math.max(0,item.total/max*100),powerShare=item.total ? item.power/item.total*100 : 0,
         conditionShare=item.total ? item.condition/item.total*100 : 0;
         return "<button type=\"button\" class=\"damage-composition-row\"" + drillAttrs("session-player",row.name || "Player",
           "Total DPS " + fmt(item.total) + " · Power DPS " + fmt(item.power) + " · Condition DPS " + fmt(item.condition),
-          "Selected night · Damage to enemy players") + "><span class=\"damage-player\">" + professionInline(row.profession || "Unknown") +
-          "<span><b>" + esc(row.name || "Player") + "</b><small>Power " + fmt(item.power) + " · Condition " + fmt(item.condition) +
-          "</small></span></span><span class=\"damage-total-track\"><i style=\"width:" + totalWidth.toFixed(1) + "%\"><em class=\"power\" style=\"width:" +
+          "Selected night · Damage to enemy players") + "><span class=\"damage-rank\">"+(index+1)+"</span><span class=\"damage-player\">" + tablePlayer(row) +
+          "</span><span class=\"damage-total-track\"><i style=\"width:" + totalWidth.toFixed(1) + "%\"><em class=\"power\" style=\"width:" +
           Math.max(0,powerShare).toFixed(1) + "%\"></em><em class=\"condition\" style=\"width:" + Math.max(0,conditionShare).toFixed(1) +
           "%\"></em></i></span><strong>" + fmt(item.total) + " DPS</strong></button>";}).join("") + "</article>";
   }
@@ -914,7 +1108,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       derivedMetricBoard("Enemy Downs","Offensive-Summary","downed",null,"Enemy Downs / min",true),
       derivedMetricBoard("Enemy Kills","Offensive-Summary","killed",null,"Enemy Kills / min",true)].filter(Boolean);
     return boards.length ? boards.map(function(board){return metricBoardView(board,"danger",includeTables);}).join("") :
-      "<p class=\"empty\">No fight-conversion player table was exported.</p>";
+      "";
   }
   function supportMetric(label,key,rateLabel) {
     return derivedMetricBoard(label,"Support-Summary",key,null,rateLabel,true);
@@ -922,22 +1116,35 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   function offensiveMetric(label,key,rateLabel) {
     return derivedMetricBoard(label,"Offensive-Summary",key,null,rateLabel,true);
   }
+  refreshCss += '.support-rankings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.support-ranking{min-width:0}.support-ranking table{width:100%;min-width:0!important;table-layout:fixed}.support-ranking tbody tr[hidden]{display:none!important}.support-ranking td{padding:9px 14px!important;white-space:normal!important}.support-ranking-labels,.support-ranking-line{display:grid;grid-template-columns:minmax(0,1fr) 110px 74px;gap:8px;align-items:center}.support-ranking-labels{min-height:34px;padding:0 14px 8px;font-size:12px;color:var(--muted)}.support-ranking-labels span:not(:first-child),.support-ranking-line>span{text-align:right;font-variant-numeric:tabular-nums}.support-ranking .table-player{min-width:0;white-space:normal}.support-ranking .table-player b{white-space:normal;overflow-wrap:anywhere}.support-ranking-track{display:block;height:7px;background:var(--border);border-radius:4px;margin-top:8px;overflow:hidden}.support-ranking-track i{display:block;height:100%;background:var(--support);border-radius:4px}.support-ranking h3{margin-bottom:12px}@media(max-width:760px){.support-rankings{grid-template-columns:minmax(0,1fr)}.support-ranking-labels,.support-ranking-line{grid-template-columns:minmax(0,1fr) 82px 64px;gap:6px}.support-ranking table tbody tr{display:table-row!important}.support-ranking table tbody td{display:table-cell!important;width:auto!important}}';
+  function supportRankings() {
+    var definitions=[['Cleansing','condicleanse','Cleanses / min'],['Boon removal','boonstrips','Strips / min']];
+    return '<div class="support-rankings" data-support-rankings>'+definitions.map(function(def){
+      var board=supportMetric(def[0],def[1],def[2]);
+      if(!board)return '';
+      var rows=(board.rows||[]).slice().sort(function(a,b){return compareMetricValues(finiteMetric(a.rate),finiteMetric(b.rate),'descending');});
+      var maximum=Math.max.apply(null,rows.map(function(row){return finiteMetric(row.rate)||0;}).concat([0]));
+      function shown(value){return finiteMetric(value)==null?'—':fmt(value);}
+      return '<article class="board support-ranking" data-support-metric="'+def[1]+'"><h3>'+def[0]+'</h3><div class="support-ranking-labels"><span>Player</span><span>'+def[2]+' ↓</span><span>Total</span></div><table aria-label="'+def[0]+'" data-initial-limit="5"><tbody>'+rows.map(function(row,index){
+        var rate=finiteMetric(row.rate),width=maximum>0&&rate!=null?Math.max(0,rate)/maximum*100:0;
+        return '<tr data-support-player="'+esc(metricIdentity(row))+'" data-rate="'+(rate==null?'':rate)+'" data-total="'+(finiteMetric(row.total)==null?'':row.total)+'"'+(index>=5?' hidden':'')+'><td><div class="support-ranking-line">'+tablePlayer(row)+'<span title="'+esc(def[2]+': '+shown(rate))+'">'+shown(rate)+'</span><span title="Total: '+shown(row.total)+'">'+shown(row.total)+'</span></div><span class="support-ranking-track" aria-hidden="true"><i style="width:'+width+'%;background:'+professionColor(row.profession)+'"></i></span></td></tr>';
+      }).join('')+'</tbody></table>'+(rows.length>5?'<footer class="board-actions"><button type="button" data-expand-board aria-expanded="false">Expand all '+rows.length+'</button></footer>':'')+'</article>';
+    }).join('')+'</div>';
+  }
   function supportOverviewView() {
     var boards=[supportMetric("Condition Cleanses","condicleanse","Cleanses / min"),
       supportMetric("Boons Removed","boonstrips","Boons Removed / min"),
       offensiveMetric("Crowd Control","appliedcrowdcontrol","Crowd Control / min"),
       supportMetric("Resurrects","resurrects","Resurrects / min")].filter(Boolean);
-    return boards.length ? "<div class=\"curated-metric-stack\">" + boards.map(function(board){
+    return metricGrid("utility") + supportRankings() + (boards.length ? "<div class=\"curated-metric-stack\">" + boards.map(function(board){
       return metricBoardBars(board,"support");}).join("") + "</div>" :
-      "<p class=\"empty\">No support summary was exported for this night.</p>";
+      "");
   }
   function cleansesView() {
     return metricBoardView(supportMetric("Condition Cleanses","condicleanse","Cleanses / min"),"support",true);
   }
   function stripsAndControlView() {
-    var strips=supportMetric("Boons Removed","boonstrips","Boons Removed / min");
-    var control=offensiveMetric("Crowd Control","appliedcrowdcontrol","Crowd Control / min");
-    return metricBoardView(strips,"control",true) + metricBoardView(control,"control",true);
+    return metricGrid("strips") || "";
   }
   function resurrectView() {
     var resurrects=supportMetric("Resurrects","resurrects","Resurrects / min");
@@ -954,9 +1161,9 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var boards=[healMetric("Healing","healing","healingps","Healing / sec"),
       healMetric("Barrier","barrier","barrierps","Barrier / sec"),
       healMetric("Downed-Ally Healing","downedhealing","downedhealingps","Downed Healing / sec")].filter(Boolean);
-    return boards.length ? "<div class=\"curated-metric-stack\">" + boards.map(function(board){
+    return metricGrid("healing") + (boards.length ? "<div class=\"curated-metric-stack\">" + boards.map(function(board){
       return metricBoardBars(board,"heal");}).join("") + "</div>" :
-      "<p class=\"empty\">No healing statistics were exported for this night.</p>";
+      "");
   }
   function healingAndBarrierView() {
     return metricBoardView(healMetric("Healing","healing","healingps","Healing / sec"),"heal",true) +
@@ -974,7 +1181,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       fight_count:item.players,metrics:{healing:item.healing,healingps:item.time ? item.healing/item.time : 0,
         barrier:item.barrier,barrierps:item.time ? item.barrier/item.time : 0,players:item.players}};});
     var board=rows.length ? {stat:"Healing by Profession",source_key:"Heal-Stats",source_tiddler:source.source_tiddler,
-      value_label:"Healing / sec",metric:{total_label:"Healing",rate_label:"Healing / sec"},rows:rows} : null;
+      identity_label:"Profession",count_label:"Players",value_label:"Healing / sec",metric:{total_label:"Healing",rate_label:"Healing / sec"},rows:rows} : null;
     return metricBoardView(board,"heal",true);
   }
   function weightedRowValue(row) {
@@ -1002,8 +1209,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   }
   function sectionHead(kicker, title, text) {
     return "<div class=\"section-head\"><div><span class=\"eyebrow\">" +
-      esc(kicker) + "</span><h2>" + esc(title) + "</h2></div><p>" +
-      esc(text) + "</p></div>";
+      esc(kicker) + "</span><h2>" + esc(title) + "</h2></div></div>";
   }
   function subnav(group, items) {
     return "<nav class=\"subtabs\" aria-label=\"" + esc(titleCase(group)) +
@@ -1045,9 +1251,9 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           Math.max(3, Math.min(5, groupWidth / 6)).toFixed(1) + "\" height=\"" +
           Math.max(value ? 2 : 0, barHeight).toFixed(1) + "\"" +
           drillAttrs("chart-bar", "Fight " + (f.index || fightIndex + 1) + " · " + s.label,
-            String(value), "Source: Overview fight summary") +
+            fmt(value), "Source: Overview fight summary") +
           "><title>Fight " + esc(f.index || fightIndex + 1) + " · " + s.label +
-          ": " + value + "</title></rect>";
+          ": " + fmt(value) + "</title></rect>";
       }).join("");
     }).join("");
     return "<div class=\"chart-card outcome-chart\"><div class=\"chart-title\"><b>Fight outcomes</b>" +
@@ -1061,30 +1267,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   }
   function fightPulse() { return outcomeChart(); }
   function metricBars(terms, title, tone, limit) {
-    var chartLimit=Math.min(5,limit || 5);
-    var chartBoards=boardsFor(terms).map(function(board){
-      var rows=(board.rows || []).map(function(row){return {row:row,weighted:weightedRowValue(row)};})
-        .filter(function(item){return Number.isFinite(item.weighted);})
-        .sort(function(a,b){return b.weighted-a.weighted;}).slice(0,chartLimit);
-      return {board:board,rows:rows};
-    }).filter(function(item){return item.rows.length;}).slice(0,4);
-    if (!chartBoards.length) return "<p class=\"empty\">No chartable values were exported.</p>";
-    return "<div class=\"metric-chart-grid\">" + chartBoards.map(function(group){
-      var board=group.board, rows=group.rows;
-      var max=Math.max.apply(null,rows.map(function(item){return Math.abs(item.weighted);}).concat([1]));
-      var rateLabel=(board.metric && board.metric.rate_label) || board.value_label || titleCase(board.stat);
-      var heading=titleCase(board.stat);
-      return "<div class=\"bar-card tone-" + esc(tone || "accent") + "\"><div class=\"chart-title\"><b>" +
-        esc(heading) + "</b><span>" + esc(rateLabel) + " · highest first</span></div>" + rows.map(function(item){
-          var row=item.row,value=item.weighted,width=Math.max(2,Math.abs(value)/max*100);
-          return "<button type=\"button\" class=\"metric-row\"" + drillAttrs("session-player",
-            row.name || heading, rateLabel + " " + fmt(value) +
-            (row.total != null ? " · Total " + fmt(row.total) : ""),
-            "Source: " + (board.source_tiddler || titleCase(board.stat))) +
-            ">" + playerBarLabel(row) + "<i><em style=\"width:" +
-            width.toFixed(1) + "%\"></em></i><b>" + fmt(value) + "</b></button>";
-        }).join("") + "</div>";
-    }).join("") + "</div>";
+    return boardsFor(terms).filter(function(board){return (board.rows || []).length;}).slice(0,4)
+      .map(function(board){return metricBoardBars(board,tone);}).join("");
   }
   function boonEconomyContext() {
     var uptime=(model.stat_tables || []).find(function(board){return board.source_key === "Uptimes" || board.stat === "Uptimes";});
@@ -1112,31 +1296,70 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       fmt(Number(incoming.rate_per_combat_minute || (combatSeconds ? incomingRemoval*60/combatSeconds : 0))) + "/min</small></div></div>" +
       "<div class=\"economy-uptimes\">" + uptimes.map(function(row){return "<span><b>" + esc(titleCase(row.key)) +
         " " + fmt(row.value) + "%</b><small>weighted uptime</small></span>";}).join("") + "</div>" +
-      "<p>Uptime is the result after generation, boon duration, deaths, and enemy removal. These values stay separate; no combined score is invented.</p></article>";
+      "</article>";
   }
-  function boonGenerationCharts() {
+  function boonColor(key) {
+    var colors={stability:"#e4b95b",might:"#ef816b",fury:"#d884bb",quickness:"#71c7d5",alacrity:"#9e9fea",protection:"#73a9e5",aegis:"#e1cc80",resolution:"#85c7b1",resistance:"#b5a4de",regeneration:"#79c78e",vigor:"#b1cc6d"};
+    return colors[String(key).toLowerCase().split(" ")[0]] || "var(--accent)";
+  }
+  function accessibleBar(label,value,unit,width,detail) {
+    var exact=label+": "+fmt(value)+" "+unit+(detail ? " · "+detail : "");
+    return "<div class=\"sparky-boon-bar\" tabindex=\"0\" title=\""+esc(exact)+"\" aria-label=\""+esc(exact)+"\"><span class=\"boon-track\" aria-hidden=\"true\"><i style=\"width:"+Math.max(0,Math.min(100,width)).toFixed(2)+"%\"></i></span><b>"+fmt(value)+" "+esc(unit)+"</b><span class=\"chart-tooltip\">"+esc(exact)+"</span></div>";
+  }
+  function multiboonGenerationChart(compact) {
+    var data=model.boon_generation || {};
+    var unavailable='';
+    if (data.scope !== "session" || data.unit !== "weighted_generation") return unavailable;
+    var totals={},rows=(data.rows || []).map(function(row){
+      var boons={},total=0;
+      Object.keys(row.boons || {}).forEach(function(name){
+        var value=finiteMetric(row.boons[name]);
+        if (value == null || value<0) return;
+        boons[name]=value;total+=value;totals[name]=(totals[name] || 0)+value;
+      });
+      return {name:row.name || "Player",profession:row.profession || "Unknown",boons:boons,total:total};
+    }).filter(function(row){return Object.keys(row.boons).length;}).sort(function(a,b){return b.total-a.total || a.name.localeCompare(b.name);});
+    if (!rows.length) return unavailable;
+    var names=Object.keys(totals).sort(function(a,b){return totals[b]-totals[a] || a.localeCompare(b);});
+    var grand=names.reduce(function(sum,name){return sum+totals[name];},0);
+    var major=names.filter(function(name,index){return index<7 && (grand===0 || totals[name]/grand>=.01);});
+    var minor=names.filter(function(name){return major.indexOf(name)<0;});
+    var categories=major.concat(minor.length ? ["Other"] : []),max=Math.max.apply(null,rows.map(function(row){return row.total;}).concat([1]));
+    function color(name){return name === "Other" ? "#8d96a6" : boonColor(name);}
+    return '<section class="multiboon-chart generation-card" data-multiboon-chart><div class="chart-title"><h2>Squad boons</h2><span>Boon output</span></div><div class="multiboon-legend">'+categories.map(function(name){return '<span><i style="background:'+color(name)+'"></i>'+esc(name)+'</span>';}).join('')+'</div><div class="multiboon-rows">'+rows.map(function(row,index){
+      var detail=row.name+' · Boon output: '+fmt(row.total);
+      return (compact && index===10 ? '<details class="boon-more"><summary>Show all '+rows.length+' player rows / collapse</summary>' : '')+'<div class="multiboon-row" data-multiboon-player="'+esc(row.name)+'"><span class="multiboon-name">'+tablePlayer(row)+'</span><div class="multiboon-bar" tabindex="0" aria-label="'+esc(detail)+'" title="'+esc(detail)+'"><span class="multiboon-track">'+categories.map(function(name){
+        var value=name === 'Other' ? minor.reduce(function(sum,key){return sum+(row.boons[key] || 0);},0) : (row.boons[name] || 0);
+        return '<i data-boon="'+esc(name)+'" tabindex="0" data-tooltip="'+esc(row.name+' · '+name+': '+fmt(value))+'" aria-label="'+esc(row.name+' · '+name+': '+fmt(value))+'" style="background:'+color(name)+';width:'+(value/max*100)+'%"></i>';
+      }).join('')+'</span><span class="chart-tooltip">'+esc(detail)+'</span></div><b>'+fmt(row.total)+'</b></div>';
+    }).join('')+(compact && rows.length>10 ? '</details>' : '')+'</div></section>';
+  }
+  function boonGenerationCharts(compact) {
+    var overview=multiboonGenerationChart(compact);
     var boards=(model.stat_tables || []).filter(function(board){return /generation/i.test(String(board.stat || ""));});
-    if (!boards.length) return "";
-    return "<section class=\"boon-generation\"><div class=\"section-head\"><div><span class=\"eyebrow\">What We Did Well · By Profession</span>" +
-      "<h2>Boon generation</h2></div><p>Weighted by each player’s fight time; total generation remains visible.</p></div>" +
+    if (!boards.length) return overview;
+    return overview + "<section class=\"boon-generation\"><div class=\"section-head\"><div>" +
+      "<h2>Boon generation by profession</h2></div></div>" +
       boards.map(function(board){
         var professions={};
         (board.rows || []).forEach(function(row){var profession=row.profession || "Unknown";
           var item=professions[profession] || {profession:profession,total:0,time:0,players:0};
-          item.total += Number(row.total != null ? row.total : row.metrics && row.metrics.totalgen || 0);
-          item.time += Number(row.participation_time || row.metrics && row.metrics.fighttime || 0);
+          var total=finiteMetric(row.total != null ? row.total : row.metrics && row.metrics.totalgen),time=finiteMetric(row.participation_time || row.metrics && row.metrics.fighttime);
+          if (total == null || !(time>0)) return;
+          item.total += total;
+          item.time += time;
           item.players += 1; professions[profession]=item;});
         var rows=Object.keys(professions).map(function(key){var item=professions[key];
           item.rate=item.time ? item.total/item.time : 0; return item;})
           .sort(function(a,b){return b.rate-a.rate;});
+        if (!rows.length) return "";
         var max=Math.max.apply(null,rows.map(function(row){return row.rate;}).concat([1]));
         var rateLabel=board.metric && board.metric.rate_label || "Generation / sec";
-        return "<article class=\"bar-card generation-card\"><div class=\"chart-title\"><b>" +
+        return "<article class=\"bar-card generation-card\" style=\"--boon-color:"+boonColor(board.stat)+"\"><div class=\"chart-title\"><b>" +
           esc(titleCase(board.stat)) + " by Profession</b><span>" + esc(rateLabel) + " · highest first</span></div>" +
-          rows.map(function(row){return "<div class=\"generation-row\"><span>" + professionInline(row.profession) +
-            "</span><i><em style=\"width:" + Math.max(2,row.rate/max*100).toFixed(1) + "%\"></em></i>" +
-            "<b>" + fmt(row.rate) + "/s</b><small>" + fmt(row.total) + " total · " + fmt(row.players) +
-            " player" + (row.players === 1 ? "" : "s") + "</small></div>";}).join("") + "</article>";
+          rows.map(function(row){return "<div class=\"boon-stat-row\"><span><b>" + esc(row.profession) +
+            "</b><small>"+fmt(row.players)+" players · "+humanDuration(row.time)+" combined participation</small></span>"+
+            accessibleBar(rateLabel,row.rate,"generation / sec",row.rate/max*100,"Total generation: "+fmt(row.total)+"; combined player time: "+fmt(row.time)+" seconds")+"</div>";}).join("") + "</article>";
       }).join("") + "</section>";
   }
   function boonUptimeCharts(keys, title) {
@@ -1144,23 +1367,20 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     if (!board) return "";
     var cards=(keys || []).map(function(key){
       var rows=(board.rows || []).map(function(row){return {name:row.name,account:row.account,
-        profession:row.profession,value:Number(row.metrics && row.metrics[key]),
+        profession:row.profession,value:finiteMetric(row.metrics && row.metrics[key]),
         participation:row.participation_time,fights:row.fight_count};})
-        .filter(function(row){return Number.isFinite(row.value);})
+        .filter(function(row){return row.value != null;})
         .sort(function(a,b){return b.value-a.value;}).slice(0,5);
       if (!rows.length) return "";
-      var max=Math.max.apply(null,rows.map(function(row){return row.value;}).concat([1]));
-      return "<article class=\"bar-card boon-card\"><div class=\"chart-title\"><b>" +
-        esc(titleCase(key)) + " Uptime</b><span>Top 5 · participation-weighted</span></div>" +
-        rows.map(function(row){return "<div class=\"boon-row\"><span class=\"boon-player\">" +
-          professionGlyph(row.profession || "Unknown") + "<span><b>" + esc(row.name || "Player") +
-          "</b><small>" + esc(row.profession || "Class unavailable") + " · " +
-          humanDuration(Number(row.participation || 0)) + " · " + fmt(row.fights) + " fights</small></span></span>" +
-          "<i><em style=\"width:" + Math.max(2,row.value/max*100).toFixed(1) + "%\"></em></i><strong>" +
-          fmt(row.value) + "%</strong></div>";}).join("") + "</article>";
+      var stacks=key === "might" && !(board.rows || []).some(function(row){return row.metric_units && row.metric_units[key] === "percent";});
+      var max=stacks ? 25 : 100,unit=stacks ? "stacks" : "%",label=titleCase(key)+(stacks ? " Average Stacks" : " Uptime");
+      return "<article class=\"bar-card boon-card\" style=\"--boon-color:"+boonColor(key)+"\"><div class=\"chart-title\"><b>" +
+        esc(label) + "</b><span>Top 5 · received boons · scale 0–"+max+" "+unit+"</span></div>" +
+        rows.map(function(row){return "<div class=\"boon-stat-row\">" + tablePlayer(row) +
+          accessibleBar(label,row.value,unit,row.value/max*100,row.name+"; received, not generated")+"</div>";}).join("") + "</article>";
     }).filter(Boolean).join("");
     return cards ? "<section class=\"boon-uptimes\"><div class=\"section-head\"><div><span class=\"eyebrow\">" +
-      esc(title) + "</span><h2>Uptime leaders</h2></div><p>Stability is shown first; each chart is sorted by uptime.</p></div>" +
+      esc(title) + "</span><h2>Uptime leaders</h2></div></div>" +
       "<div class=\"boon-grid\">" + cards + "</div></section>" : "";
   }
   function conditionHeatmap(pressure) {
@@ -1176,7 +1396,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         if (!key || seen[key]) return false;
         seen[key]=true; return true;
       }).slice(0, 18);
-    if (!rows.length) return "<p class=\"empty\">No condition heatmap values were exported.</p>";
+    if (!rows.length) return "";
     var max = Math.max.apply(null, rows.map(function(row){return Number(row.uptime_percent || row.count || row.value || 0);}).concat([1]));
     return "<div class=\"heatmap\" aria-label=\"Incoming condition heatmap\">" + rows.map(function(row){
       var label=row.effect || row.name || row.condition || "Condition";
@@ -1192,14 +1412,10 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     }).join("") + "</div>";
   }
   function pressureBars(rows, title, tone, metric) {
-    rows = (rows || []).slice().sort(function(a,b) {
-      function amount(row){return Number(metric && row[metric] != null ? row[metric] :
-        row.damage || row.count || row.uptime_percent || row.value || 0);}
-      return amount(b)-amount(a);
-    }).slice(0, 10);
-    if (!rows.length) return "<p class=\"empty\">No observed values exported for this metric.</p>";
-    var values=rows.map(function(row){return Number(metric && row[metric] != null ? row[metric] :
-      row.damage || row.count || row.uptime_percent || row.value || 0);});
+    function amount(row){var candidates=metric ? [row[metric]] : [row.damage,row.count,row.uptime_percent,row.value];return candidates.map(finiteMetric).find(function(v){return v != null;});}
+    rows = (rows || []).filter(function(row){return amount(row) != null;}).sort(function(a,b){return amount(b)-amount(a);}).slice(0,10);
+    if (!rows.length) return "";
+    var values=rows.map(amount);
     var max=Math.max.apply(null, values.concat([1]));
     return "<div class=\"bar-card tone-" + esc(tone || "enemy") + "\"><div class=\"chart-title\"><b>" +
       esc(title) + "</b><span>Across all modeled fights</span></div>" + rows.map(function(row,index){
@@ -1224,7 +1440,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     if (!rows.length) return "";
     var limit=10;
     return "<article class=\"board enemy-skill-board\"><div class=\"chart-title\"><b>Enemy Skill Pressure</b>" +
-      "<span>Damage first · sort by hits or casts</span></div><p class=\"skill-table-note\">Connected hits are the best frequency signal for pulsing fields. A missing cast count is shown as —, not zero.</p>" +
+      "<span>Damage first · sort by hits or casts</span></div>" +
       "<div class=\"table-wrap\"><table class=\"enemy-skill-table\" data-board-table data-initial-limit=\"" + limit + "\">" +
       "<colgroup><col class=\"skill-rank\"><col class=\"skill-name\"><col class=\"skill-damage\"><col class=\"skill-share\"><col class=\"skill-hits\"><col class=\"skill-casts\"><col class=\"skill-per-hit\"></colgroup>" +
       "<thead><tr><th>#</th><th>Skill</th><th class=\"number\" aria-sort=\"descending\"><button type=\"button\" data-sort-key=\"damage\">Damage</button></th>" +
@@ -1272,7 +1488,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           drillAttrs("session-player",row.name,fmt(row.total)+" boons removed · "+fmt(row.rate)+" per active minute",
             "Support - Summary · outgoing boon removal") + ">" + playerBarLabel(row) +
           "<strong>" + fmt(row.total) + "</strong><small>" + fmt(row.rate) + " / active min</small></button>";}).join("") +
-        "</div>" : "") + "<p>Incoming removal is observed from our defense records, but the source does not identify which enemy professions or skills removed each boon.</p></article>";
+        "</div>" : "") + "</article>";
   }
   function damageProfileCard(profile) {
     if (!profile || profile.status !== "observed") return "";
@@ -1380,20 +1596,15 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     }).filter(Boolean).join("");
     if (!rendered) return "";
     return "<article class=\"duel-card\" data-scope-section=\"fight-output\"><div class=\"chart-title duel-heading\"><b>Our Squad vs Enemy</b>" +
-      "<span class=\"duel-mode\"><button type=\"button\" class=\"selected\" aria-pressed=\"true\" data-duel-mode=\"total\">Totals</button>" +
+      "<span class=\"duel-mode\"><button type=\"button\" class=\"selected\" aria-pressed=\"true\" data-duel-mode=\"total\">Total</button>" +
       "<button type=\"button\" aria-pressed=\"false\" data-duel-mode=\"normalized\">Per enemy / fight</button></span><span>" +
       esc(scopeLabel) + " · " + fmt(fights) + " matched fight" + (fights === 1 ? "" : "s") +
       "</span></div><div class=\"duel-legend\"><span class=\"ours\">Our squad</span>" +
-      "<span class=\"enemy\">Enemy</span></div><p>Each row shares one scale. Crowd control is directional " +
-      "context because outgoing applications and received events are not identical measurements.</p>" +
-      "<div class=\"duel-grid\">" + rendered + "</div><p class=\"normalization-note\"><b>Normalized denominator:</b> " +
-      fmt(enemyPlayerFights) + " observed enemy player-fight appearances. Allied squads fighting beside us " +
-      "are not fully represented, so this measures pressure involving our logged squad—not total battlefield output.</p></article>";
+      "<span class=\"enemy\">Enemy</span></div>" +
+      "<div class=\"duel-grid\">" + rendered + "</div></article>";
   }
   function poisonContext() {
-    return "<p class=\"accuracy condition-note\"><b>Poison evidence:</b> applications " +
-      "and output are observed. The log cannot attribute individual applications to " +
-      "Demon Queen Relic. Open any row for its evidence.</p>";
+    return "";
   }
   function highScoreGrid(terms) {
     var blocks = model.high_scores && model.high_scores.blocks || [];
@@ -1410,33 +1621,44 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     });
     return renderHighScoreBlocks(blocks);
   }
+  // Dedicated High Scores ranking layout; keep shared table/grid styles untouched.
+  refreshCss += ".boards.high-score-grid{grid-template-columns:minmax(0,1fr)}.high-score-bars table.high-score-table,.high-score-bars table.high-score-table thead,.high-score-bars table.high-score-table tbody{display:block;width:100%;min-width:0}.high-score-bars table.high-score-table tr{display:grid;grid-template-columns:24px minmax(0,1fr) max-content;gap:5px 10px;padding:8px 12px;align-items:center}.high-score-bars table.high-score-table th,.high-score-bars table.high-score-table td{display:block;min-width:0;width:auto;padding:0;border:0;white-space:normal}.high-score-bars table.high-score-table tr>:first-child{grid-column:1;grid-row:1}.high-score-bars table.high-score-table tr>:nth-child(2){grid-column:2;grid-row:1}.high-score-bars table.high-score-table tr>:nth-child(3){grid-column:3;grid-row:1}.high-score-bars table.high-score-table thead tr{padding-top:3px;padding-bottom:3px}.high-score-bars table.high-score-table tbody tr{border-bottom:1px solid var(--line-soft)}.high-score-bars table.high-score-table tbody tr[hidden]{display:none!important}.high-score-bars .score-entry{display:flex!important;flex-wrap:wrap;align-items:center;gap:3px 12px;cursor:pointer}.high-score-bars .score-context{color:var(--muted);font-size:13px;overflow-wrap:anywhere}.high-score-bars .table-player{max-width:100%;min-width:0}.high-score-bars .table-player b{white-space:normal;overflow-wrap:anywhere}.high-score-bars table.high-score-table .score-result{white-space:nowrap;font-variant-numeric:tabular-nums}.high-score-bars table.high-score-table tbody tr:before,.high-score-bars table.high-score-table tbody tr:after{content:'';grid-column:2/4;grid-row:2;height:9px;border-radius:3px;pointer-events:none}.high-score-bars table.high-score-table tbody tr:before{background:var(--line-soft);width:100%}.high-score-bars table.high-score-table tbody tr:after{background:var(--score-color);width:var(--score-width)}";
+  refreshCss += ".damage-composition-card.board{padding:0;border-top:1px solid var(--line);overflow:hidden}.damage-composition-card .damage-composition-legend{padding:6px 12px 6px 46px;font-size:12px;text-transform:none}.damage-composition-card .damage-composition-row{grid-template-columns:24px minmax(0,1fr) max-content;gap:5px 10px;padding:8px 12px;min-width:0}.damage-composition-card .damage-rank{grid-column:1;grid-row:1;color:var(--muted);font-size:14px;text-align:center}.damage-composition-card .damage-player{grid-column:2;grid-row:1;min-width:0}.damage-composition-card .damage-player .table-player{max-width:100%;white-space:normal}.damage-composition-card .damage-player .table-player b{white-space:normal;overflow-wrap:anywhere}.damage-composition-card .damage-composition-row strong{grid-column:3;grid-row:1;font-size:14px;font-weight:400}.damage-composition-card .damage-total-track{grid-column:2/4;grid-row:2;width:100%;height:9px;border-radius:3px;background:var(--line-soft)}.damage-composition-card .damage-total-track>i{border-radius:3px}.damage-composition-card .damage-composition-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}";
+  refreshCss += ".damage-composition-card .damage-composition-row{grid-template-columns:24px minmax(0,1fr) max-content!important}";
+  // One native table palette; semantic profession/boon/team hues remain data.
+  refreshCss += ':root{--table-surface:color-mix(in srgb,var(--panel) 96%,var(--text) 4%);--table-rule:color-mix(in srgb,var(--panel) 82%,var(--text) 18%);--table-label:color-mix(in srgb,var(--text) 78%,var(--panel));--comparison-track:color-mix(in srgb,var(--panel) 86%,var(--text) 14%)}' +
+    ':root{--table-head:color-mix(in srgb,var(--panel) 88%,var(--text) 12%);--table-selected:color-mix(in srgb,var(--panel) 82%,var(--text) 18%);--table-hover:color-mix(in srgb,var(--panel) 78%,var(--text) 22%)}' +
+    '.board,.bar-card,.bubble-card,.boon-card,.generation-card{background:var(--table-surface);border:1px solid var(--table-rule)!important;box-shadow:none}.board h3,.bar-card .chart-title,.bubble-card h3{color:var(--text);background:transparent;border-color:var(--table-rule)}' +
+    'table,.comparison-head{--table-head:color-mix(in srgb,var(--panel) 88%,var(--text) 12%);--table-selected:color-mix(in srgb,var(--panel) 82%,var(--text) 18%);--table-hover:color-mix(in srgb,var(--panel) 78%,var(--text) 22%)}thead th,.metric-grid thead th:first-child{border-bottom-color:var(--table-rule)!important}.metric-grid tbody .pair-total,.metric-grid tbody td:last-child,.ranking-board .number,.bubble-identity-table td{color:var(--text)!important}.metric-grid tbody th{background:transparent!important}' +
+    '.board tbody td,.board tbody th,.bubble-identity-table td,.bubble-identity-table th,.rate-ranking-row{border-color:var(--table-rule)}.rate-ranking-head,.support-ranking-labels,.comparison-head,.high-score-bars thead tr{background:var(--table-head,var(--comparison-track));color:var(--text)}.rate-ranking-rank,.board .rank,.board .score-context,.damage-rank{color:var(--table-label)!important}' +
+    '.board tbody tr:is(:hover,:focus-within)>td,.board tbody tr:is(:hover,:focus-within)>th,.rate-ranking-row:is(:hover,:focus-visible),.damage-composition-row:is(:hover,:focus-visible){background-color:var(--table-hover,var(--comparison-track))!important}' +
+    '.rate-ranking-track,.support-ranking-track,.damage-composition-card .damage-total-track{height:9px;background:var(--comparison-track);border-radius:3px}.rate-ranking-track em{background:var(--comparison-color,var(--accent))}.rate-ranking-track em,.support-ranking-track i{border-radius:3px}.high-score-bars table.high-score-table tbody tr:before{background:var(--comparison-track)}.rate-ranking-track em,.support-ranking-track i,.high-score-bars table.high-score-table tbody tr:after{opacity:1}.metric-grid tbody td[style*="--comparison-color"],.ranking-board tbody td[style*="--comparison-color"]{padding-bottom:14px!important;padding-top:5px!important}';
   function renderHighScoreBlocks(blocks) {
-    if (!blocks.length) return "<p class=\"empty\">No matching high-score blocks were exported.</p>";
+    if (!blocks.length) return "";
     return "<div class=\"boards high-score-grid\">" + blocks.map(function (block) {
-      var scoreRows=(block.rows || []).slice(0,100);
+      var scoreRows=(block.rows || []).slice(0,100).sort(function(a,b){return compareMetricValues(a.score,b.score,"descending");});
+      var maxScore=Math.max.apply(null,scoreRows.map(function(r){return Number(r.score)||0;}).concat([0]));
       var rows = scoreRows.map(function (row, i) {
-        var context=(row.fight != null ? "Fight " + row.fight : "") +
-          ((row.details || []).length ? " · " + row.details.join(" · ") : "");
-        return "<tr data-score=\"" + esc(row.score == null ? "" : row.score) + "\"" +
-          (i >= 5 ? " class=\"board-extra\" hidden" : "") + "><td class=\"rank\">" +
-          (i + 1) + "</td><td><span class=\"score-player\">" +
-          professionGlyph(row.profession || "Unknown") + "<span><b>" + esc(row.name || "Player") +
-          "</b><small>" + esc(row.profession || "Class unavailable") +
-          (context ? " · " + esc(context) : "") + "</small></span></span></td><td class=\"number\">" +
-          fmt(row.score) + "</td></tr>";
+        var context=[row.fight != null ? "Fight " + row.fight : ""].concat(row.details || []).filter(Boolean).join(" · ");
+        var width=maxScore > 0 ? Math.max(0,Math.min(100,Number(row.score)/maxScore*100 || 0)) : 0;
+        return '<tr data-score="' + esc(row.score == null ? '' : row.score) + '" style="--score-width:' + width + '%;--score-color:' + professionColor(row.profession) + '"' +
+          (i >= 5 ? ' class="board-extra" hidden' : '') + '><td class="rank" data-rank-cell>' +
+          (i + 1) + '</td><td class="score-entry"' + drillAttrs('high-score',
+            (row.name || 'Player') + ' · ' + (block.caption || 'High score'),
+            fmt(row.score) + (context ? ' · ' + context : ''), '') + '>' + tablePlayer(row) +
+          (context ? '<span class="score-context">'+esc(context)+'</span>' : '') +
+          '</td><td class="number score-result">' + fmt(row.score) + '</td></tr>';
       }).join("");
-      return "<article class=\"board\"><h3>" + esc(block.caption || "High score") +
-        "</h3><div class=\"table-wrap\"><table class=\"high-score-table\" data-board-table>" +
-        "<colgroup><col class=\"score-rank\"><col class=\"score-entry\"><col class=\"score-result\"></colgroup>" +
-        "<thead><tr><th>#</th><th>Player / Fight / Skill</th><th class=\"number\" aria-sort=\"descending\"><button type=\"button\" data-sort-key=\"score\">Result</button></th></tr></thead><tbody>" + rows +
-        "</tbody></table></div>" + (scoreRows.length > 5 ? "<footer class=\"board-actions\"><button type=\"button\" data-expand-board aria-expanded=\"false\">Expand all " + scoreRows.length + "</button></footer>" : "") + "</article>";
+      return '<article class="board high-score-bars"><h3>' + esc(block.caption || 'High score') +
+        '</h3><table class="high-score-table" data-board-table><thead><tr><th>#</th><th>Player / Fight / Skill</th>' +
+        '<th class="number">Result</th></tr></thead><tbody>' + rows +
+        '</tbody></table>' + (scoreRows.length > 5 ? '<footer class="board-actions"><button type="button" data-expand-board aria-expanded="false">Expand all ' + scoreRows.length + '</button></footer>' : '') + '</article>';
     }).join("") + "</div>";
   }
   function playerSkillDamageView() {
     var source=model.player_skill_damage || [],players=Array.isArray(source) ? source : (source.players || []);
-    if (!players.length) return "<p class=\"empty\">No qualifying per-player Damage by Skill tables were exported. Missing players are not zero; the Classic export applies participation and DPS qualification filters.</p>";
-    return "<aside class=\"method-note skill-damage-note\"><b>How to read Down Contribution</b><span>Damage dealt from 90% health through the down on enemies whose down led to a death. It is separate from damage dealt after the enemy is already downed.</span><span>Barrier damage by outgoing skill was not retained in this Classic export; unavailable does not mean zero. GW2EI exposes barrier damage separately from health damage when the source includes it.</span></aside>" +
-      "<div class=\"skill-player-grid\">" + players.map(function(player){
+    if (!players.length) return "";
+    return "<div class=\"skill-player-grid\">" + players.map(function(player){
       var skills=(player.skills || []).slice().sort(function(a,b){return Number(b.damage || 0)-Number(a.damage || 0);});
       var rows=skills.map(function(skill,index){return "<tr" + (index >= 5 ? " class=\"board-extra\" hidden" : "") +
         "><td class=\"rank\" data-label=\"#\">" + (index+1) + "</td><td data-label=\"Skill\"><b>" + esc(skill.skill || "Unknown skill") +
@@ -1444,10 +1666,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         fmt(skill.down_contribution) + "</td><td class=\"number\" data-label=\"Hits\">" + fmt(skill.hits) +
         "</td><td class=\"number\" data-label=\"Damage / Hit\">" + fmt(skill.damage_per_hit) +
         "</td><td class=\"number\" data-label=\"Share\">" + fmt(skill.percent_of_total) + "%</td></tr>";}).join("");
-      return "<article class=\"board skill-player-board\"><h3><span class=\"score-player\">" +
-        professionGlyph(player.profession || "Unknown") + "<span><b>" + esc(player.name || "Player") +
-        "</b><small>" + esc(player.profession || "Class unavailable") + " · " + esc(player.account || "") +
-        "</small></span></span></h3><div class=\"skill-coverage\"><b>" + fmt(player.total_damage) +
+      return "<article class=\"board skill-player-board\"><h3>" + tablePlayer(player) + "</h3><div class=\"skill-coverage\"><b>" + fmt(player.total_damage) +
         " damage represented</b><span>Per-player table exported by Classic; absence does not mean zero.</span></div>" +
         "<div class=\"table-wrap\"><table class=\"skill-damage-table\"><colgroup><col class=\"skill-rank\"><col class=\"skill-name\"><col class=\"skill-value\"><col class=\"skill-value\"><col class=\"skill-value\"><col class=\"skill-value\"><col class=\"skill-share\"></colgroup>" +
         "<thead><tr><th>#</th><th>Skill</th><th class=\"number\">Damage</th><th class=\"number\">Down Contribution</th><th class=\"number\">Hits</th><th class=\"number\">Damage / Hit</th><th class=\"number\">Share</th></tr></thead><tbody>" + rows +
@@ -1456,13 +1675,13 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   }
   function resurrectionSkillView() {
     var source=tableBySource("Combat-Resurrect");
-    if (!source) return "<p class=\"empty\">No combat-resurrection skill table was exported.</p>";
+    if (!source) return "";
     var ignored={prof:1,fighttime:1,activetime:1,numfights:1,count:1},totals={};
     (source.rows || []).forEach(function(row){Object.keys(row.metrics || {}).forEach(function(key){
       if (!ignored[key] && Number.isFinite(Number(row.metrics[key]))) totals[key]=(totals[key] || 0)+Number(row.metrics[key]);
     });});
     var rows=Object.keys(totals).map(function(key){return {key:key,value:totals[key]};}).sort(function(a,b){return b.value-a.value;});
-    if (!rows.length) return "<p class=\"empty\">The report contains resurrection totals but no skill-level fields.</p>";
+    if (!rows.length) return "";
     return "<article class=\"board resurrection-skills\"><h3>Combat-Resurrection Healing by Skill</h3><div class=\"table-wrap\"><table><colgroup><col style=\"width:72%\"><col style=\"width:28%\"></colgroup><thead><tr><th>Skill</th><th class=\"number\">Healing</th></tr></thead><tbody>" + rows.map(function(row,index){return "<tr" + (index >= 5 ? " class=\"board-extra\" hidden" : "") + "><td>" + esc(readableLabel(row.key)) + "</td><td class=\"number\">" + fmt(row.value) + "</td></tr>";}).join("") + "</tbody></table></div>" + (rows.length > 5 ? "<footer class=\"board-actions\"><button type=\"button\" data-expand-board aria-expanded=\"false\">Expand all " + rows.length + "</button></footer>" : "") + "</article>";
   }
   function chips(rows, labelKey, valueKey, limit) {
@@ -1497,9 +1716,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       profileHtml = chips(Array.isArray(profile) ? profile : [profile], "label", "value", 4);
     }
     if (rows.length || profileHtml) return chips(rows, "effect", "uptime_percent", 12) + profileHtml;
-    return "<p class=\"inference-note\"><b>General pressure read:</b> No per-color breakdown " +
-      "was exported. Use the observed incoming skill bars below to judge strike versus " +
-      "condition pressure; exact proportions would be invented.</p>";
+    return "";
   }
   function stripProfile(scope, pressure) {
     pressure = pressure || {};
@@ -1511,11 +1728,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       return /scourge|necromancer|reaper|harbinger|mesmer|chrono|spellbreaker|thief|specter/i
         .test(String(row.profession || ""));
     }).slice(0, 8);
-    return "<p class=\"inference-note\"><b>Source total not exported.</b> " +
-      (likely.length ? "Likely strip-capable professions observed: " +
-        likely.map(function (row) { return esc(row.profession) + " ×" + fmt(row.count); }).join(", ") +
-        ". This is capability evidence, not cast attribution." :
-        "No precise skill or profession attribution is available for this scope.") + "</p>";
+    return "";
   }
   function enemyScopes() {
     return model.enemy_intel && model.enemy_intel.scopes || [];
@@ -1531,7 +1744,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       (excluded ? "<span><b>" + fmt(excluded) + "</b> unmodeled / excluded</span>" : "") +
       "<span><b>" +
       fmt(c.composition_snapshots) + "</b> composition snapshots</span><span><b>" +
-      fmt((c.colors || []).join ? c.colors.join(" / ") : c.colors) +
+      fmt(Array.isArray(c.colors) ? c.colors.join(" / ") : c.colors) +
       "</b> enemy colors</span></div>";
   }
   function enemyScopeButtons() {
@@ -1557,7 +1770,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     });
     return "<section class=\"enemy-scope-shell\"><div class=\"enemy-scope-heading\">" +
       "<div><span class=\"eyebrow\">Choose what to analyze</span>" +
-      "<h3>Switch opponent view</h3></div><p>Compare the whole night, then open a color for its composition and individual fights.</p></div>" +
+      "<h3>Switch opponent view</h3></div></div>" +
       "<div class=\"enemy-scope-switcher\" role=\"tablist\" aria-label=\"Opponent view\">" +
       buttons.join("") + "</div></section>";
   }
@@ -1573,11 +1786,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       .concat(pressure.generalized_incoming_strips || []);
     var comparison=ourEnemyComparison(pressure, scope, fight);
     if (scope) return comparison +
-      "<p class=\"scope-note scope-limit\" data-scope-section=\"pressure-coverage\"><b>Pressure tools are not color-separated by the source log.</b> " +
-      "Incoming skills, conditions, boon removal, crowd control, and pulls are therefore shown only " +
-      "under All opponents instead of repeating the same session total for every color.</p>";
-    return "<p class=\"scope-note\"><b>Session-wide enemy pressure.</b> The source does not " +
-      "attribute these totals by enemy color or profession.</p>" + comparison +
+      "";
+    return "" + comparison +
       damageProfileCard(pressure.damage_profile) +
       stripPressureComparison(pressure) +
       "<div class=\"intel-visuals\">" +
@@ -1631,7 +1841,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           "<i style=\"width:" + Math.max(ours ? 2 : 0,ours/max*100).toFixed(1) + "%\"></i><b>" + fmt(ours) +
           "</b></span><span class=\"comp-bar enemy\"><i style=\"width:" + Math.max(enemy ? 2 : 0,enemy/max*100).toFixed(1) +
           "%\"></i><b>" + fmt(enemy) + "</b></span></button>";
-      }).join("") + "</div><p>Values are average profession sightings per matched fight—not unique players or ratings. Our roster is observed. Enemy profession counts are observed; enemy subgroup placement and roles remain estimated.</p></article>";
+      }).join("") + "</div></article>";
   }
   function scopeSummary(scope) {
     var a = scope && scope.aggregate || {};
@@ -1649,7 +1859,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         "</b><small>" + detail + "</small></button>";
     }
     return "<section class=\"scope-roadmap\"><div class=\"scope-roadmap-head\"><div><span class=\"eyebrow\">More Intel Below</span>" +
-      "<h3>Explore " + esc(label) + "</h3></div><p>Use these shortcuts or keep scrolling—every detailed section remains open below.</p></div>" +
+      "<h3>Explore " + esc(label) + "</h3></div></div>" +
       "<div class=\"scope-roadmap-actions\">" +
       jump("profession-comparison","Profession Comparison","Enemy frequency first · our squad beside it") +
       jump("estimated-subgroups","Estimated Subgroups",fmt(groupCount)+" five-player rows · roles and evidence") +
@@ -1682,6 +1892,12 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       scopes.map(function(scope){return compositionComparison(scope,null);}).join("") +
       pressurePanels(null);
   }
+  function traitAppearanceLabel(item) {
+    if (item.eligible_actor_appearances == null || item.observed_percent == null)
+      return fmt(item.actor_appearances)+" observed appearances · eligible denominator / rate unavailable";
+    return fmt(item.actor_appearances)+" / "+fmt(item.eligible_actor_appearances)+
+      " eligible appearances (>=15 seconds active) · "+fmt(item.observed_percent)+"% observed";
+  }
   function professionRoleCandidate(profession,validation) {
     var profile=(validation && validation.professions || {})[profession] || {},signals=[];
     function add(role,level,evidence,source) {
@@ -1696,7 +1912,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     });
     (profile.traits || []).forEach(function(item){
       var tags=(item.roles || []).map(function(role){return String(role).toLowerCase();});
-      var detail="Proven trait "+item.trait+" triggered "+item.observed_skill+" in "+fmt(item.actor_appearances)+" enemy appearance(s)";
+      var detail="Proven trait "+item.trait+" triggered "+item.observed_skill+" in "+traitAppearanceLabel(item);
       if (tags.indexOf("healing")>=0 && tags.indexOf("damage")<0 && tags.indexOf("control")<0) add("Support / Healing","Likely",[detail],"night_wide_proven_trait_proc");
       else if (tags.length===1 && tags[0]==="damage") add("DPS","Likely",[detail],"night_wide_proven_trait_proc");
       else if (tags.length===1 && tags[0]==="control") add("Crowd Control","Likely",[detail],"night_wide_proven_trait_proc");
@@ -1722,7 +1938,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       return !indexes.length || indexes.indexOf(Number(fight.index)) >= 0;
     });
     if (!fights.length) return "";
-    var validation=model.enemy_intel && model.enemy_intel.role_validation || {};
+    var validation=scope ? (scope.role_validation || {status:"team_attribution_unavailable"}) : (model.enemy_intel && model.enemy_intel.role_validation || {});
     var actorAppearances=Number(validation.enemy_actor_appearances || 0);
     var scopeLabel=scope ? readableLabel(scope.label || scope.color || "Selected opponent") : "Enemy";
     var scopeRef=scope ? "scope:" + String(scope.id || scope.color || "") : "all";
@@ -1750,7 +1966,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       var average=professions[profession]/snapshots;
       return {profession:profession,count:professions[profession],avg_per_fight:average,role:role,
         role_inference:candidate ? {qualifier:candidate.level,roles:[candidate],evidence:candidate.evidence,
-          source_scope:candidate.source_scope,limitation:"Profession-level candidate; enemy identity and color are not retained."} : {},
+          source_scope:candidate.source_scope,limitation:scope ? "Team-scoped profession-level candidate, not an individual build." : "All-opponents profession-level candidate, not an individual build."} : {},
         slots:Math.floor(average),fraction:average-Math.floor(average)};
     }).sort(function(a,b){return b.count-a.count;});
     var assigned=rows.reduce(function(sum,row){return sum+row.slots;},0), fractionOrder=rows.slice().sort(function(a,b){return b.fraction-a.fraction;});
@@ -1781,34 +1997,42 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     return "<section class=\"all-fights-comp\" data-scope-section=\"estimated-subgroups\"><div class=\"section-head\"><div><span class=\"eyebrow\">" +
       (scope ? esc(scopeLabel) + " opponents · " + fmt(snapshots) + " matched fights" : "All modeled fights") +
       "</span><h2>" + esc(compositionTitle) + "</h2></div>" +
-      "<p>Representative average group from "+snapshots+" enemy snapshots. Profession frequency is observed; Subgroup placement and roles are estimated.</p></div>"+
-      "<p class=\"role-validation-note\"><b>Role check:</b> " +
-      (scope ? "Role labels are profession-level role candidates from the night’s per-enemy DPS, skill casts, proven trait procs, and exposed consumables. Enemy healing totals still cannot be measured." :
-       actorAppearances ? fmt(actorAppearances)+" detailed enemy appearances were checked using per-enemy DPS and skill casts. " +
-        "Enemy healing totals still cannot be measured." :
-        "This recovered report did not retain per-enemy DPS or skill rotations, so its role labels stay Estimated.") + "</p>"+
+      "<p>Avg. per fight · Estimated roles</p></div>"+
+      '<div class="enemy-trait-findings">'+
       (scope ? enemyBuildEvidenceView(validation,rows.map(function(row){return row.profession;}),scopeLabel) : "<div class=\"intel-kpis\"><div><strong>"+fmt(snapshots)+"</strong><span>enemy snapshots</span></div><div><strong>"+
       fmt(totalEnemies/snapshots)+"</strong><span>average group size</span></div><div><strong>"+fmt(totalEnemies)+"</strong><span>observed enemy slots</span></div></div>"+
-      enemyBuildEvidenceView(validation)) +
-      "<div class=\"intel-visuals\">"+professionBars+"<article class=\"intel-card\"><h3>Representative Role Mix</h3>"+
-      chips(roleRows,"name","count",12)+"</article></div>"+partyGrid({estimated_subgroups:parties})+
-      "<p class=\"scope-note\">This summarizes " + (scope ? esc(scopeLabel) + " matched fights" : "the night") +
-      "; it does not claim every enemy group used the same composition.</p></section>";
+      enemyBuildEvidenceView(validation)) + "</div>"+
+      "<div class=\"intel-visuals\">"+professionBars+(members.some(function(m){return roleClass(m.role)!=="unknown";}) ? "<article class=\"intel-card\"><h3>Representative Role Mix</h3>"+chips(roleRows,"name","count",12)+"</article>" : "<p class=\"empty\">Roles unavailable.</p>")+"</div>"+partyGrid({estimated_subgroups:parties})+
+      "</section>";
+  }
+  function enemyTraitFinding(item) {
+    var percent=Number(item.observed_percent);
+    var hasRate=item.observed_percent != null && Number.isFinite(percent) && percent>=0 && percent<=100 && Number(item.eligible_actor_appearances)>0;
+    var mechanics=item.trait_description || item.evidence_skill_description || '';
+    return '<div class="enemy-trait"><b class="trait-name">'+esc(item.trait)+'</b>'+
+      '<span class="trait-context">'+esc(item.specialization)+' · '+esc(item.observed_skill)+'</span>'+
+      (hasRate ? '<strong class="trait-rate">'+fmt(percent)+'% observed</strong>'+
+        '<div class="trait-meter" role="meter" aria-label="'+esc(item.trait)+' observed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+fmt(percent)+'"><i style="width:'+percent+'%"></i></div>'+
+        '<small class="trait-count">'+fmt(item.actor_appearances)+' / '+fmt(item.eligible_actor_appearances)+' eligible appearances · detected / eligible · &gt;=15 seconds active</small>' :
+        '<small class="trait-count">'+esc(traitAppearanceLabel(item))+'</small>')+
+      (mechanics ? '<details class="trait-mechanics"><summary>Mechanics</summary><p>'+esc(mechanics)+'</p></details>' : '')+'</div>';
   }
   function enemyBuildEvidenceView(validation,selectedProfessions,scopeLabel) {
+    if (scopeLabel && validation.status === "team_attribution_unavailable")
+      return '<section class="enemy-build-evidence"><h2>Enemy Build Evidence</h2><p class="empty">Team-attributed evidence unavailable for '+esc(scopeLabel)+'. Legacy or unknown-team observations are not assigned by profession. All-opponents evidence is available only in the global view.</p></section>';
     var allowed=Array.isArray(selectedProfessions) ? new Set(selectedProfessions) : null;
     var rows=Object.keys(validation.professions || {}).map(function(profession){
       return {profession:profession,profile:validation.professions[profession]};
     }).filter(function(row){return (!allowed || allowed.has(row.profession)) && ((row.profile.traits || []).length || (row.profile.consumables || []).length);});
-    if (!rows.length) return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><div><span class=\"eyebrow\">Observable build fingerprints</span><h2>Enemy Build Evidence</h2></div></div><p class=\"empty\">No unique trait procs or enemy food / utility buffs were exposed for this report. That means unknown, not unequipped.</p></section>";
+    if (!rows.length) return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><div><span class=\"eyebrow\">Observable build fingerprints</span><h2>Enemy Build Evidence</h2></div></div><p class=\"empty\">No observed build evidence.</p></section>";
     var hasConsumables=rows.some(function(row){return (row.profile.consumables || []).length;});
-    var evidenceTitle=hasConsumables ? "Enemy Traits & Consumables" : "Observed Enemy Trait Procs";
-    return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><div><span class=\"eyebrow\">Observable build fingerprints</span><h2>"+esc(evidenceTitle)+"</h2></div><p>"+(scopeLabel ? "Night-wide exact evidence for professions observed in "+esc(scopeLabel)+". Enemy identity and color are not retained, so this narrows by profession—not by a proven team member." : "Exact evidence from detailed enemy targets across the night. It is profession-level because enemy identity is not retained, and absence means unknown—not unequipped.")+"</p></div><div class=\"intel-grid\">"+
+    var evidenceTitle=(scopeLabel || "All opponents")+" · "+(hasConsumables ? "Enemy Traits & Consumables" : "Observed Enemy Trait Procs");
+    return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><div><span class=\"eyebrow\">Observable build fingerprints</span><h2>"+esc(evidenceTitle)+"</h2></div></div><div class=\"intel-grid\">"+
       rows.map(function(row){var traits=row.profile.traits || [],consumables=row.profile.consumables || [];
         return "<article class=\"intel-card\"><h3>"+professionInline(row.profession)+"</h3>"+
-          (traits.length ? "<h4>Proven major-trait procs</h4><div class=\"build-evidence-list\">"+traits.map(function(item){return "<div><b>"+esc(item.trait)+"</b><span>"+esc(item.specialization)+" · "+esc((item.roles || []).join(" / "))+"</span><small>"+esc(item.observed_skill)+" observed · "+fmt(item.actor_appearances)+" enemy appearance(s)</small><p>"+esc(item.trait_description || item.evidence_skill_description || "")+"</p></div>";}).join("")+"</div>" : "")+
+          (traits.length ? '<h4>Observed major traits</h4><div class="build-evidence-list enemy-trait-list">'+traits.map(enemyTraitFinding).join('')+'</div>' : '')+
           (consumables.length ? "<h4>Observed food / utility buffs</h4><div class=\"build-evidence-list\">"+consumables.map(function(item){return "<div><b>"+esc(item.name)+"</b><span>"+esc(item.classification)+((item.roles || []).length ? " · "+esc(item.roles.join(" / ")) : "")+"</span><small>Seen in "+fmt(item.actor_appearances)+" enemy appearance(s)</small></div>";}).join("")+"</div>" : "")+"</article>";
-      }).join("")+"</div>"+(!hasConsumables ? "<p class=\"accuracy\"><b>Enemy food / utility:</b> none was exposed in target buff data for this night, so it remains unknown.</p>" : "")+"<p class=\"accuracy\"><b>Proof rule:</b> a trait appears only when Elite Insights marked the observed skill as a trait proc and the official GW2 API maps that skill to one unique major trait. Enemy food/oil appears only when its Nourishment or Enhancement buff was present in target buff data.</p></section>";
+      }).join("")+"</div>"+(!hasConsumables ? "" : "")+"</section>";
   }
   function partyGrid(fight) {
     var groups = fight && fight.estimated_subgroups || [];
@@ -1819,12 +2043,12 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var confidenceVaries=confidenceLabels.some(function(label){return label!==confidenceLabels[0];});
     var observed=Number(fight && fight.observed_profession_count), enemyCount=Number(fight && fight.enemy_count);
     var coverage=(enemyCount>0 && Number.isFinite(observed)) ? Math.round(observed/enemyCount*100) : null;
-    return "<div class=\"evidence-key\"><span><i class=\"observed\"></i>Observed profession</span>" +
+    return '<details class="estimated-layout" open><summary>Estimated subgroup layout</summary>'+"<div class=\"evidence-key\"><span><i class=\"observed\"></i>Observed profession</span>" +
       "<span><i class=\"inferred\"></i>Inferred placement</span>" +
       (hasUnknown ? "<span><i class=\"unknown\"></i>Unknown profession</span>" : "") +
       (hasOpen ? "<span><i class=\"unknown\"></i>Open slot</span>" : "") +
       (coverage != null ? "<span><b>Profession coverage " + coverage + "%</b></span>" : "") +
-      "<span><b>Subgroup placement estimated</b></span></div>" +
+      "</div>" +
       "<div class=\"party-grid\">" + groups.map(function (party, i) {
         var slots = (party.members || []).slice(0, 5).map(function(member){
           return {member:member, state:member.evidence || (member.observed ? "observed" : "inferred")};
@@ -1857,17 +2081,14 @@ _SHELL_TEMPLATE = r"""<!doctype html>
             professionGlyph(profession) + "<span class=\"slot-copy\"><b>" + esc(profession) +
             "</b><small>" + esc(evidence === "observed" ? "Observed class" :
               evidence === "open" ? "Open" : "Estimated slot") + "</small></span>" +
-            "<span class=\"role-badge role-" + roleKind + "\">" +
-            roleGlyph(role)+esc(roleText) + "</span></" + tag + ">";
+            (roleKind === "unknown" ? "" : "<span class=\"role-badge role-" + roleKind + "\">" + roleGlyph(role)+esc(roleText) + "</span>")+"</" + tag + ">";
         }).join("");
         return "<article class=\"party\"><header><b>Subgroup " +
           fmt(partyNumber) + "</b>" + (confidenceVaries ? "<span>" +
           esc(confidenceLabel(party.confidence)) + " confidence</span>" : "") + "</header>" +
           "<div class=\"party-slots\" aria-label=\"Subgroup " + esc(partyNumber) +
           " five-player slots\">" + members + "</div></article>";
-      }).join("") + "</div><p class=\"accuracy\"><b>Estimated Enemy Squad Composition:</b> " +
-      "profession counts are observed where available; five-player subgroup placement and roles " +
-      "are inferred. This is a best-fit reconstruction, not hidden squad data.</p>";
+      }).join("") + "</div></details>";
   }
   function enemyIntelShell() {
     var scopes = enemyScopes();
@@ -1953,17 +2174,21 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       var rows=section[1].map(function(def){
         var a=comparisonMetric(first,def[0],def[1]),b=comparisonMetric(second,def[0],def[1]);
         if (a == null && b == null) return "";
-        function display(value){return value == null ? "—" : def[3] === "percent" ? fmt(value)+"%" : def[3] === "duration" ? humanDuration(value) : fmt(value);}
+        var unitsA=(first.tables[def[0]] || {}).metric_units || {},unitsB=(second.tables[def[0]] || {}).metric_units || {};
+        var might=def[0] === "Uptimes" && def[1] === "might";
+        var label=might && unitsA.might !== "percent" && unitsB.might !== "percent" ? "Might average stacks" : def[2];
+        function display(value,units){return value == null ? "—" : might ? drillValue("might",value,{might:units.might || "stacks"}) : def[3] === "percent" ? fmt(value)+"%" : def[3] === "duration" ? humanDuration(value) : fmt(value);}
         var edge="Context only",aClass="",bClass="";
         if (def[4] && a != null && b != null) {
           if (a === b) edge="Even";
           else {
             var winner=a>b ? first : second,high=Math.max(a,b),low=Math.min(a,b);
-            edge=esc(winner.name)+" +"+fmt(low ? (high-low)/low*100 : 100)+"%";
+            var countMetric=["downed","killed","appliedcrowdcontrol","interrupts","condicleanse","boonstrips","resurrects"].indexOf(def[1])>=0;
+            edge=countMetric ? esc(winner.name)+" +"+fmt(high-low) : low === 0 ? fmt(high)+" vs 0 (relative change undefined)" : esc(winner.name)+" +"+fmt((high-low)/low*100)+"%";
             if (a>b) aClass=" compare-lead"; else bClass=" compare-lead";
           }
         }
-        return "<div class=\"compare-stat\"><span class=\"compare-metric-label\">"+esc(def[2])+"</span><b class=\"compare-player-a"+aClass+"\">"+display(a)+"</b><b class=\"compare-player-b"+bClass+"\">"+display(b)+"</b><small class=\"compare-edge\">"+edge+"</small></div>";
+        return "<div class=\"compare-stat\"><span class=\"compare-metric-label\">"+esc(label)+"</span><b class=\"compare-player-a"+aClass+"\">"+display(a,unitsA)+"</b><b class=\"compare-player-b"+bClass+"\">"+display(b,unitsB)+"</b><small class=\"compare-edge\">"+edge+"</small></div>";
       }).filter(Boolean).join("");
       return rows ? "<article class=\"compare-metric-group\"><h3>"+esc(section[0])+"</h3><div class=\"compare-stat compare-stat-head\"><span class=\"compare-metric-label\">Metric</span><b class=\"compare-player-a\">"+esc(first.name)+"</b><b class=\"compare-player-b\">"+esc(second.name)+"</b><small class=\"compare-edge\">Edge</small></div>"+rows+"</article>" : "";
     }).join("");
@@ -1998,6 +2223,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   }
   function skillSharePie(skills,title,valueKey,unitLabel) {
     valueKey=valueKey || "damage";unitLabel=unitLabel || "damage";
+    if (valueKey === "damage") title += " · share of listed damage";
     var rows=(skills || []).filter(function(row){return skillChartValue(row,valueKey)>0;})
       .slice().sort(function(a,b){return skillChartValue(b,valueKey)-skillChartValue(a,valueKey);});
     if (!rows.length) return "";
@@ -2005,7 +2231,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var represented=top.reduce(function(sum,row){return sum+skillChartValue(row,valueKey);},0);
     if (represented < total) {var other={skill:"Other skills"};other[valueKey]=total-represented;top.push(other);}
     var payload=encodeURIComponent(JSON.stringify(top));
-    return "<div class=\"skill-share\"><div class=\"skill-pie-visual\" data-skill-chart data-chart-title=\""+esc(title)+"\" data-chart-total=\""+total+"\" data-chart-value-key=\""+esc(valueKey)+"\" data-chart-unit=\""+esc(unitLabel)+"\" data-chart-skills=\""+esc(payload)+"\">"+skillChartSvg(top,total,false,true,valueKey,unitLabel)+"<button type=\"button\" class=\"open-skill-chart\">Open larger labeled chart</button></div><div><h4>"+esc(title)+"</h4><p class=\"skill-chart-help\">Select any labeled slice for a larger breakdown.</p><div class=\"skill-pie-legend\">"+top.map(function(row,index){return "<button type=\"button\" data-skill-slice=\""+index+"\"><b>"+esc(row.skill || "Unknown skill")+"</b><small>"+fmt(skillChartValue(row,valueKey)/total*100)+"%</small></button>";}).join("")+"</div></div></div>";
+    return "<div class=\"skill-share\"><div class=\"skill-pie-visual\" data-skill-chart data-chart-title=\""+esc(title)+"\" data-chart-total=\""+total+"\" data-chart-value-key=\""+esc(valueKey)+"\" data-chart-unit=\""+esc(unitLabel)+"\" data-chart-skills=\""+esc(payload)+"\">"+skillChartSvg(top,total,false,true,valueKey,unitLabel)+"<button type=\"button\" class=\"open-skill-chart\">Open larger labeled chart</button></div><div><h4>"+esc(title)+"</h4><div class=\"skill-pie-legend\">"+top.map(function(row,index){return "<button type=\"button\" data-skill-slice=\""+index+"\"><b>"+esc(row.skill || "Unknown skill")+"</b><small>"+fmt(skillChartValue(row,valueKey)/total*100)+"%</small></button>";}).join("")+"</div></div></div>";
   }
   function comparisonSkillPanel(player) {
     var skills=player.skillDamage && player.skillDamage.skills || [];
@@ -2015,15 +2241,15 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       }).filter(function(row){return row.count>0;}).sort(function(a,b){return b.count-a.count;});
       if (!casts.length) return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Skills</h3><p class=\"muted\">No detailed skill evidence is available for this squad player.</p></article>";
       var totalCasts=casts.reduce(function(total,row){return total+row.count;},0);
-      return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Skills</h3><p class=\"compare-skill-basis\">Cast share is usage frequency, not damage output.</p>"+skillSharePie(casts,"Cast share by skill","count","casts")+"<div class=\"compare-skill-list\">"+
+      return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Skills</h3>"+skillSharePie(casts,"Cast share by skill","count","casts")+"<div class=\"compare-skill-list\">"+
         casts.slice(0,12).map(function(row,index){var share=totalCasts ? row.count/totalCasts*100 : 0;return "<div><span>"+(index+1)+". "+esc(row.skill)+"</span><b>"+fmt(row.count)+" casts<small>"+fmt(share)+"%</small></b></div>";}).join("")+"</div></article>";
     }
     var ordered=skills.slice().sort(function(a,b){return Number(b.damage || 0)-Number(a.damage || 0);});
-    return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Skills</h3><p class=\"compare-skill-basis\">Damage share uses exported skill damage totals.</p>"+skillSharePie(ordered,"Damage share by skill")+"<div class=\"compare-skill-list\">"+ordered.slice(0,12).map(function(skill,index){return "<div><span>"+(index+1)+". "+esc(skill.skill)+"<small>"+fmt(skill.hits)+" hits · "+fmt(skill.down_contribution)+" down contribution</small></span><b>"+fmt(skill.damage)+"<small>"+fmt(skill.percent_of_total)+"%</small></b></div>";}).join("")+"</div></article>";
+    return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Skills</h3>"+skillSharePie(ordered,"Share of listed damage")+"<div class=\"compare-skill-list\">"+ordered.slice(0,12).map(function(skill,index){return "<div><span>"+(index+1)+". "+esc(skill.skill)+"<small>"+fmt(skill.hits)+" hits · "+fmt(skill.down_contribution)+" down contribution</small></span><b>"+fmt(skill.damage)+"<small>"+fmt(skill.percent_of_total)+"% of all damage</small></b></div>";}).join("")+"</div></article>";
   }
   function comparisonEvidencePanel(player) {
     var evidence=player.evidence;
-    if (!evidence) return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Weapons / Rotation</h3><p class=\"muted\">Detailed weapon and rotation evidence was not retained in this older combined report. New reports preserve it from Elite Insights JSON.</p></article>";
+    if (!evidence) return "<article class=\"compare-player-detail\"><h3>"+esc(player.name)+" · Weapons / Rotation</h3><p class=\"muted\">No weapon or rotation data.</p></article>";
     var casts=Object.keys(evidence.skill_casts || {}).map(function(skill){return {skill:skill,count:Number(evidence.skill_casts[skill] || 0)};}).sort(function(a,b){return b.count-a.count;}).slice(0,12);
     var links=Object.keys(evidence.rotation_links || {}).map(function(link){return {link:link,count:Number(evidence.rotation_links[link] || 0)};}).sort(function(a,b){return b.count-a.count;}).slice(0,8);
     var consumables=evidence.consumables || [],traits=evidence.traits || [],roleSignal=evidence.consumable_role_signal;
@@ -2039,7 +2265,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var second=players.find(function(player){return player.key===secondKey;}) || players[1] || players[0];
     if (!first || !second) return "<p class=\"empty\">At least two exported squad players are required.</p>";
     var same=first.profession === second.profession;
-    function playerCard(player){return "<div class=\"compare-player-card\">"+professionGlyph(player.profession)+"<div class=\"compare-player-copy\"><span>"+esc(player.profession)+"</span><b>"+esc(player.name)+"</b><small>"+esc(player.account || "Account unavailable")+"</small></div></div>";}
+    function playerCard(player){return '<div class="compare-player-card">'+tablePlayer(player)+'</div>';}
     return "<div class=\"compare-head\">"+playerCard(first)+"<span class=\""+(same?"same-profession":"different-profession")+"\">"+(same?"Same profession · direct build comparison":"Different professions · role context matters")+"</span>"+playerCard(second)+"</div>"+
       comparisonMetricHtml(first,second)+"<div class=\"compare-detail-grid\">"+comparisonSkillPanel(first)+comparisonSkillPanel(second)+comparisonEvidencePanel(first)+comparisonEvidencePanel(second)+"</div>";
   }
@@ -2064,7 +2290,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         fightsTable(true), true);
     var damageBoard=derivedDamageBoard("Damage to Enemy Players","targetdamage","targetdamageps","DPS");
     var dps = subnav("dps", [["overview","Overview"],["direct","Power Damage"],["conditions","Condition Damage"],["skills","Skills"],["pressure","Fight Impact"]]) +
-      subpanel("dps", "overview", sectionHead("Damage", "DPS overview", "Total DPS split into Power and Condition Damage, followed by burst, down contribution, enemy downs, and kills.") + damageCompositionView() + "<div class=\"boards\">" + (damageBoard ? boardCard(damageBoard,100) : "") + "</div>" + fightImpactBoards(false) + highScoreGridExact(["Highest 1s Burst Damage","Highest Outgoing Skill Damage","Damage per Second"]), false) +
+      subpanel("dps", "overview", sectionHead("Damage", "DPS overview", "Compare totals and participation-normalized rates. Down contribution and damage to downed enemies measure different parts of the fight.") + metricGrid("damage") + bubbleChart("dps") + damageCompositionView() + highScoreGridExact(["Highest 1s Burst Damage","Highest Outgoing Skill Damage","Damage per Second"]), false) +
       subpanel("dps", "direct", sectionHead("DPS", "Power Damage", "Power Damage to enemy players and one-second burst records.") + powerDamageView(), true) +
       subpanel("dps", "conditions", sectionHead("DPS", "Condition Damage", "Condition Damage is separate from condition applications and uptime.") + conditionDamageView(), true) +
       subpanel("dps", "skills", sectionHead("Execution", "Damage by Skill", "Per-player skill damage for players whose tables were exported; missing players are not zero.") + playerSkillDamageView() + highScoreGridExact(["Highest Outgoing Skill Damage"]), true) +
@@ -2101,11 +2327,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       subpanel("details", "composition", squadCards() || "<p class=\"empty\">No squad composition was found.</p>", true) +
       subpanel("details", "tables", "<div id=\"all-boards\">" + sourceBoardGrid() +
         "</div>" + highScoreGrid([]) + poisonTable(), true);
-    var body = "<div class=\"session-strip\"><b>Sparky Pro</b><span>" +
-      esc((model.session || {}).date || "Night report") + "</span><span>" +
-      "Combat · " + esc(humanDuration((model.session || {}).total_duration) || "unavailable") +
-      "</span><span>Offline · deterministic</span></div>" +
-      reportHeading("Pro · fight review") + totalsCards(false) +
+    var body =       reportHeading("Pro · fight review") + totalsCards(false) +
       "<nav class=\"tabs\" aria-label=\"Pro report views\" role=\"tablist\">" +
       [["overview","Overview"],["dps","DPS"],["support","Support"],["healing","Healing"],["compare","Player Compare"],
        ["scores","High Scores"],["enemy","Enemy Intel"],["details","Details / Fights"]].map(function (item, i) {
@@ -2121,8 +2343,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       "<section data-section=\"scores\" hidden>" + scores + "</section>" +
       "<section data-section=\"enemy\" hidden>" + enemyIntelShell() + "</section>" +
       "<section data-section=\"details\" hidden>" + details +
-      "<div class=\"source-callout\"><b>Need the untouched upstream report?</b>" +
-      "<button id=\"open-classic\">Open Classic</button></div></section>" +
+      "</section>" +
       "<dialog id=\"drilldown\" aria-labelledby=\"drill-title\"><div class=\"drill-head\">" +
       "<div><span class=\"eyebrow\" id=\"drill-kicker\">Detailed breakdown</span><h2 id=\"drill-title\">Details</h2></div>" +
       "<button type=\"button\" id=\"drill-close\" aria-label=\"Close details\">Close</button></div>" +
@@ -2231,7 +2452,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       ".mvp-card>strong{display:block;color:var(--accent);font-size:23px}.mvp-card p{color:var(--muted);font-size:11px;margin:8px 0 0}",
       ".compare-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) auto;gap:12px;align-items:end;margin:14px 0 18px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.compare-controls label{display:grid;gap:5px;color:var(--muted);font-size:11px;font-weight:800}.compare-controls select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--text);font:inherit}.compare-controls .compare-check{display:flex;align-items:center;gap:7px;padding:9px 0;color:var(--text);white-space:nowrap}.compare-head{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:12px;align-items:center;margin-bottom:12px}.compare-head>div{display:grid;grid-template-columns:42px minmax(0,1fr);column-gap:9px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}.compare-head>div:last-child{text-align:right;grid-template-columns:minmax(0,1fr) 42px}.compare-head>div:last-child .profession-glyph{grid-column:2;grid-row:1/3}.compare-head .profession-glyph{grid-row:1/3;width:38px;height:38px;margin:0}.compare-head b,.compare-head small{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-head small{color:var(--muted);font-size:10px}.compare-head>span{padding:6px 8px;border-radius:999px;font-size:9px;font-weight:900;text-align:center}.same-profession{background:color-mix(in srgb,var(--good) 17%,var(--panel));color:var(--good)}.different-profession{background:var(--panel-2);color:var(--muted)}.compare-metric-group,.compare-player-detail{margin:10px 0;padding:13px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}.compare-metric-group h3,.compare-player-detail h3{margin:0 0 8px;font-size:14px}.compare-skill-basis{min-height:16px;margin:0 0 4px;color:var(--muted);font-size:10px}.compare-stat{display:grid;grid-template-columns:minmax(140px,1fr) minmax(80px,.65fr) minmax(80px,.65fr) minmax(80px,.55fr);gap:9px;align-items:center;padding:7px;border-top:1px solid var(--line-soft)}.compare-stat>span,.compare-stat>small{color:var(--muted);font-size:10px}.compare-stat>b{font-size:12px}.compare-stat>b:nth-child(3){text-align:right}.compare-stat>small{text-align:right}.compare-stat-head{border-top:0}.compare-lead{color:var(--good)}.compare-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.skill-share{display:grid;width:auto;grid-template-columns:150px minmax(0,1fr);gap:14px;align-items:center;margin:10px 0 14px}.skill-pie{display:grid;place-items:center;width:140px;height:140px;border-radius:50%}.skill-pie>span{display:grid;place-items:center;width:82px;height:82px;border-radius:50%;background:var(--panel);font-size:15px;font-weight:900}.skill-pie small{display:block;color:var(--muted);font-size:8px}.skill-share h4{margin:0 0 7px}.skill-pie-legend{display:grid;gap:4px}.skill-pie-legend>span{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:6px;align-items:center;font-size:9px}.skill-pie-legend i{width:8px;height:8px;border-radius:2px}.skill-pie-legend small{color:var(--muted)}.compare-skill-list{display:grid;gap:4px}.compare-skill-list>div{display:flex;justify-content:space-between;gap:8px;padding:6px;border-top:1px solid var(--line-soft);font-size:10px}.compare-skill-list small{display:block;color:var(--muted)}.compare-skill-list b{text-align:right}",
       ".compare-player-card{display:grid;grid-template-columns:42px minmax(0,1fr);column-gap:9px;align-items:center;text-align:left}.compare-head>div.compare-player-card:last-child{grid-template-columns:42px minmax(0,1fr);text-align:left}.compare-head>div.compare-player-card>.profession-glyph,.compare-head>div.compare-player-card:last-child>.profession-glyph{grid-column:1;grid-row:1;width:38px;height:38px}.compare-player-copy{grid-column:2;min-width:0}.compare-player-copy>span,.compare-player-copy>b,.compare-player-copy>small{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compare-player-copy>span{font-size:11px}.compare-player-copy>small{color:var(--muted);font-size:10px}.compare-stat>.compare-player-a,.compare-stat>.compare-player-b{text-align:right;font-variant-numeric:tabular-nums}.compare-stat>.compare-edge{text-align:right}",
-      ".enemy-build-evidence{margin:18px 0}.build-evidence-list{display:grid;gap:6px;margin:7px 0 13px}.build-evidence-list>div{padding:9px;border-left:3px solid var(--accent-2);border-radius:4px;background:var(--panel-2)}.build-evidence-list b,.build-evidence-list span,.build-evidence-list small{display:block}.build-evidence-list span{margin-top:2px;color:var(--accent);font-size:10px;font-weight:800}.build-evidence-list small,.build-evidence-list p{color:var(--muted);font-size:9px}.build-evidence-list p{margin:5px 0 0;line-height:1.4}.evidence-signal{padding:8px;border-left:3px solid var(--good);background:color-mix(in srgb,var(--good) 8%,var(--panel-2));font-size:11px}",
+      ".enemy-build-evidence{margin:18px 0}.build-evidence-list{display:grid;gap:6px;margin:7px 0 13px}.build-evidence-list>div{padding:9px;border-left:3px solid var(--accent-2);border-radius:4px;background:var(--panel-2)}.build-evidence-list b,.build-evidence-list span,.build-evidence-list small{display:block}.build-evidence-list span{margin-top:2px;color:var(--accent);font-size:10px;font-weight:800}.build-evidence-list small,.build-evidence-list p{color:var(--muted);font-size:9px}.build-evidence-list p{margin:5px 0 0;line-height:1.4}.enemy-trait-list{gap:10px}.enemy-trait-list .enemy-trait{min-width:0;padding:12px;border-left:2px solid var(--accent-2);overflow-wrap:anywhere}.enemy-trait-list .trait-name{font-size:15px;line-height:1.4;color:var(--text)}.enemy-trait-list .trait-context,.enemy-trait-list .trait-count,.enemy-trait-list .trait-mechanics,.enemy-trait-list .trait-mechanics p{font-size:12px;line-height:1.5;color:var(--muted);font-weight:400}.enemy-trait-list .trait-rate{display:block;margin-top:8px;font-size:18px;color:var(--text);font-variant-numeric:tabular-nums}.enemy-trait-list .trait-meter{height:6px;margin:6px 0;border-radius:3px;background:color-mix(in srgb,var(--text) 10%,var(--panel));overflow:hidden}.enemy-trait-list .trait-meter i{display:block;height:100%;background:color-mix(in srgb,var(--accent-2) 55%,var(--panel));border-radius:inherit}.enemy-trait-list .trait-mechanics{margin-top:6px}.enemy-trait-list .trait-mechanics summary{cursor:pointer}.evidence-signal{padding:8px;border-left:3px solid var(--good);background:color-mix(in srgb,var(--good) 8%,var(--panel-2));font-size:11px}",
       ".skill-pie-visual{min-width:0}.skill-chart-svg{display:block;width:100%;height:auto;overflow:visible}.skill-chart-slice path{stroke:var(--panel);stroke-width:2;transition:opacity .14s ease,transform .14s ease}.skill-chart-slice line{stroke:var(--muted);stroke-width:1;pointer-events:none}.skill-chart-label{fill:var(--text);font-size:8px;font-weight:800;pointer-events:none}.skill-chart-label tspan+ tspan{fill:var(--muted);font-size:7px}.skill-chart-total{fill:var(--text);font-size:12px;font-weight:900}.skill-chart-total-sub{fill:var(--muted);font-size:7px}.skill-chart-slice[role=button]{cursor:pointer;outline:none}.skill-chart-slice[role=button]:hover path,.skill-chart-slice[role=button]:focus path,.skill-chart-slice.selected path{opacity:.72;stroke:var(--text);stroke-width:4}.open-skill-chart{display:block;width:100%;margin-top:4px;padding:8px;border:1px solid var(--accent);border-radius:6px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--accent);font:inherit;font-size:10px;font-weight:900;cursor:pointer}.skill-chart-help{margin:0 0 8px;color:var(--muted);font-size:10px}.skill-pie-legend>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;width:100%;padding:5px;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer}.skill-pie-legend>button:hover,.skill-pie-legend>button:focus{border-color:var(--accent);background:var(--panel-2)}.skill-pie-legend>button small{color:var(--muted)}dialog#skill-chart-dialog{width:min(1120px,calc(100vw - 24px));height:min(820px,calc(100vh - 24px));border:1px solid var(--line);border-top:4px solid var(--accent);border-radius:12px;padding:0;background:var(--panel);color:var(--text);overflow:hidden}dialog#skill-chart-dialog::backdrop{background:rgba(0,0,0,.82)}#skill-chart-dialog .drill-head button{padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--text);cursor:pointer}.skill-chart-dialog-body{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;height:calc(100% - 76px);padding:16px;overflow:auto}.large-skill-chart{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:12px;align-items:center}.skill-chart-svg.large{min-height:560px}.skill-chart-svg.large .skill-chart-label{font-size:13px}.skill-chart-svg.large .skill-chart-label tspan+ tspan{font-size:11px}.skill-chart-svg.large .skill-chart-total{font-size:22px}.skill-chart-svg.large .skill-chart-total-sub{font-size:11px}.large-skill-legend{display:grid;gap:6px}.large-skill-legend button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;padding:10px;border:1px solid var(--line-soft);border-radius:7px;background:var(--panel-2);color:var(--text);font:inherit;text-align:left;cursor:pointer}.large-skill-legend button span,.large-skill-legend button small{color:var(--muted);font-size:10px}.large-skill-legend button small{grid-column:2}.large-skill-legend button.selected{border-color:var(--accent);box-shadow:inset 3px 0 var(--accent)}#skill-chart-selection{align-self:start;padding:16px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2)}#skill-chart-selection h3{font-size:22px;margin:5px 0}#skill-chart-selection>b{color:var(--accent)}#skill-chart-selection p{color:var(--muted);font-size:11px}",
       ".ai-read{margin-top:18px;border-left:4px solid var(--purple)}.ai-read small{color:var(--muted)}",
       "dialog#drilldown{width:min(860px,calc(100vw - 28px));max-height:88vh;border:1px solid var(--line);border-top:4px solid var(--accent);border-radius:12px;padding:0;background:var(--panel);color:var(--text);overflow:hidden}",
@@ -2249,7 +2470,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     ].join("");
     return "<!doctype html><html data-theme=\"" + esc(currentTheme) +
       "\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-      "<title>Sparky Pro report</title><style>" + commonCss + extraCss +
+      "<title>Sparky Pro report</title><style>" + commonCss + extraCss + refreshCss +
       "</style></head><body><main class=\"wrap\">" + body + "</main></body></html>";
   }
   function drillValue(key, value, units) {
@@ -2292,7 +2513,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var map={downs:["Enemy downs","downs",totals.enemy_downs],kills:["Enemy kills","kills",totals.enemy_kills],
       ally_downs:["Our downs","ally_downs",totals.ally_downs],ally_deaths:["Our deaths","ally_deaths",totals.ally_deaths]};
     if (key === "fights") {
-      return "<p class=\"drill-lead\">Every modeled encounter in this report, in chronological order.</p><div class=\"drill-fights\">" +
+      return "<div class=\"drill-fights\">" +
         fights.map(function(fight){return "<div class=\"drill-fight\"><div><b>Fight " + fmt(fight.index) +
           "</b><small>" + esc(fightClock(fight.time_label) || "") + " · " + esc(fight.duration || "") +
           "</small></div><span>K/D " + fightKd(fight) + " · " + fmt(fight.kills) + " kills / " +
@@ -2347,7 +2568,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       offense=sourceRow("Offensive-Summary"),uptime=sourceRow("Uptimes");
     var participation=Number(identity.participation_time || identity.fight_time || identity.metrics && identity.metrics.fighttime || 0);
     var fights=identity.fight_count != null ? identity.fight_count : identity.metrics && identity.metrics.numfights;
-    var body="<div class=\"player-profile\" data-player-profile><p class=\"drill-lead\"><b>Tonight’s player snapshot</b> · all available selected-night tables for this player.</p>" +
+    var body="<div class=\"player-profile\" data-player-profile>" +
       "<div class=\"drill-player\">" + professionInline(identity.profession || identity.prof || "Unknown") +
       "<div><b>" + esc(requested) + "</b><small>" + esc(identity.account || "Account unavailable") +
       (participation ? " · " + humanDuration(participation) : "") + (fights != null ? " · " + fmt(fights) + " fights" : "") +
@@ -2356,9 +2577,9 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     body += metricCards("Healing & Barrier",heal,[["healing","Healing"],["healingps","Healing / sec"],["barrier","Barrier"],["barrierps","Barrier / sec"],["downedhealing","Downed-Ally Healing"],["downedhealingps","Downed Healing / sec"]]);
     body += metricCards("Support",support,[["condicleanse","Allied Conditions Cleansed"],["condicleanseself","Self-Cleansed Conditions"],["condicleansetime","Condition Duration Removed"],["boonstrips","Enemy Boons Removed"],["boonstripstime","Enemy Boon Duration Removed"],["resurrects","Resurrects"],["resurrecttime","Resurrection Time"]]);
     body += metricCards("Fight Impact",offense,[["downcontribution","Down-Contribution Damage"],["downed","Enemy Downs"],["killed","Enemy Kills"],["againstdowneddamage","Damage to Downed Enemies"],["appliedcrowdcontrol","Crowd Control Applied"],["interrupts","Interrupts"]]);
-    body += metricCards("Key Boon Uptime",uptime,[["stability","Stability Uptime"],["protection","Protection Uptime"],["aegis","Aegis Uptime"],["resolution","Resolution Uptime"],["resistance","Resistance Uptime"],["might","Might Uptime"]]);
+    body += metricCards("Key Boon Uptime",uptime,[["stability","Stability Uptime"],["protection","Protection Uptime"],["aegis","Aegis Uptime"],["resolution","Resolution Uptime"],["resistance","Resistance Uptime"],["might",(uptime && uptime.metric_units || {}).might === "percent" ? "Might Uptime" : "Might average stacks"]]);
     if (poison) body += "<section class=\"profile-group\"><h3>Poison Applications</h3><div class=\"drill-metrics\"><div><span>Applications</span><b>" + fmt(poison.apps) + "</b></div><div><span>Applications / min</span><b>" + fmt(poison.apps_per_min) + "</b></div><div><span>Applications / sec</span><b>" + fmt(poison.output) + "</b></div><div><span>Active Fight Time</span><b>" + humanDuration(Number(poison.fight_time || 0)) + "</b></div></div></section>";
-    if (skillPlayer) body += "<section class=\"profile-group\"><h3>Damage by Skill</h3>" + skillSharePie(skillPlayer.skills || [],"Damage share by skill") + "<div class=\"drill-fights\">" + (skillPlayer.skills || []).slice(0,10).map(function(skill){return "<div class=\"drill-fight\"><div><b>" + esc(skill.skill) + "</b><small>" + fmt(skill.hits) + " hits · " + fmt(skill.damage_per_hit) + " damage/hit · " + fmt(skill.down_contribution) + " down contribution</small></div><span>" + fmt(skill.percent_of_total) + "% of represented damage</span><strong>" + fmt(skill.damage) + "</strong></div>";}).join("") + "</div></section>";
+    if (skillPlayer) body += "<section class=\"profile-group\"><h3>Damage by Skill</h3>" + skillSharePie(skillPlayer.skills || [],"Share of listed damage") + "<div class=\"drill-fights\">" + (skillPlayer.skills || []).slice(0,10).map(function(skill){return "<div class=\"drill-fight\"><div><b>" + esc(skill.skill) + "</b><small>" + fmt(skill.hits) + " hits · " + fmt(skill.damage_per_hit) + " damage/hit · " + fmt(skill.down_contribution) + " down contribution</small></div><span>" + fmt(skill.percent_of_total) + "% of all damage</span><strong>" + fmt(skill.damage) + "</strong></div>";}).join("") + "</div></section>";
     if (scoreRows.length) body += "<section class=\"profile-group\"><h3>High Scores from This Night</h3><div class=\"drill-fights\">" + scoreRows.map(function(item){var row=item.row;return "<div class=\"drill-fight\"><div><b>" + esc(item.caption || "High Score") + "</b><small>" + (row.fight != null ? "Fight " + fmt(row.fight) : "Selected night") + ((row.details || []).length ? " · " + esc(row.details.join(" · ")) : "") + "</small></div><span></span><strong>" + fmt(row.score) + "</strong></div>";}).join("") + "</div></section>";
     var detailedPlayer=comparisonPlayers().find(function(player){return player.name===requested;});
     if (detailedPlayer && detailedPlayer.evidence) body += comparisonEvidencePanel(detailedPlayer);
@@ -2372,7 +2593,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       pressure.condition_profile && pressure.condition_profile.normalized];
     var row=null;
     pools.some(function(pool){row=(pool || []).find(function(item){return String(item.skill || item.effect || item.name || "") === label;});return !!row;});
-    if (row) return "<div class=\"drill-feature\"><b>" + esc(label) + "</b><p>All exported session fields for this entry:</p></div>" +
+    if (row) return "<div class=\"drill-feature\"><b>" + esc(label) + "</b></div>" +
       objectMetricsHtml({metrics:row,metric_units:{uptime_percent:"percent",pressure_share_percent:"percent"}});
     if (/Power Damage|Condition Damage/i.test(label)) return objectMetricsHtml({metrics:pressure.damage_profile || {}});
     return "";
@@ -2442,8 +2663,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       return {fight:fight,ours:ours,enemy:Number(observed && observed.count || 0),color:enemyFight && enemyFight.color};
     });
     var oursTotal=rows.reduce(function(sum,row){return sum+row.ours;},0),enemyTotal=rows.reduce(function(sum,row){return sum+row.enemy;},0);
-    return "<p class=\"drill-lead\">" + professionInline(profession) +
-      " sightings in every matched fight. These are roster snapshots, not unique-player counts.</p><div class=\"drill-kpis\"><div><span>Our sightings</span><b>" +
+    return "<div class=\"drill-kpis\"><div><span>Our sightings</span><b>" +
       fmt(oursTotal) + "</b></div><div><span>Enemy sightings</span><b>" + fmt(enemyTotal) +
       "</b></div><div><span>Matched fights</span><b>" + fmt(rows.length) + "</b></div></div><div class=\"drill-fights\">" +
       rows.map(function(row){return "<div class=\"drill-fight\"><div><b>Fight " + fmt(row.fight.index) +
@@ -2518,6 +2738,104 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     if (drillBody) drillBody.scrollTop=0;
   }
   function wireInteractive(doc) {
+    Array.from(doc.querySelectorAll("thead button[data-sort-key]")).forEach(function(button){
+      var th=button.closest("th");
+      if (!th.hasAttribute("aria-sort")) th.setAttribute("aria-sort","none");
+    });
+    var popup=doc.createElement('div');popup.id='chart-popup';popup.setAttribute('role','tooltip');popup.hidden=true;doc.body.appendChild(popup);
+    var tooltipSelector='[data-tooltip],.sparky-boon-bar,.multiboon-bar,.bubble-comparison-row,.metric-row,.damage-composition-row,[data-skill-slice]';
+    function prepareCharts() {
+      doc.querySelectorAll('.chart-tooltip').forEach(function(tip){var owner=tip.parentElement;if(owner.hasAttribute('title')) owner.removeAttribute('title');});
+      doc.querySelectorAll('table').forEach(function(table){var row=table.querySelector('tbody tr');if(!row)return;Array.from(row.children).forEach(function(cell,index){if(cell.classList.contains('number'))table.querySelectorAll('thead tr').forEach(function(head){if(head.children[index])head.children[index].classList.add('numeric-header');});});});
+    }
+    prepareCharts();
+    function responsiveMetrics() {
+      doc.querySelectorAll('.metric-grid,.table-wrap table').forEach(function(table){
+        var first=table.querySelector('tbody tr'),heads=table.querySelectorAll('thead tr:first-child th');
+        if(!first || !heads.length || !first.querySelector('.table-player') || !table.getBoundingClientRect().width)return;
+        var identity=Array.from(first.cells).findIndex(function(c){return !!c.querySelector('.table-player');});
+        var primary=Array.from(first.cells).findIndex(function(c){return c.matches('[data-ranking-cell],[data-metric-cell]');});
+        if(primary<0)primary=Array.from(first.cells).findIndex(function(c,i){return i>identity&&c.classList.contains('number');});
+        if(primary<0)return;
+        table.classList.add('responsive-metrics');table.classList.remove('responsive-condensed');
+        var primaryColumns=Array.from(first.cells).map(function(c,i){return c.matches('[data-ranking-cell],[data-metric-cell="0"]') ? i : -1;}).filter(function(i){return i>=0;});
+        if(!primaryColumns.length)primaryColumns=[primary];
+        table.dataset.primaryCount=primaryColumns.length;
+        function columnKind(i){return i===identity?'identity':primaryColumns.indexOf(i)>=0?'primary':i<identity?'rank':'extra';}
+        var extras=[];
+        Array.from(heads).forEach(function(h,i){var kind=columnKind(i);h.classList.add('responsive-'+kind);if(kind==='extra')extras.push(i);});
+        Array.from(table.tBodies[0].rows).forEach(function(row){
+          Array.from(row.cells).forEach(function(c,i){c.classList.add('responsive-'+columnKind(i));});
+          var cell=row.cells[identity],details=cell.querySelector('.row-metric-details');
+          if(!extras.length)return;
+          if(!details){details=doc.createElement('details');details.className='row-metric-details';details.innerHTML='<summary>Details</summary><dl></dl>';details.addEventListener('click',function(e){e.stopPropagation();});cell.appendChild(details);}
+          details.querySelector('dl').innerHTML=extras.map(function(i){var button=heads[i].querySelector('button'),key=button && button.getAttribute('data-sort-key'),raw=key && row.getAttribute('data-'+key),label=button && (button.dataset.detailLabel || button.title) || heads[i].textContent.trim();return '<dt>'+esc(label)+'</dt><dd>'+esc(raw!=null && /^m\d+-/.test(key)?fmt(finiteMetric(raw)):row.cells[i].textContent.trim())+'</dd>';}).join('');
+        });
+        if(table.scrollWidth>table.parentElement.clientWidth+1)table.classList.add('responsive-condensed');
+      });
+    }
+    responsiveMetrics();
+    doc.defaultView.addEventListener('resize',responsiveMetrics);
+    doc.addEventListener('click',function(){queueMicrotask(responsiveMetrics);});
+    function hidePopup(){popup.hidden=true;}
+    function showPopup(event) {
+      var target=event.target.closest && event.target.closest(tooltipSelector);
+      if(!target){hidePopup();return;}
+      var text=target.dataset.tooltip;
+      if(!text && target.classList.contains('multiboon-bar')) {
+        var row=target.closest('.multiboon-row');
+        text=target.getAttribute('aria-label');
+      }
+      if(!text){var tip=target.querySelector('.chart-tooltip, title');text=tip ? tip.textContent : target.getAttribute('title') || target.dataset.drillBody || target.getAttribute('aria-label');if(tip && tip.tagName.toLowerCase()==='title')tip.remove();}
+      if(!text){hidePopup();return;}
+      target.dataset.tooltip=text;target.removeAttribute('title');
+      var ancestor=target.parentElement.closest('[title]');if(ancestor && ancestor.matches('.multiboon-bar,.sparky-boon-bar'))ancestor.removeAttribute('title');
+      popup.textContent=text;popup.hidden=false;
+      var win=doc.defaultView,rect=target.getBoundingClientRect(),keyboard=event.type==='focusin';
+      var x=keyboard ? rect.left+rect.width/2 : event.clientX,y=keyboard ? rect.bottom : event.clientY;
+      var w=popup.offsetWidth,h=popup.offsetHeight;
+      popup.style.left=Math.max(8,Math.min(x+14,win.innerWidth-w-8))+'px';
+      popup.style.top=Math.max(8,Math.min(y+16+h>win.innerHeight ? y-h-14 : y+16,win.innerHeight-h-8))+'px';
+    }
+    doc.addEventListener('pointermove',showPopup);
+    doc.addEventListener('focusin',showPopup);
+    doc.addEventListener('pointerout',function(event){if(!event.relatedTarget || !event.relatedTarget.closest(tooltipSelector))hidePopup();});
+    doc.addEventListener('focusout',hidePopup);
+    doc.addEventListener('scroll',function(){
+      var active=doc.activeElement;
+      if(active && active.matches(tooltipSelector)) {
+        var rect=active.getBoundingClientRect();
+        if(rect.bottom>0 && rect.top<doc.defaultView.innerHeight) {
+          doc.defaultView.requestAnimationFrame(function(){if(doc.activeElement===active)showPopup({target:active,type:'focusin'});});
+          return;
+        }
+      }
+      hidePopup();
+    },true);
+    doc.addEventListener('keydown',function(event){if(event.key==='Escape')hidePopup();});
+    doc.addEventListener('click',function(){hidePopup();prepareCharts();});
+    function highlightPoint(event) {
+      var key=event.target.closest('[data-highlight-point]'),card=event.target.closest('[data-bubble-chart]');
+      if (!key && doc.activeElement && doc.activeElement.matches('[data-highlight-point]')) {key=doc.activeElement;card=key.closest('[data-bubble-chart]');}
+      if (!card) return;
+      var svg=card.querySelector('.bubble-scatter');
+      if (!svg) return;
+      svg.classList.toggle('has-highlight',!!key);
+      svg.querySelectorAll('[data-point-index]').forEach(function(point){
+        var active=key && point.dataset.pointIndex===key.dataset.highlightPoint;
+        point.classList.toggle('point-highlight',!!active);
+        if(active) svg.appendChild(point.parentNode);
+      });
+    }
+    doc.addEventListener('pointerover',highlightPoint);
+    doc.addEventListener('focusin',highlightPoint);
+    function clearPoint(event){
+      if(!event.target.closest('[data-highlight-point]'))return;
+      var card=event.target.closest('[data-bubble-chart]');
+      if(card)card.querySelectorAll('.has-highlight,.point-highlight').forEach(function(el){el.classList.remove('has-highlight','point-highlight');});
+    }
+    doc.addEventListener('focusout',clearPoint);
+    doc.addEventListener('pointerout',function(event){if(!event.relatedTarget || !event.relatedTarget.closest('[data-highlight-point]'))clearPoint(event);});
     doc.addEventListener("click", function(event){
       var chartSlice=event.target.closest && event.target.closest("[data-skill-slice]");
       var chartSource=event.target.closest && event.target.closest("[data-skill-chart]");
@@ -2584,16 +2902,16 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         button.textContent=expanded ? "Expand all " + board.querySelectorAll("tbody tr").length : "Collapse";
         return;
       }
+
       var sortButton=event.target.closest && event.target.closest("[data-sort-key]");
       if (sortButton) {
         var table=sortButton.closest("table"), tbody=table.querySelector("tbody"), key=sortButton.getAttribute("data-sort-key");
         var rows=Array.from(tbody.querySelectorAll("tr"));
-        var values=rows.map(function(row){return Number(row.getAttribute("data-"+key)) || 0;});
-        var currentlyDescending=values.every(function(value,index){return !index || value <= values[index-1];});
-        var heading=sortButton.closest("th"),current=heading && heading.getAttribute("aria-sort");
+        var heading=sortButton.closest("th"),current=table.hasAttribute("data-metric-grid") ? sortButton.getAttribute("data-sort-direction") : heading && heading.getAttribute("aria-sort");
         var direction=current === "ascending" ? "descending" :
-          current === "descending" ? "ascending" : (currentlyDescending ? "ascending" : "descending");
+          current === "descending" ? "ascending" : "descending";
         rows.sort(function(a,b){
+          if (table.hasAttribute("data-metric-grid")) return compareMetricValues(a.getAttribute("data-"+key),b.getAttribute("data-"+key),direction);
           var first=Number(a.getAttribute("data-"+key)) || 0,second=Number(b.getAttribute("data-"+key)) || 0;
           return (first-second)*(direction === "ascending" ? 1 : -1);
         });
@@ -2770,9 +3088,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         panel.innerHTML = "<div class=\"comparison-banner\"><b>" +
           esc(group.label || "Detected group") + "</b> · fights " +
           esc((group.fight_indexes || []).join(", ") || "unavailable") +
-          "</div><p class=\"accuracy\">Grouping method: " +
-          esc(group.grouping_method || group.cohort_status || "best available evidence") +
-          ". Subgroup estimates remain fight-specific until a recurring cohort is proven.</p>" +
+          "</div>" +
           scopeSummary(scope);
       } else {
         var index = value.slice(6);
@@ -2820,10 +3136,34 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       detailSelect.addEventListener("change", drawEnemy);
     }
   }
+  function wallEnabled() {
+    return !!(model && model.sparky_wall && model.sparky_wall.enabled === true);
+  }
+  function renderWall() {
+    if (!wallEnabled()) return "";
+    var players=model.sparky_wall.players || [];
+    var previewNote=model.sparky_wall.preview === true ? (model.sparky_wall.demo === true ?
+      "<p class=\"empty wall-preview\">Demo content — fictional players and sample callouts for reviewing this interface. Not historical commentary from this raid.</p>" :
+      "<p class=\"empty wall-preview\"><b>Preview only.</b> This reference has no recorded AI commentary. This empty Wall demonstrates the optional view; real reports only show it when AI commentary is enabled. No quotes have been invented.</p>") : "";
+    var demo=model.sparky_wall.preview === true && model.sparky_wall.demo === true;
+    var body=previewNote+reportHeading(demo ? "Sparky · fictional demo commentary" : "Sparky · recorded AI commentary")+"<h2>Wall of Fame</h2><p class=\"wall-note\">"+
+      (demo ? "Sample callouts for interface review. Counts demonstrate category mentions, not awards or wins. Select a fictional player to read the samples." :
+      "Recorded fight comments.")+"</p>";
+    body+=players.length ? players.map(function(player){
+      var categories=Object.keys(player.categories || {}).sort().map(function(category){return "<span>"+esc(readableLabel(category))+" <b>"+fmt(player.categories[category])+"</b></span>";}).join("");
+      return "<details class=\"wall-player\" data-wall-player=\""+esc(player.id)+"\"><summary><strong>"+esc(player.name)+"</strong><span>"+fmt(player.mentions)+" recorded mentions</span></summary><div class=\"wall-categories\" aria-label=\"Recorded category mention counts\">"+categories+"</div><div class=\"wall-comments\">"+(player.comments || []).map(function(comment){
+        return "<article class=\"wall-comment\"><blockquote>"+esc(comment.text)+"</blockquote><footer><span>Fight ID: <code>"+esc(comment.fight_id || "Unavailable")+"</code></span>"+
+          (comment.fight_timestamp ? "<span>Fight time: "+esc(reportTimestamp(comment.fight_timestamp,true))+"</span>" : "")+
+          "<span>Recorded: "+esc(reportTimestamp(comment.timestamp,true) || "Unavailable")+"</span><span>Categories: "+esc((comment.categories || []).map(readableLabel).join(" · ") || "Uncategorized")+"</span></footer></article>";
+      }).join("")+"</div></details>";
+    }).join("") : "<p class=\"empty\">No recorded player mentions for the covered fights. Earlier commentary cannot be reconstructed.</p>";
+    var css=".wall-note{max-width:800px;color:var(--muted)}.wall-player{margin:14px 0;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.wall-player summary{display:flex;justify-content:space-between;gap:14px;padding:18px;cursor:pointer;list-style:disclosure-closed}.wall-player summary:focus-visible{outline:2px solid var(--accent)}.wall-player[open] summary{border-bottom:1px solid var(--line)}.wall-player summary strong{font-size:18px}.wall-player summary span{color:var(--muted)}.wall-categories{display:flex;gap:8px;flex-wrap:wrap;padding:16px 18px}.wall-categories span{padding:5px 10px;background:var(--panel-2);border:1px solid var(--line);border-radius:5px}.wall-categories b{margin-left:8px;color:var(--accent)}.wall-comments{padding:0 18px 18px}.wall-comment{padding:16px 0;border-top:1px solid var(--line)}.wall-comment blockquote{margin:0 0 14px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}.wall-comment footer{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.wall-comment code{font-size:11px}@media(max-width:520px){.wall-player summary{flex-direction:column}}";
+    return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Wall of Fame</title><style>"+commonCss+css+"</style></head><body><main class=\"wrap\">"+body+"</main></body></html>";
+  }
   function documentFor(view) {
     if (!docs[view]) {
       docs[view] = view === "classic" ? classicHtml :
-        (view === "simple" ? renderSimple() : renderSparky());
+        (view === "simple" ? renderSimple() : view === "wall" ? renderWall() : renderSparky());
     }
     return docs[view];
   }
@@ -2844,7 +3184,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     frame.hidden = false;
     opening.hidden = true;
     meta.textContent = view === "classic" ? "Untouched source report" :
-      (view === "simple" ? "Fast headline view" : "Complete guided view");
+      (view === "simple" ? "Fast headline view" : view === "wall" ? "Saved AI fight commentary" : "Complete guided view");
     try { localStorage.setItem("sparkybot-report-view", view); } catch (_error) {}
     try { history.replaceState(null, "", "#view=" + view); } catch (_error) {}
   }
@@ -2881,6 +3221,10 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   try {
     var modelJson = await inflatePayload("night-model-payload");
     model = JSON.parse(modelJson);
+    if (wallEnabled()) {
+      views.push("wall");
+      document.querySelector('[data-view="wall"]').hidden=false;
+    }
     modelJson = "";
     classicHtml = await inflatePayload("classic-payload");
 
@@ -2889,7 +3233,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       var remembered = localStorage.getItem("sparkybot-report-view");
       if (views.indexOf(remembered) >= 0) preferred = remembered;
     } catch (_error) {}
-    var match = /[#&]view=(sparky|simple|classic)/.exec(location.hash || "");
+    var match = /[#&]view=(sparky|simple|classic|wall)/.exec(location.hash || "");
     if (match) preferred = match[1];
     show(preferred);
   } catch (error) {
@@ -2903,14 +3247,47 @@ _SHELL_TEMPLATE = r"""<!doctype html>
 """
 
 
+def _source_profession_colors(classic_html: str) -> dict[str, str]:
+    """Read the report's exported palette as data, never execute source JavaScript."""
+    colors: dict[str, str] = {}
+    for store in re.findall(
+        r'<script\b[^>]*type=[\"\']application/json[\"\'][^>]*>(.*?)</script>',
+        classic_html, re.DOTALL | re.IGNORECASE,
+    ):
+        try:
+            tiddlers = json.loads(store)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(tiddlers, list):
+            continue
+        for tiddler in tiddlers:
+            if not isinstance(tiddler, dict):
+                continue
+            for literal in re.findall(r'\bconst\s+ProfessionColor\s*=\s*(\{[^{}]*\})\s*;',
+                                      str(tiddler.get("text", ""))):
+                try:
+                    palette = json.loads(literal)
+                except ValueError:
+                    continue
+                for profession, color in palette.items():
+                    if (re.fullmatch(r'[A-Za-z]+', profession)
+                            and isinstance(color, str)
+                            and re.fullmatch(r'#[0-9A-Fa-f]{6}', color)):
+                        colors.setdefault(profession.lower(), color)
+    return colors
+
+
 def build_switchable_report(
     classic_html: str,
     night_model: dict[str, Any],
     *,
     default_view: str = DEFAULT_REPORT_VIEW,
 ) -> str:
-    """Return one offline report containing Classic, Simple, and Sparky views."""
+    """Embed Classic, Simple, Pro, and an AI-only Wall when its model is enabled."""
     default_view = normalize_report_view(default_view)
+    source_colors = _source_profession_colors(classic_html)
+    if source_colors:
+        night_model = dict(night_model, profession_colors=source_colors)
     embedded_icons = dict(_PROFESSION_ICON_RE.findall(classic_html))
     if embedded_icons:
         night_model = dict(night_model)

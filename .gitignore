@@ -10,6 +10,7 @@ sparkybot-guild-config*.json
 # --- runtime data, history & logs (NEVER commit) ---
 ai_prompt_*.json
 sparkybot_*.json
+sparkybot_commentary.sqlite3*
 *.log
 
 # --- GUI calibration runtime data (corpus + operator threshold override) ---

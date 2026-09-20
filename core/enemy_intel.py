@@ -21,7 +21,7 @@ _PROFESSION_COUNT_RE = re.compile(
     r"\{\{\s*([^}]+?)\s*\}\}\s*:\s*(\d+)", re.IGNORECASE
 )
 _COMPOSITION_CAPTION_RE = re.compile(
-    r"^\|\s*Fight\s*-\s*(\d+)\s*:\s*(Red|Green|Blue)\s+Composition\s*\|c$",
+    r"^\|\s*Fight\s*-\s*(\d+)\s*:\s*(Red|Green|Blue|Unk|Unknown)\s+Composition\s*\|c$",
     re.IGNORECASE,
 )
 _PIPE_SENTINEL = "\x00"
@@ -449,20 +449,26 @@ def estimate_enemy_subgroups(professions, enemy_count, role_context=None):
     return result, unknown_slots, confidence
 
 
-def _composition_snapshots(tiddlers, fight_rows, role_context=None):
+def _composition_time(value):
+    # Overview uses EI's literal timeEnd clock, not timeStart or timeEndStd.
+    match = re.search(r"(\d{4}-\d{2}-\d{2})[ T]+(?:-\s*)?(\d{2}:\d{2}:\d{2})", str(value))
+    return " ".join(match.groups()) if match else None
+
+
+def _composition_snapshots(tiddlers, fight_rows, role_context=None, raw_fights=None):
     tiddler = _find_tiddler(tiddlers, "-Squad-Composition")
-    if not tiddler or not tiddler.get("text"):
-        return []
     fight_by_index = {int(row["index"]): row for row in fight_rows}
     snapshots = []
     current = None
-    for raw_line in tiddler["text"].splitlines():
+    for raw_line in ((tiddler or {}).get("text") or "").splitlines():
         line = raw_line.strip()
+        if line.endswith(("|c", "|k", "|f")) or not line.startswith("|"):
+            current = None
         caption_match = _COMPOSITION_CAPTION_RE.match(line)
         if caption_match:
             current = {
                 "index": int(caption_match.group(1)),
-                "color": caption_match.group(2).casefold(),
+                "color": "unknown" if caption_match.group(2).casefold() in {"unk", "unknown"} else caption_match.group(2).casefold(),
                 "counts": Counter(),
             }
             snapshots.append(current)
@@ -472,6 +478,23 @@ def _composition_snapshots(tiddlers, fight_rows, role_context=None):
         for profession, count in _PROFESSION_COUNT_RE.findall(line):
             current["counts"][profession.strip()] += int(count)
 
+    raw_by_time = {}
+    for raw in raw_fights or []:
+        key = _composition_time(raw.get("time_end"))
+        if key:
+            raw_by_time.setdefault(key, []).append(raw)
+    clock_counts = Counter(_composition_time(f.get("time_label")) for f in fight_rows)
+    for fight in fight_rows:
+        key = _composition_time(fight.get("time_label"))
+        matches = raw_by_time.get(key, [])
+        if not key or len(matches) != 1 or clock_counts[key] != 1:
+            continue
+        index = int(fight["index"])
+        snapshots = [s for s in snapshots if s["index"] != index]
+        for team in matches[0]["teams"]:
+            snapshots.append({**team, "index": index,
+                              "source": "detailed_gw2ei_json"})
+    snapshots.sort(key=lambda s: (s["index"], s["color"]))
     output = []
     color_key = {"red": "r", "green": "g", "blue": "b"}
     for snapshot in snapshots:
@@ -480,7 +503,8 @@ def _composition_snapshots(tiddlers, fight_rows, role_context=None):
         fight = fight_by_index.get(snapshot["index"], {})
         rgb = fight.get("rgb") or {}
         observed_count = sum(snapshot["counts"].values())
-        enemy_count = rgb.get(color_key[snapshot["color"]])
+        enemy_count = (observed_count if snapshot.get("source") == "detailed_gw2ei_json"
+                       else rgb.get(color_key.get(snapshot["color"])))
         if enemy_count is None:
             enemy_count = observed_count
         professions = [
@@ -489,8 +513,12 @@ def _composition_snapshots(tiddlers, fight_rows, role_context=None):
                 snapshot["counts"].items(), key=lambda item: (-item[1], item[0].casefold())
             )
         ]
+        team_context = dict(role_context or {})
+        team_context["actor_role_evidence"] = _team_role_evidence(
+            team_context.get("actor_role_evidence"), snapshot["color"]
+        )
         parties, unknown_slots, confidence = estimate_enemy_subgroups(
-            professions, enemy_count, role_context=role_context
+            professions, enemy_count, role_context=team_context
         )
         output.append({
             "index": snapshot["index"],
@@ -503,6 +531,8 @@ def _composition_snapshots(tiddlers, fight_rows, role_context=None):
             "unknown_slots": unknown_slots,
             "confidence": confidence,
             "composition_evidence": "observed",
+            "composition_source": snapshot.get("source", "combined_report_caption"),
+            "team_ids": snapshot.get("team_ids", []),
             "party_placement_evidence": "inferred",
         })
     return output
@@ -895,7 +925,22 @@ def _role_context(damage_skills, pulls, incoming_strips, damage_profile, actor_r
     }
 
 
-def _scope_aggregate(color, snapshots):
+def _team_role_evidence(evidence, color):
+    """Never turn legacy all-opponent profession signals into team evidence."""
+    team = ((evidence or {}).get("teams") or {}).get(color)
+    if isinstance(team, dict):
+        return team
+    return {
+        "team": color,
+        "source_scope": "night_team",
+        "status": "team_attribution_unavailable",
+        "enemy_actor_appearances": 0,
+        "professions": {},
+        "limitations": "No team-attributed detailed evidence is available. Legacy or unknown-team observations cannot be assigned by profession or composition.",
+    }
+
+
+def _scope_aggregate(color, snapshots, actor_role_evidence=None):
     counts = Counter()
     for snapshot in snapshots:
         for row in snapshot["professions"]:
@@ -916,6 +961,7 @@ def _scope_aggregate(color, snapshots):
         "id": color,
         "label": color.title(),
         "color": color,
+        "role_validation": _team_role_evidence(actor_role_evidence, color),
         "fight_indexes": fight_indexes,
         "aggregate": {
             "enemy_size_avg": round(sum(enemy_sizes) / sample_count, 1) if sample_count else 0.0,
@@ -960,7 +1006,8 @@ def build_enemy_intel(
     damage_profile = _damage_profile(defense_pressure, damage_skills, combat_seconds)
     # Composition must be parsed once before the fallback strip capability can
     # be generalized, then enriched once with the complete numerical context.
-    base_snapshots = _composition_snapshots(tiddlers, fight_rows)
+    raw_fights = (actor_role_evidence or {}).get("composition_fights")
+    base_snapshots = _composition_snapshots(tiddlers, fight_rows, raw_fights=raw_fights)
     incoming_strips = _incoming_strip_profile(
         defense_pressure,
         debuff_strips,
@@ -970,6 +1017,7 @@ def build_enemy_intel(
     snapshots = _composition_snapshots(
         tiddlers,
         fight_rows,
+        raw_fights=raw_fights,
         role_context=_role_context(
             damage_skills, pulls, incoming_strips, damage_profile,
             actor_role_evidence=actor_role_evidence,
@@ -977,7 +1025,7 @@ def build_enemy_intel(
     )
     colors = sorted({snapshot["color"] for snapshot in snapshots})
     scopes = [
-        _scope_aggregate(color, [s for s in snapshots if s["color"] == color])
+        _scope_aggregate(color, [s for s in snapshots if s["color"] == color], actor_role_evidence)
         for color in colors
     ]
     modeled_fights = len(fight_rows)
