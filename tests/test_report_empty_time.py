@@ -14,6 +14,7 @@ def test_missing_boards_and_pressure_are_omitted_not_zeroed():
 
 def test_local_clock_date_rollover_dst_and_explicit_offsets():
     m=sample_model()
+    m['timestamp_sources'] = {'2026-09-19 - 02:17:00 - BAB': '2026-09-19 02:17:00 +00'}
     assert render_js(m,'fightClock("2026-09-19 - 02:17:00 - BAB")')=='9:17 PM'
     assert 'Sep 18' in render_js(m,'reportTimestamp("2026-09-19T02:17:00Z",true)')
     assert render_js(m,'fightClock("2026-01-19T02:17:00Z")')=='8:17 PM'

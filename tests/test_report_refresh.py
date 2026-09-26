@@ -49,7 +49,7 @@ class ReportRefreshTests(unittest.TestCase):
         model = sample_model()
         page = render_js(model, 'renderSimple()')
         for label in ['Damage to Enemy Players', 'Down-Contribution Damage', 'Downed-Ally Healing',
-                      'Resurrects', 'Condition Cleanses', 'Boons Removed', 'Stability Generation', 'Outgoing Crowd Control']:
+                      'Condition cleanses', 'Boon strips', 'Stability Generation']:
             self.assertIn(label, page)
         for label in ['Conditions-Out', 'Mechanics', 'Attendance', 'Pull-Skills']:
             self.assertNotIn('<h3>' + label, page)
@@ -62,7 +62,8 @@ class ReportRefreshTests(unittest.TestCase):
         support['rows'] += [board('x', {'condicleanse': 0}, 'Bob')['rows'][0],
                             board('x', {'boonstrips': 4}, 'Missing')['rows'][0]]
         page = render_js(model, 'renderSimple()')
-        self.assertIn('data-metric-grid="utility"', page)
+        self.assertIn('data-support-rankings', page)
+        self.assertNotIn('data-metric-grid="utility"', page)
         self.assertIn('data-metric-grid="damage"', page)
         self.assertIn('data-metric-grid="healing"', page)
         self.assertNotIn('data-metric-mode="total"', page)
@@ -70,8 +71,8 @@ class ReportRefreshTests(unittest.TestCase):
         self.assertIn('data-value-kind="total"', page)
         self.assertIn('data-value-kind="rate"', page)
         self.assertIn('data-sort-key="m0-rate"', page)
-        self.assertRegex(page, r'data-m0-total="0"')
-        self.assertRegex(page, r'data-m0-total=""')
+        self.assertRegex(page, r'data-total="0"')
+        self.assertRegex(page, r'data-total=""')
         self.assertNotIn('Missing values are —, not zero', page)
         result = render_js(model, '''[1,null,0,5].sort(function(a,b){return compareMetricValues(a,b,"ascending");})''')
         self.assertEqual(result, [0, 1, 5, None])

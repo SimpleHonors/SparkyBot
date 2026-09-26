@@ -71,6 +71,14 @@ def _stage_combiner_json(source: Path, destination: Path) -> None:
     if source.resolve() == destination.resolve():
         raise ValueError("Combiner staging must not overwrite an original EI file")
     data = json.loads(source.read_text(encoding="utf-8"))
+    # Only the private combiner input receives recovered metadata. Exact EI
+    # bytes bind the URL; existing EI links and original logs stay untouched.
+    from core.fight_links import report_url, safe_report_url
+    links = data.get('uploadLinks')
+    existing = links[0] if isinstance(links, list) and links else None
+    recovered = report_url(source)
+    if not safe_report_url(existing) and recovered:
+        data['uploadLinks'] = [recovered] + (links[1:] if isinstance(links, list) else [])
     transport_ids = {"red": 705, "blue": 432, "green": 2739}
     # Resolve against original maps BEFORE changing them (IDs can swap colors).
     for collection in ("targets", "players"):
@@ -116,6 +124,7 @@ class RaidReportRunner:
                  augment_json=None,         # callable(Path) -> dict | None
                  viewer_factory=None,      # callable() -> Path (lazy resolve)
                  report_default_view="sparky",
+                 dpsreport_links_enabled=True,
                  ai_enabled=False,
                  parse_concurrency=4):
         self.log_folder = Path(log_folder)
@@ -135,6 +144,7 @@ class RaidReportRunner:
         self.augment_json = augment_json
         self._viewer_factory = viewer_factory
         self.report_default_view = report_default_view
+        self.dpsreport_links_enabled = bool(dpsreport_links_enabled)
         self.ai_enabled = bool(ai_enabled)
         self.parse_concurrency = max(1, min(int(parse_concurrency), 8))
 
@@ -155,9 +165,19 @@ class RaidReportRunner:
 
         def parse_one(index_and_log):
             index, log = index_and_log
+            from core import fight_links
+            try:
+                raw_hash = fight_links.digest(log.path)
+            except OSError:
+                raw_hash = None
             result = self.parse_log(log.path)
             if not isinstance(result, Path):
                 return index, log, None
+            try:
+                if raw_hash and fight_links.digest(log.path) == raw_hash:
+                    fight_links.bind_parsed(raw_hash, result)
+            except OSError:
+                logger.warning('Could not verify raw log for hosted-link recovery')
             stored = self.cache.store(
                 log.path, result, self.ei_version,
                 self.settings_fingerprint,
@@ -385,6 +405,7 @@ class RaidReportRunner:
                 standalone_html,
                 current_tiddlers,
                 default_view=self.report_default_view,
+                dpsreport_links_enabled=self.dpsreport_links_enabled,
                 enemy_role_evidence=enemy_role_evidence,
                 player_skill_evidence=player_skill_evidence,
             )

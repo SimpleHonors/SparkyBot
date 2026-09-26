@@ -1727,6 +1727,39 @@ def _parse_squad_composition(tiddlers):
 # ------------------------------------------------------------------
 
 
+def resolve_fight_timestamps(fights, sources):
+    """Recover lossy Overview clocks only from unique original EI end clocks.
+
+    Keep labels and source timestamps literal. Ambiguous clocks on either side
+    stay unresolved; source enumeration and the report display zone are not
+    evidence of an instant.
+    """
+    pattern = re.compile(r'^(\d{4}-\d{2}-\d{2})(?:\s+-\s+|[T ])(\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:\s*(Z|[+-]\d{2}(?::?\d{2})?))?')
+    def parts(value):
+        return pattern.match(str(value or '').strip())
+    by_clock = {}
+    labels = {}
+    for source in sources:
+        value = source.get('time_end')
+        match = parts(value)
+        if match:
+            by_clock.setdefault(match.group(1, 2), []).append(value)
+    for fight in fights:
+        label = fight.get('time_label')
+        match = parts(label)
+        if match:
+            labels.setdefault(match.group(1, 2), []).append(label)
+    resolved = {}
+    for key, matches in labels.items():
+        candidates = by_clock.get(key, [])
+        if len(matches) == len(candidates) == 1:
+            label, original = matches[0], candidates[0]
+            label_match, original_match = parts(label), parts(original)
+            if label_match and original_match and not label_match.group(3) and original_match.group(3):
+                resolved[label] = original
+    return resolved
+
+
 def build_night_model(
     tiddlers,
     selected_fights=None,
@@ -1804,6 +1837,8 @@ def build_night_model(
         warnings.append(f"poison: {type(exc).__name__}: {exc}")
         model["poison"] = []
 
+    model['timestamp_sources'] = resolve_fight_timestamps(
+        model['fights'], (enemy_role_evidence or {}).get('timestamp_fights', []))
     model["night_mvps"] = _build_night_mvps(model["stat_tables"])
 
     try:
@@ -1817,6 +1852,8 @@ def build_night_model(
             reported_fights=reported_fights,
             actor_role_evidence=enemy_role_evidence,
         )
+        if enemy_role_evidence and "performance" in enemy_role_evidence:
+            model["enemy_intel"]["performance"] = copy.deepcopy(enemy_role_evidence["performance"])
     except Exception as exc:  # noqa
         warnings.append(f"enemy_intel: {type(exc).__name__}: {exc}")
         model["enemy_intel"] = {

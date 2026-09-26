@@ -2,6 +2,31 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.3.2] — Unreleased
+
+### Added
+
+- Save successful individual-fight uploads by exact log identity and show safe
+  hosted links in Simple and Pro Overview / Night Summary.
+- Split primary support into Condition cleanses and Boon strips tables and
+  participation-time / per-minute contribution charts.
+- Rank observed enemy specializations by phase-normalized damage and other
+  exported output, with per-metric coverage and skill details.
+
+### Fixed
+
+- Use the existing dps.report option for both uploads and native report links;
+  new settings default to enabled with post-first timing, while saved disabled
+  settings remain disabled and do not wait for uploads.
+- Deliver text-only post-first fight links to the existing Discord destination.
+- Preserve original EI timestamp offsets for native fight clocks rather than
+  assuming offset-free combiner labels are UTC.
+- Keep missing or unsafe fight links absent and the full link list confined to
+  native Overview / Night Summary; retain per-fight links in details.
+
+Existing exported HTML reports remain immutable snapshots. No historical fight
+URLs or user log data are bundled with the application.
+
 ## [2.3.1] — 2026-09-19
 
 ### Fixed

@@ -768,11 +768,13 @@ class SettingsWindow(QWidget):
         self.dpsreport_group_box = QGroupBox("dps.report links")
         dr_layout = QVBoxLayout(self.dpsreport_group_box)
         self.dpsreport_enabled = QCheckBox(
-            "Add a dps.report link to each fight post")
+            "Upload fights to dps.report and show report links")
         self.dpsreport_enabled.setToolTip(
             "Uploads each fight's combat log to the public dps.report "
-            "website and shares the resulting page link on Discord. "
-            "SparkyBot's own stats are unaffected either way."
+            "website and shares saved links in fight posts and Simple/Pro reports. "
+            "Enabled by default. Unchecked skips uploads and upload waits, and "
+            "hides report links in Simple/Pro, including previously saved links. "
+            "SparkyBot's own stats and Classic report are unaffected."
         )
         dr_layout.addWidget(self.dpsreport_enabled)
         self.dpsreport_link_later = QRadioButton(
@@ -794,8 +796,7 @@ class SettingsWindow(QWidget):
         self._dpsreport_timing_group.addButton(self.dpsreport_together)
         dr_layout.addWidget(self.dpsreport_link_later)
         dr_layout.addWidget(self.dpsreport_together)
-        # Neither timing is pre-picked: enabling the feature requires the
-        # user to choose one, enforced at save time.
+        # Loading settings selects the saved timing or the post-first default.
         for rb in (self.dpsreport_link_later, self.dpsreport_together):
             rb.setEnabled(False)
         self.dpsreport_enabled.toggled.connect(

@@ -92,6 +92,7 @@ def make_runner(config):
         augment_json = augment_file
 
     return RaidReportRunner(
+        dpsreport_links_enabled=getattr(config, "dpsreport_links_enabled", True),
         ai_enabled=getattr(config, "enable_ai_analysis", False),
         log_folder=log_folder,
         cache=cache,
@@ -217,6 +218,7 @@ def run_headless_raid_report(config):
         augment_json = augment_file
 
     runner = RaidReportRunner(
+        dpsreport_links_enabled=getattr(config, "dpsreport_links_enabled", True),
         ai_enabled=getattr(config, "enable_ai_analysis", False),
         log_folder=log_folder,
         cache=cache,

@@ -586,9 +586,12 @@ def collect_enemy_role_evidence(json_paths):
 
 def collect_report_evidence(json_paths):
     """Collect enemy and squad evidence while decoding each fight once."""
+    from core.enemy_performance import extract, summarize
+    performance_rows = []
     actors = []
     players = {}
     composition = []
+    timestamp_fights = []
     seen_paths = set()
     for path in json_paths:
         path = Path(path).resolve()
@@ -601,7 +604,9 @@ def collect_report_evidence(json_paths):
             continue
         if not isinstance(data, dict):
             continue
+        timestamp_fights.append({"time_end": data.get("timeEnd")})
         fight_actors = []
+        performance_rows.extend(extract(data, str(path)))
         _accumulate_enemy_role_evidence(data, fight_actors)
         actors.extend(fight_actors)
         # Preserve zero-enemy detailed fights too: stale captions must not win.
@@ -621,6 +626,8 @@ def collect_report_evidence(json_paths):
         _accumulate_player_skill_evidence(data, players)
     enemy = _finish_enemy_role_evidence(actors)
     enemy["composition_fights"] = composition
+    enemy["timestamp_fights"] = timestamp_fights
+    enemy["performance"] = summarize(performance_rows)
     return (
         enemy,
         _finish_player_skill_evidence(players),

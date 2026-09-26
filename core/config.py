@@ -53,10 +53,10 @@ class Config:
             'uploadLargeAfterParse': 'false',
         },
         'DpsReport': {
-            # Off by default; turning it on is only honored once the user
-            # has also picked a timing mode ('link_later' or 'together').
-            'dpsReportLinks': 'false',
-            'dpsReportTiming': '',
+            # Saved values override these defaults, including explicit false.
+            # Post first by default; retain an explicitly selected timing.
+            'dpsReportLinks': 'true',
+            'dpsReportTiming': 'link_later',
         },
         'UI': {
             'showDamage': 'true',
@@ -246,9 +246,10 @@ class Config:
         self.max_upload_size = self._config.getint('Thresholds', 'maxUploadSize')
         self.upload_large_after_parse = self._config.getboolean('Thresholds', 'uploadLargeAfterParse')
 
-        # dps.report links (optional, off by default)
+        # One preference controls uploads and native report-link visibility.
         self.dpsreport_links_enabled = self._config.getboolean('DpsReport', 'dpsReportLinks')
-        self.dpsreport_timing = self._config.get('DpsReport', 'dpsReportTiming').strip()
+        self.dpsreport_timing = (self._config.get('DpsReport', 'dpsReportTiming').strip()
+                                 or self._DEFAULTS['DpsReport']['dpsReportTiming'])
 
         # UI / Display settings
         self.show_damage = self._config.getboolean('UI', 'showDamage')

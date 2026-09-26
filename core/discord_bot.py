@@ -313,7 +313,14 @@ class DiscordWebhookManager:
         success_count = 0
 
         if not embeds:
-            return 0
+            # Link-later fight reports use a text-only follow-up. Do not drop
+            # it just because there is no statistical embed in this message.
+            if not message:
+                return 0
+            return sum(
+                bool(DiscordBot(url).send_message(message, icon_path=icon_path))
+                for url in webhook_urls if url
+            )
 
         if compact_single_message:
             compacted = _compact_embeds_to_one_message(embeds)

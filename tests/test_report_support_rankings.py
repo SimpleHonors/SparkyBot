@@ -12,7 +12,7 @@ def test_support_overview_uses_independent_expandable_rate_rankings():
     assert 'data-bubble-chart="support"' not in page
     charts = re.findall(r'<article class="board support-ranking".*?</article>', page)
     assert len(charts) == 2
-    assert 'Cleansing' in charts[0] and 'Boon removal' in charts[1]
+    assert 'Condition cleanses' in charts[0] and 'Boon strips' in charts[1]
     assert charts[0].index('Close high') < charts[0].index('Close low')
     assert charts[1].index('Zero') < charts[1].index('Four')
     for chart in charts:
@@ -23,4 +23,5 @@ def test_support_overview_uses_independent_expandable_rate_rankings():
         assert 'Total' in chart
         assert 'table-player' in chart
     assert 'Cleanses / min' in charts[0] and 'Strips / min' in charts[1]
+    assert page.count('data-bubble-chart=') == 2
     assert 'bubble-scatter' in render_js(sample_model(), 'bubbleChart("dps")')
