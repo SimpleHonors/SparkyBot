@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from support_contract import audit_support
 
 from core.report_viewer import build_switchable_report, unpack_classic_report
 
@@ -262,6 +263,9 @@ class ReportRefreshBrowserTests(unittest.TestCase):
                     });
                     return issues;
                 })'''), [])
+                if frame.locator('[data-support-rankings]:visible').count():
+                    audit_support(frame, model, keyboard=True)
+                    coverage.extend({'context': context, 'group': metric, 'mode': 'simultaneous'} for metric in ('condicleanse', 'boonstrips'))
                 for grid in frame.locator('[data-metric-grid]:visible').all():
                     group = grid.get_attribute('data-metric-grid')
                     board_element = grid.locator('xpath=ancestor::article')
@@ -325,8 +329,8 @@ class ReportRefreshBrowserTests(unittest.TestCase):
                     audit('pro-' + name)
                     visited.append(name)
             self.assertEqual({(c['context'], c['group']) for c in coverage}, {
-                ('simple', 'damage'), ('simple', 'healing'), ('simple', 'utility'),
-                ('pro-dps-overview', 'damage'), ('pro-support-overview', 'utility'),
+                ('simple', 'damage'), ('simple', 'healing'), ('simple', 'condicleanse'), ('simple', 'boonstrips'),
+                ('pro-dps-overview', 'damage'), ('pro-support-overview', 'condicleanse'), ('pro-support-overview', 'boonstrips'),
                 ('pro-support-strips', 'strips'), ('pro-healing-overview', 'healing')})
             page.locator('[data-view="wall"]').click()
             audit('wall')
@@ -408,17 +412,17 @@ class ReportRefreshBrowserTests(unittest.TestCase):
             path.write_text(build_switchable_report('<title>Original</title><p>Classic</p>', model, default_view='simple'))
             page.goto(path.as_uri())
             frame = page.frame_locator('#report-frame')
-            grid = frame.locator('[data-metric-grid="utility"]')
+            grid = frame.locator('[data-support-metric="condicleanse"] table')
             grid.wait_for()
-            button = grid.locator('[data-sort-key="m0-rate"]')
+            button = grid.locator('[data-sort-key="rate"]')
             for _ in range(2):
                 button.click()
                 direction = button.get_attribute('data-sort-direction')
-                values = grid.locator('tbody tr').evaluate_all('(rows)=>rows.map(r=>r.getAttribute("data-m0-rate"))')
+                values = grid.locator('tbody tr').evaluate_all('(rows)=>rows.map(r=>r.getAttribute("data-rate"))')
                 self.assertEqual(values[-1], '')
                 numbers = [float(v) for v in values if v != '']
                 self.assertEqual(numbers, sorted(numbers, reverse=direction == 'descending'))
-            grid.locator('[data-sort-key="m1-rate"]').click()
+            grid.locator('[data-sort-key="total"]').click()
             self.assertIsNone(button.get_attribute('data-sort-direction'))
             grid.locator('xpath=ancestor::article').locator('[data-expand-board]').click()
             self.assertEqual(grid.locator('tbody tr:visible').count(), 8)
@@ -445,11 +449,11 @@ class ReportRefreshBrowserTests(unittest.TestCase):
             self.assertIn('Sep 8, 10:26 PM CDT', frame.locator('.wall-comment footer').inner_text())
             page.set_viewport_size({'width': 390, 'height': 844})
             page.locator('[data-view="simple"]').click()
-            self.assertTrue(frame.locator('[data-metric-grid="utility"]').is_visible())
+            audit_support(frame, model, keyboard=True)
             self.assertTrue(frame.locator('.metric-grid-scroll').first.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1'))
-            mobile_grid = frame.locator('[data-metric-grid="utility"]')
-            self.assertTrue(mobile_grid.locator('tbody tr:visible').first.locator('[data-metric-cell="0"][data-value-kind="total"]').is_visible())
-            self.assertTrue(mobile_grid.locator('tbody tr:visible').first.locator('[data-metric-cell="0"][data-value-kind="rate"]').is_visible())
+            mobile_grid = frame.locator('[data-support-metric="condicleanse"] table')
+            self.assertTrue(mobile_grid.locator('tbody tr:visible').first.locator('td').nth(0).is_visible())
+            self.assertTrue(mobile_grid.locator('tbody tr:visible').first.locator('td').nth(1).is_visible())
             scoreboard = frame.locator('.kill-comparison')
             self.assertTrue(scoreboard.is_visible())
             self.assertTrue(scoreboard.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1'))

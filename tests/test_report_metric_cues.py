@@ -5,6 +5,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 from core.report_viewer import build_switchable_report
 from test_report_refresh import sample_model
+from support_contract import audit_support
 
 
 def test_metric_cues_real_browser(tmp_path):
@@ -26,7 +27,8 @@ def test_metric_cues_real_browser(tmp_path):
             page.set_viewport_size({'width': width, 'height': 1900})
             frame.locator('main').evaluate("e=>e.ownerDocument.defaultView.dispatchEvent(new Event('resize'))")
             page.wait_for_timeout(150)
-            for group in ('damage', 'healing', 'utility'):
+            audit_support(frame, model)
+            for group in ('damage', 'healing'):
                 table = frame.locator('[data-metric-grid='+group+']')
                 assert table.locator('thead tr').count() == 1
                 assert table.locator('thead .pair-total svg.metric-cue-icon').count() == table.locator('thead .pair-total').count()

@@ -13,7 +13,7 @@ def test_shared_palette_across_table_families_and_themes(tmp_path):
             page.locator('#theme-picker').select_option(theme)
             values=f.locator('body').evaluate('''e=>{let sels=['.metric-grid-board','.ranking-board','.rate-ranking-card','.support-ranking'];return sels.map(s=>{let n=e.querySelector(s),c=getComputedStyle(n);return [c.backgroundColor,c.borderTopColor,c.borderTopWidth]})}''')
             assert all(v==values[0] for v in values),values
-            headers=f.locator('body').evaluate('''e=>['.metric-grid thead th:first-child','.rate-ranking-head','.support-ranking-labels'].map(s=>getComputedStyle(e.querySelector(s)).backgroundColor)''')
+            headers=f.locator('body').evaluate('''e=>['.metric-grid thead th:first-child','.rate-ranking-head','.support-ranking thead th:first-child'].map(s=>getComputedStyle(e.querySelector(s)).backgroundColor)''')
             assert len(set(headers))==1,headers
             values=f.locator('body').evaluate('''e=>{let g=e.querySelector('.metric-grid');return [...g.querySelectorAll('tbody tr:first-child td')].map(n=>getComputedStyle(n).color)}''')
             assert len(set(values))==1,values

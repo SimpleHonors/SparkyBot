@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from test_report_refresh import render_js, sample_model
 from core.night_model import build_night_model
+from support_contract import audit_support
 
 SOURCE = Path('/opt/data/sparkybot-reference/WvW_Combat_Summary.json')
 
@@ -161,7 +162,13 @@ def test_browser_real_scatter_alignment_hover_and_mobile(tmp_path):
         page.locator('[data-view="simple"]').click()
         for width in (1440,390):
             page.set_viewport_size({'width':width,'height':844})
-            for view,tab,group in [('simple',None,'damage'),('simple',None,'utility'),('sparky','dps','damage'),('sparky','support','utility'),('sparky','support','strips')]:
+            for support_view in ('simple', 'sparky'):
+                page.locator('[data-view="'+support_view+'"]').click()
+                if support_view == 'sparky':
+                    frame.locator('[data-tab="support"]').click()
+                    frame.locator('[data-subtab="overview"]:visible').click()
+                audit_support(frame, real_model(), keyboard=True)
+            for view,tab,group in [('simple',None,'damage'),('sparky','dps','damage'),('sparky','support','strips')]:
                 page.locator('[data-view="'+view+'"]').click()
                 if tab: frame.locator('[data-tab="'+tab+'"]').click()
                 if group=='strips': frame.locator('[data-subtab="strips"]').click()

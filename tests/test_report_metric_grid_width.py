@@ -1,6 +1,7 @@
 from playwright.sync_api import sync_playwright
 from core.report_viewer import build_switchable_report
 from test_report_refresh import sample_model
+from support_contract import audit_support
 
 
 def test_adjacent_metric_grids_use_available_width_and_shared_identity(tmp_path):
@@ -25,7 +26,8 @@ def test_adjacent_metric_grids_use_available_width_and_shared_identity(tmp_path)
                 time:t.tHead.rows[0].cells[t.tHead.rows[0].cells.length-1].getBoundingClientRect().right,
                 rateWidths:Array.from(t.tHead.querySelectorAll('.pair-rate')).map(c=>c.getBoundingClientRect().width)
             }))''')
-            assert len(grids) == 3
+            assert len(grids) == 2
+            audit_support(frame, sample_model(), keyboard=True)
             for grid in grids:
                 assert abs(grid['width']-grid['available']) <= 2, grids
                 assert not grid['overflow'], grids

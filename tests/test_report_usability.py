@@ -1,6 +1,7 @@
 """Usability contracts for native report rendering."""
 import re
 from test_report_refresh import render_js, sample_model, board
+from support_contract import audit_support
 
 
 def test_bubble_origin_observations_are_listed_not_plotted():
@@ -43,16 +44,19 @@ def test_bubble_all_zero_and_missing_are_different_states():
 def test_simple_has_adjacent_total_rate_with_rate_sort_default():
     html = render_js(sample_model(), 'metricGrid("utility",true)')
     assert 'data-metric-mode=' not in html
-    assert 'data-value-kind="total"' in html and 'data-value-kind="rate"' in html
+    assert html.count('data-support-metric=') == 2
+    assert html.count('data-sort-key="total"') == 2
+    assert html.count('data-sort-key="rate" data-sort-direction="descending"') == 2
     assert 'metric-sort-pair' not in html
-    assert 'data-detail-label="Cleanses/min"' in html
-    assert 'data-detail-label="Strips/min"' in html
-    assert 'data-detail-label="Stab/min"' in html
-    assert 'data-m0-total="11" data-m0-rate="6.6"' in html
-    assert 'data-m2-total="150" data-m2-rate="90"' in html
-    assert 'data-metric-cell="0"' in html
+    assert 'Cleanses / min' in html and 'Strips / min' in html
+    assert 'data-rate="6.6" data-total="11" data-participation="100"' in html
+    assert 'data-rate="4.8" data-total="8" data-participation="100"' in html
+    assert '>1m 40s</td>' in html
     assert '<b>11</b><small>6.6</small>' not in html
-    assert re.search(r'data-metric-cell="0"[^>]*>6.6</td>', html)
+    assert re.search(r'<td title="Cleanses / min: 6.6">6.6<span', html)
+    secondary = render_js(sample_model(), 'curatedBoards("utility")')
+    stability = next(b for b in secondary if b['source_key'] == 'Stability-Generation')
+    assert stability['rows'][0]['total'] == 150 and stability['rows'][0]['rate'] == 90
     for renderer in ['renderSimple()', 'renderSparky()', 'metricGrid("strips")']:
         native = render_js(sample_model(), renderer)
         assert 'metric-sort-pair' not in native
@@ -91,9 +95,13 @@ def test_compact_labels_follow_metric_not_optional_column_index():
     model['stat_tables'] = [b for b in model['stat_tables'] if b['source_key'] != 'Stability-Generation']
     html = render_js(model, 'metricGrid("utility",true)')
     assert '>Stab/sec</button>' not in html
-    assert 'data-detail-label="Res/min"' in html
-    assert 'data-detail-label="CC/min"' in html
-    assert 'data-m2-total="2" data-m2-rate="1.2"' in html
+    assert 'Cleanses / min' in html and 'Strips / min' in html
+    assert html.count('data-support-metric=') == 2
+    secondary = render_js(model, 'curatedBoards("utility")')
+    resurrects = next(b for b in secondary if b['stat'] == 'Resurrects')
+    cc = next(b for b in secondary if b['stat'] == 'Outgoing Crowd Control')
+    assert resurrects['rows'][0]['total'] == 2 and resurrects['rows'][0]['rate'] == 1.2
+    assert cc['rows'][0]['total'] == 12 and abs(cc['rows'][0]['rate'] - 7.2) < 1e-12
 
 
 def test_browser_simultaneous_metrics_and_named_comparisons(tmp_path):
@@ -106,11 +114,12 @@ def test_browser_simultaneous_metrics_and_named_comparisons(tmp_path):
         page = browser.new_page()
         page.goto(path.as_uri())
         frame = page.frame_locator('#report-frame')
-        grid = frame.locator('[data-metric-grid="utility"]')
-        assert grid.locator('[data-metric-cell="0"][data-value-kind="total"]').inner_text() == '11'
-        assert grid.locator('[data-metric-cell="0"][data-value-kind="rate"]').inner_text() == '6.6'
+        grid = frame.locator('[data-support-metric="condicleanse"] table')
+        audit_support(frame, sample_model(), keyboard=True)
+        assert grid.locator('tbody td').nth(0).inner_text() == '11'
+        assert grid.locator('tbody td').nth(1).inner_text() == '6.6'
         for kind in ('total', 'rate'):
-            header = grid.locator('[data-sort-key="m0-'+kind+'"]')
+            header = grid.locator('[data-sort-key="'+kind+'"]')
             header.click()
             assert header.locator('..').get_attribute('aria-sort') in ('ascending', 'descending')
         assert grid.locator('thead tr').count() == 1
@@ -173,11 +182,12 @@ def test_real_source_desktop_mobile_comparison_and_simple(tmp_path):
         frame = page.frame_locator('#report-frame')
         frame.locator('[data-metric-grid="damage"]').wait_for()
         page.screenshot(path=str(artifact / 'simple-desktop.png'))
-        grid = frame.locator('[data-metric-grid="utility"]')
+        grid = frame.locator('[data-support-metric="condicleanse"] table')
         grid.scroll_into_view_if_needed()
         grid.locator('xpath=ancestor::article').screenshot(path=str(artifact / 'simple-utility-desktop.png'))
         page.locator('[data-view="sparky"]').click()
         frame.locator('[data-tab="support"]').click()
+        audit_support(frame, model, keyboard=True)
         chart = frame.locator('[data-support-rankings]')
         assert frame.locator('[data-bubble-chart="support"]').count() == 0
         assert chart.locator('[data-support-metric]').count() == 2
@@ -223,11 +233,12 @@ def test_real_source_desktop_mobile_comparison_and_simple(tmp_path):
         page.screenshot(path=str(artifact / 'support-mobile.png'))
         assert chart.evaluate('(e)=>e.scrollWidth <= e.clientWidth')
         assert chart.locator('tbody tr:visible').count() == 10
+        audit_support(frame, model, keyboard=True)
         assert frame.locator('body').evaluate('(e)=>e.scrollWidth <= innerWidth')
         page.locator('[data-view="simple"]').click()
         frame.locator('[data-metric-grid="damage"]').wait_for()
         page.screenshot(path=str(artifact / 'simple-mobile.png'))
-        grid = frame.locator('[data-metric-grid="utility"]')
+        grid = frame.locator('[data-support-metric="condicleanse"] table')
         grid.locator('xpath=ancestor::article').evaluate('(e)=>e.scrollIntoView({block:"start"})')
         page.screenshot(path=str(artifact / 'simple-utility-mobile.png'))
         page.locator('[data-view="wall"]').click()

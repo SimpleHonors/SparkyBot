@@ -17,6 +17,6 @@ def test_simple_and_pro_share_actual_table_palette(tmp_path):
             views={}
             for view in ['simple','sparky']:
                 page.locator('[data-view='+view+']').click()
-                views[view]=page.frame_locator('#report-frame').locator('body').evaluate('''e=>['damage','healing','utility'].map(g=>{let t=e.querySelector('[data-metric-grid='+g+']');return [t.closest('.board'),t.querySelector('h3'),t.querySelector('thead th'),t.querySelector('tbody tr'),t.querySelector('tbody th'),t.querySelector('.grid-primary-value')].filter(Boolean).map(n=>{let s=getComputedStyle(n);return {color:s.color,bg:s.backgroundColor,image:s.backgroundImage}})})''')
+                views[view]=page.frame_locator('#report-frame').locator('body').evaluate('''e=>['[data-metric-grid=damage]','[data-metric-grid=healing]','[data-support-metric=condicleanse] table','[data-support-metric=boonstrips] table'].map(g=>{let t=e.querySelector(g);return [t.closest('.board'),t.querySelector('h3'),t.querySelector('thead th'),t.querySelector('tbody tr'),t.querySelector('tbody th'),t.querySelector('.grid-primary-value, .support-ranking-track i')].filter(Boolean).map(n=>{let s=getComputedStyle(n);return {color:s.color,bg:s.backgroundColor,image:s.backgroundImage}})})''')
             assert views['simple']==views['sparky'],(theme,views)
         browser.close()

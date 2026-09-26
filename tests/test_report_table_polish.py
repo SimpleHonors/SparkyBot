@@ -9,8 +9,13 @@ def test_grid_labels_match_units_without_repetitive_instructions():
         html = render_js(model, 'metricGrid('+repr(group)+')')
         if not html:
             continue
-        assert 'data-sort-key="m0-total"' in html
-        assert 'data-sort-key="m0-rate"' in html
+        prefix = '' if group == 'utility' else 'm0-'
+        assert 'data-sort-key="'+prefix+'total"' in html
+        assert 'data-sort-key="'+prefix+'rate"' in html
+        if group == 'utility':
+            assert html.count('data-support-metric=') == 2
+            assert 'Cleanses / min' in html and 'Strips / min' in html
+            assert html.count('data-sort-key="participation"') == 2
         assert 'data-metric-mode' not in html
         assert 'How to read' not in html
         assert 'Click a column' not in html
