@@ -2863,21 +2863,21 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       popup.style.top=Math.max(8,Math.min(y+16+h>win.innerHeight ? y-h-14 : y+16,win.innerHeight-h-8))+'px';
     }
     // Focus scrolling emits pointer enter/leave without user pointer movement.
-    var keyboardPoint=null;
-    doc.addEventListener('pointermove',function(event){keyboardPoint=null;showPopup(event);highlightPoint(event);});
-    doc.addEventListener('focusin',function(event){keyboardPoint=event.target.closest('[data-highlight-point]');showPopup(event);});
+    var keyboardPoint=null,popupOwner=null;
+    doc.addEventListener('pointermove',function(event){keyboardPoint=null;popupOwner=event;showPopup(event);highlightPoint(event);});
+    doc.addEventListener('focusin',function(event){keyboardPoint=event.target.closest('[data-highlight-point]');popupOwner=event;showPopup(event);});
     doc.addEventListener('pointerout',function(event){if(!keyboardPoint && (!event.relatedTarget || !event.relatedTarget.closest(tooltipSelector)))hidePopup();});
-    doc.addEventListener('focusout',function(){keyboardPoint=null;hidePopup();});
+    doc.addEventListener('focusout',function(){keyboardPoint=null;popupOwner=null;hidePopup();});
     doc.addEventListener('scroll',function(){
-      var active=doc.activeElement;
-      if(active && active.matches(tooltipSelector)) {
-        var rect=active.getBoundingClientRect();
-        if(rect.bottom>0 && rect.top<doc.defaultView.innerHeight) {
-          doc.defaultView.requestAnimationFrame(function(){if(doc.activeElement===active)showPopup({target:active,type:'focusin'});});
-          return;
+      doc.defaultView.requestAnimationFrame(function(){
+        // Resolve the current owner here: pointer takeover may occur after scroll.
+        var owner=popupOwner,target=owner && owner.target.closest(tooltipSelector);
+        if(target && (owner.type==='focusin' ? doc.activeElement===owner.target : target.matches(':hover'))) {
+          var rect=target.getBoundingClientRect();
+          if(rect.bottom>0 && rect.top<doc.defaultView.innerHeight) {showPopup(owner);return;}
         }
-      }
-      hidePopup();
+        hidePopup();
+      });
     },true);
     doc.addEventListener('keydown',function(event){if(event.key==='Escape')hidePopup();});
     doc.addEventListener('click',function(){hidePopup();prepareCharts();});
