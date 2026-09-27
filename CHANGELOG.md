@@ -2,6 +2,20 @@
 
 All notable changes to SparkyBot will be documented in this file.
 
+## [2.3.3] — 2026-09-27
+
+### Fixed
+
+- Use one dps.report checkbox: when enabled, upload first and include the
+  clickable Open fight report link in the original individual-fight post.
+  Legacy timing settings no longer create a separate link follow-up. Disabled
+  uploads skip waiting and links; failed uploads still post normal statistics.
+- Preserve complete existing statistical summaries through ordered Discord
+  continuation messages instead of truncating or compacting their rows.
+
+Windows binaries for this release are unsigned under an explicit release
+exception. Windows may display an unknown-publisher or SmartScreen warning.
+
 ## [2.3.2] — Unreleased
 
 ### Added

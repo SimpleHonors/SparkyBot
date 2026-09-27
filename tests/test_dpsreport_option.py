@@ -16,7 +16,7 @@ def test_new_and_unset_option_defaults_on_without_writing(tmp_path, saved):
         path.write_text(saved)
     cfg = Config(path)
     assert cfg.dpsreport_links_enabled is True
-    assert cfg.dpsreport_timing == dpsreport.TIMING_LINK_LATER
+    assert cfg.dpsreport_timing == dpsreport.TIMING_TOGETHER
     assert dpsreport.links_active(cfg)
     assert path.read_text() == saved if saved is not None else not path.exists()
 
@@ -32,8 +32,7 @@ def test_saved_false_survives_load_save_reload(tmp_path, timing):
     loaded = Config(path)
     assert not loaded.dpsreport_links_enabled
     assert not dpsreport.links_active(loaded)
-    if timing:
-        assert loaded.dpsreport_timing == timing
+    assert loaded.dpsreport_timing == dpsreport.TIMING_TOGETHER
 
 
 @pytest.mark.parametrize('enabled', [False, True])
@@ -144,16 +143,13 @@ def test_settings_modal_single_option_defaults_and_false_roundtrip(tmp_path, mon
     try:
         assert page.isAncestorOf(engine.dpsreport_enabled)
         assert engine.dpsreport_enabled.isChecked()
-        assert engine.dpsreport_link_later.isChecked()
-        assert engine.dpsreport_link_later.isEnabled()
+        from PySide6.QtWidgets import QRadioButton
+        assert not engine.dpsreport_group_box.findChildren(QRadioButton)
         assert 'report links' in engine.dpsreport_enabled.text().lower()
         assert 'unchecked' in engine.dpsreport_enabled.toolTip().lower()
         dialog._take_snapshot()
-        engine.dpsreport_together.setChecked(True)
         engine.dpsreport_enabled.setChecked(False)
         assert dialog.is_dirty() and dialog.apply_button.isEnabled()
-        assert not engine.dpsreport_link_later.isEnabled()
-        assert not engine.dpsreport_together.isEnabled()
         engine.enable_discord.setChecked(False)  # No configured destination in this fixture.
         saved, _ = engine._save_settings()
         assert saved, getattr(engine, '_last_save_error', '')
@@ -162,9 +158,7 @@ def test_settings_modal_single_option_defaults_and_false_roundtrip(tmp_path, mon
         assert loaded.dpsreport_timing == dpsreport.TIMING_TOGETHER
         engine._load_settings(prompt_updates=False)
         assert not engine.dpsreport_enabled.isChecked()
-        assert engine.dpsreport_together.isChecked()
         engine.dpsreport_enabled.setChecked(True)
-        assert engine.dpsreport_together.isEnabled()
         assert engine._save_settings()[0]
         assert dpsreport.links_active(Config(cfg.config_path))
     finally:
@@ -217,7 +211,7 @@ def test_actual_watcher_upload_waits_only_when_enabled(timing, enabled):
         if enabled:
             assert entered.wait(2)
             assert not done.is_set()
-            assert order == (['upload'] if timing == dpsreport.TIMING_TOGETHER else ['fight', 'upload'])
+            assert order == ['upload']
         else:
             # Upload response deliberately remains blocked. OFF must finish
             # without reaching it or any upload-specific timeout/wait.
@@ -230,15 +224,11 @@ def test_actual_watcher_upload_waits_only_when_enabled(timing, enabled):
         thread.join(2)
         assert not failures
         if enabled:
-            assert order == (['upload', 'fight'] if timing == dpsreport.TIMING_TOGETHER else ['fight', 'upload', 'link'])
+            assert order == ['upload', 'fight']
             assert case.http.call_count == 1
             link = '[Open fight report](https://example.invalid/callback-fixture)'
-            if timing == dpsreport.TIMING_TOGETHER:
-                fields = sent[0]['embeds'][0]['fields']
-                assert [field['value'] for field in fields if field['name'] == 'dps.report'] == [link]
-            else:
-                assert link in sent[1]['message']
-                assert 'example.invalid' not in json.dumps(sent[0])
+            fields = sent[0]['embeds'][0]['fields']
+            assert [field['value'] for field in fields if field['name'] == 'dps.report'] == [link]
         else:
             assert 'Open fight report' not in json.dumps(sent)
             assert 'example.invalid' not in json.dumps(sent)
@@ -250,7 +240,7 @@ def test_actual_watcher_upload_waits_only_when_enabled(timing, enabled):
 
 
 @pytest.mark.parametrize('timing', dpsreport.VALID_TIMINGS)
-def test_link_later_retains_successful_discord_gate(timing):
+def test_failed_discord_still_reports_failure_after_upload(timing):
     from unittest.mock import patch
     from test_sparky_wall_pipeline import ApplicationCallbackTests
     case = ApplicationCallbackTests()
@@ -263,7 +253,7 @@ def test_link_later_retains_successful_discord_gate(timing):
         case.discord.send_to_all.return_value = 0
         with patch.object(dpsreport, 'upload_log', return_value=None) as upload:
             case.callback(case.raw)
-        assert upload.call_count == int(timing == dpsreport.TIMING_TOGETHER)
+        assert upload.call_count == 1
         assert case.results[-1][1] == 'error_discord'
     finally:
         case.doCleanups()

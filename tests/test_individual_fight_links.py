@@ -51,16 +51,12 @@ def test_each_fight_sends_its_own_clickable_permalink(timing, enabled):
             assert case.results[-1][1] == 'success'
             emitted = payloads[start:]
             if enabled:
-                assert len(emitted) == (2 if timing == dpsreport.TIMING_LINK_LATER else 1)
+                assert len(emitted) == 1
                 markdown = f"[Open fight report]({current['url']})"
                 assert json.dumps(emitted).count(markdown) == 1
                 assert 'previously-saved' not in json.dumps(emitted)
-                if timing == dpsreport.TIMING_LINK_LATER:
-                    assert markdown in emitted[1]['content']
-                    assert current['url'] not in json.dumps(emitted[0])
-                else:
-                    assert any(field['value'] == markdown
-                               for field in emitted[0]['embeds'][0]['fields'])
+                assert any(field['value'] == markdown
+                           for field in emitted[0]['embeds'][0]['fields'])
             else:
                 assert len(emitted) == 1
                 assert 'example.invalid' not in json.dumps(emitted)

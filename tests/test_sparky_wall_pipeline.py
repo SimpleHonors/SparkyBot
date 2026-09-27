@@ -79,7 +79,7 @@ class ApplicationCallbackTests(unittest.TestCase):
     def test_actual_watcher_callback_records_final_text_before_fanout_and_retry(self):
         observed = []
         def send(**kwargs):
-            if not kwargs.get('compact_single_message'):
+            if kwargs['embeds'][0].get('title') != 'Full Report':
                 observed.append(self.rows())
                 self.assertEqual(kwargs['embeds'][0]['description'], 'Alice had damage.')
             return 2

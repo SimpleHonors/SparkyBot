@@ -85,9 +85,7 @@ _TRACKED_CHECKBOXES = (
     "enable_twitch", "twitch_use_tls", "enable_tts", "tts_discord_attach",
     "tts_el_speaker_boost", "raidreport_cache_enabled",
     "raidreport_poison_tab", "raidreport_always_zip", "run_autopost",
-    # dps.report links (radios track like checkboxes; both start unchecked,
-    # so the first timing pick must mark the dialog dirty)
-    "dpsreport_enabled", "dpsreport_link_later", "dpsreport_together",
+    "dpsreport_enabled",
 )
 _TRACKED_SPINS = (
     "poll_interval", "max_parse_memory", "min_duration", "min_downs",

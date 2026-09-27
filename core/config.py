@@ -54,9 +54,9 @@ class Config:
         },
         'DpsReport': {
             # Saved values override these defaults, including explicit false.
-            # Post first by default; retain an explicitly selected timing.
+            # Legacy timing is normalized to combined delivery on load.
             'dpsReportLinks': 'true',
-            'dpsReportTiming': 'link_later',
+            'dpsReportTiming': 'together',
         },
         'UI': {
             'showDamage': 'true',
@@ -248,8 +248,9 @@ class Config:
 
         # One preference controls uploads and native report-link visibility.
         self.dpsreport_links_enabled = self._config.getboolean('DpsReport', 'dpsReportLinks')
-        self.dpsreport_timing = (self._config.get('DpsReport', 'dpsReportTiming').strip()
-                                 or self._DEFAULTS['DpsReport']['dpsReportTiming'])
+        # Migrate legacy link_later without changing the saved on/off choice.
+        self.dpsreport_timing = 'together'
+        self._config.set('DpsReport', 'dpsReportTiming', self.dpsreport_timing)
 
         # UI / Display settings
         self.show_damage = self._config.getboolean('UI', 'showDamage')

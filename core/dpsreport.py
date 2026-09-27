@@ -19,19 +19,16 @@ UPLOAD_URL = "https://dps.report/uploadContent"
 # player breakdown on the hosted page.
 UPLOAD_PARAMS = {"json": "1", "generator": "ei", "detailedwvw": "true"}
 
-# Config values for DpsReport/dpsReportTiming. Config defaults to link_later;
-# an invalid nonempty saved timing still must not trigger an upload.
+# Legacy constants retained for settings/import compatibility; delivery is
+# always combined when enabled, regardless of the old timing value.
 TIMING_LINK_LATER = "link_later"
 TIMING_TOGETHER = "together"
 VALID_TIMINGS = (TIMING_LINK_LATER, TIMING_TOGETHER)
 
 
 def links_active(config) -> bool:
-    """True only when the option is on and its timing mode is valid."""
-    return bool(
-        getattr(config, "dpsreport_links_enabled", False)
-        and getattr(config, "dpsreport_timing", "") in VALID_TIMINGS
-    )
+    """The single upload/link switch; legacy timing cannot change delivery."""
+    return bool(getattr(config, "dpsreport_links_enabled", False))
 
 
 def upload_log(log_file: Path, timeout: int = 120, *, ei_json: Path | None = None) -> str | None:

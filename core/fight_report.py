@@ -1039,13 +1039,12 @@ class FightReport:
             if display_config.get(config_key, True):
                 content = getter()
                 if content:
-                    # Discord field value max is 1024 chars
+                    # Preserve the complete summary; Discord transport splits
+                    # oversized fields into ordered, fenced continuations.
                     value = f"```\n{content}\n```"
-                    if len(value) > 1024:
-                        value = f"```\n{content[:1016]}\n```"
                     fields.append({"name": title, "value": value, "inline": False})
 
-        # Split fields into chunks of 4 to stay under Discord's 6000 char embed limit
+        # Keep the existing section grouping; transport enforces Discord limits.
         FIELDS_PER_EMBED = 4
         for i in range(0, len(fields), FIELDS_PER_EMBED):
             chunk = fields[i:i + FIELDS_PER_EMBED]

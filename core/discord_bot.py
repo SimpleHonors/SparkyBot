@@ -56,86 +56,71 @@ def _embed_char_count(embed: Dict[str, Any]) -> int:
     return total
 
 
-def _truncate_field_value(value: str, limit: int) -> str:
-    """Shorten one field at a line boundary while preserving code fences."""
+def _split_field_value(value: str, limit: int = 1024) -> List[str]:
+    """Split transport text at rows, reopening fenced tables without losing rows."""
     if len(value) <= limit:
-        return value
+        return [value]
+    opening = ""
+    closing = ""
+    body = value
+    if value.startswith("```") and value.endswith("\n```"):
+        newline = value.find("\n")
+        opening, body, closing = value[:newline + 1], value[newline + 1:-4], "\n```"
+    budget = limit - len(opening) - len(closing)
+    parts = []
+    while len(body) > budget:
+        end = body.rfind("\n", 0, budget if not opening else budget + 1)
+        if end <= 0:
+            end = budget
+        elif not opening:
+            end += 1  # Plain text keeps the original newline in its chunk.
+        # Keep Markdown links and bare URLs atomic (never cut their target).
+        if not opening:
+            for match in re.finditer(r"\[[^\]]*\]\(https?://[^\s]+?\)|https?://[^\s]+", body):
+                if match.start() < end < match.end():
+                    end = match.start()
+                    if not end:
+                        raise ValueError("Discord field contains a link longer than its limit")
+                    break
+        parts.append(opening + body[:end] + closing)
+        body = body[end + 1:] if opening and body[end:end + 1] == "\n" else body[end:]
+    if body or opening:
+        parts.append(opening + body + closing)
+    return parts
 
-    marker = "… condensed; full details in linked report"
-    if limit <= len(marker):
-        return marker[:max(1, limit)]
 
-    if value.startswith("```"):
-        first_newline = value.find("\n")
-        opening = value[:first_newline] if first_newline >= 0 else "```"
-        body = value[first_newline + 1:] if first_newline >= 0 else value[3:]
-        if body.endswith("```"):
-            body = body[:-3].rstrip("\n")
-        fixed = len(opening) + len(marker) + len("\n\n\n```")
-        body_limit = max(0, limit - fixed)
-        shortened = body[:body_limit]
-        if "\n" in shortened and len(body) > body_limit:
-            shortened = shortened.rsplit("\n", 1)[0]
-        result = f"{opening}\n{shortened}\n{marker}\n```"
-        return result[:limit]
-
-    body_limit = max(0, limit - len(marker) - 1)
-    shortened = value[:body_limit]
-    if "\n" in shortened and len(value) > body_limit:
-        shortened = shortened.rsplit("\n", 1)[0]
-    return f"{shortened}\n{marker}"[:limit]
-
-
-def _compact_embeds_to_one_message(embeds: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-    """Return a condensed copy that fits one Discord message, when possible."""
-    if len(embeds) > MAX_EMBEDS_PER_POST:
-        return None
-
-    compacted = deepcopy(embeds)
-    original_total = sum(_embed_char_count(embed) for embed in compacted)
-    if original_total <= MAX_TOTAL_CHARS:
-        return compacted
-
-    fields = [
-        field
-        for embed in compacted
-        for field in embed.get("fields", [])
-    ]
-    value_lengths = [len(field.get("value", "")) for field in fields]
-    fixed_chars = original_total - sum(value_lengths)
-    value_budget = MAX_TOTAL_CHARS - fixed_chars
-    if not fields or value_budget < len(fields):
-        return None
-
-    allocations = [0] * len(fields)
-    remaining = set(range(len(fields)))
-    remaining_budget = value_budget
-    while remaining:
-        share = remaining_budget // len(remaining)
-        small = [index for index in remaining if value_lengths[index] <= share]
-        if small:
-            for index in small:
-                allocations[index] = value_lengths[index]
-                remaining_budget -= value_lengths[index]
-                remaining.remove(index)
-            continue
-
-        for offset, index in enumerate(sorted(remaining)):
-            allocations[index] = share + (1 if offset < remaining_budget % len(remaining) else 0)
-        break
-
-    for field, allocation in zip(fields, allocations):
-        field["value"] = _truncate_field_value(field.get("value", ""), allocation)
-
-    compacted_total = sum(_embed_char_count(embed) for embed in compacted)
-    if compacted_total > MAX_TOTAL_CHARS:
-        return None
-    logger.info(
-        "Condensed Discord fight report from %s to %s embed characters to keep one post",
-        original_total,
-        compacted_total,
-    )
-    return compacted
+def _lossless_embeds(embeds: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize field and embed limits before the existing message batch sender."""
+    result = []
+    for source in embeds:
+        current = deepcopy(source)
+        source_fields = current.pop("fields", [])
+        for field in source_fields:
+            try:
+                values = _split_field_value(field.get("value", ""))
+            except ValueError:
+                # A clickable URL cannot be cut between fields. Descriptions
+                # have a larger allowance, so keep the complete link there.
+                if set(current) - {"color"}:
+                    result.append(current)
+                for value in _split_field_value(field["value"], 4096):
+                    result.append({**{key: source[key] for key in ("color",) if key in source},
+                                   "title": field["name"], "description": value})
+                current = {key: source[key] for key in ("color",) if key in source}
+                continue
+            for index, value in enumerate(values):
+                part = dict(field, value=value)
+                if index and len(field["name"]) + len(" (continued)") <= 256:
+                    part["name"] = field["name"] + " (continued)"
+                size = len(part["name"]) + len(value)
+                if (len(current.get("fields", [])) >= 25
+                        or _embed_char_count(current) + size > MAX_TOTAL_CHARS):
+                    result.append(current)
+                    current = {key: source[key] for key in ("color",) if key in source}
+                current.setdefault("fields", []).append(part)
+        if current and (not source_fields or set(current) - {"color"}):
+            result.append(current)
+    return result
 
 
 class DiscordBot:
@@ -305,6 +290,7 @@ class DiscordWebhookManager:
         via a normal embed POST, then the audio file is sent as a separate
         follow-up message so the player renders below the embed in Discord.
         The guild icon is attached only to the first stats batch.
+        compact_single_message is a legacy no-op: overflow is always lossless.
         """
         webhook_urls = [self._get_webhook_url(self.config.active_discord_webhook)]
         if not webhook_urls:
@@ -313,8 +299,7 @@ class DiscordWebhookManager:
         success_count = 0
 
         if not embeds:
-            # Link-later fight reports use a text-only follow-up. Do not drop
-            # it just because there is no statistical embed in this message.
+            # Retain generic text-only transport for non-report callers.
             if not message:
                 return 0
             return sum(
@@ -322,17 +307,15 @@ class DiscordWebhookManager:
                 for url in webhook_urls if url
             )
 
-        if compact_single_message:
-            compacted = _compact_embeds_to_one_message(embeds)
-            if compacted is not None:
-                embeds = compacted
+        # compact_single_message is retained for caller compatibility only.
+        # Already-summarized statistics must overflow, never be summarized again.
 
         # Build batches that stay under MAX_TOTAL_CHARS
         batches = []
         current_batch = []
         current_chars = 0
 
-        for embed in embeds:
+        for embed in _lossless_embeds(embeds):
             embed_chars = _embed_char_count(embed)
 
             if current_batch and (current_chars + embed_chars > MAX_TOTAL_CHARS or len(current_batch) >= MAX_EMBEDS_PER_POST):
