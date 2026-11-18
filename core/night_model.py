@@ -71,6 +71,7 @@ text; numbers may carry commas and a trailing percent.
 """
 
 import copy
+import math
 import re
 from dataclasses import asdict
 from html.parser import HTMLParser
@@ -1760,11 +1761,54 @@ def resolve_fight_timestamps(fights, sources):
     return resolved
 
 
+def _poison_output_availability(tiddlers, appliers):
+    """Audit measurement presence without changing the legacy numeric join."""
+    source = next((t for t in tiddlers if t.get("title", "").endswith(
+        "-Total-Condition-Output-Generation")), None)
+    if not source:
+        return {}
+    match = re.search(r"source:\s*(\[\[.*?\]\])\s*\}", source["text"], re.S)
+    if not match:
+        return {}
+    rows = re.findall(r"\[([^\[\]]*)\]", match.group(1))
+    header = [c.strip().strip("'\"") for c in rows[0].split(",")] if rows else []
+    if "Poison" not in header:
+        return {}
+    index = header.index("Poison")
+    candidates = {}
+    for row in rows[1:]:
+        cells = [c.strip().strip("'\"") for c in row.split(",")]
+        if len(cells) <= index:
+            continue
+        identity = re.match(r"\{\{(\w+)\}\}\s*-\s*(.+)", cells[0])
+        name = identity.group(2).strip() if identity else cells[0]
+        profession = identity.group(1) if identity else None
+        try:
+            value = float(cells[index])
+            valid = math.isfinite(value) and value >= 0
+        except ValueError:
+            valid = False
+        candidates.setdefault(name, []).append((profession, valid))
+    name_counts = {}
+    for row in appliers:
+        name_counts[row.name] = name_counts.get(row.name, 0) + 1
+    available = {}
+    for row in appliers:
+        matches = candidates.get(row.name, [])
+        # The inherited numeric parser joins by name, not account. Do not
+        # promote a duplicate name or a profession disagreement to measured XY.
+        available[row.account] = (
+            name_counts[row.name] == 1 and len(matches) == 1
+            and matches[0][1] and matches[0][0] in (None, row.prof))
+    return available
+
+
 def build_night_model(
     tiddlers,
     selected_fights=None,
     enemy_role_evidence=None,
     player_skill_evidence=None,
+    fight_outcomes=None,
 ):
     """Parse a combiner tiddler store into one typed night model dict.
 
@@ -1786,6 +1830,7 @@ def build_night_model(
         "high_scores": None,
         "player_skill_damage": [],
         "player_skill_evidence": copy.deepcopy(player_skill_evidence),
+        "fight_outcomes": copy.deepcopy(fight_outcomes) if fight_outcomes else None,
         "squad_composition": None,
         "poison": [],
         "pro_navigation": copy.deepcopy(PRO_NAVIGATION),
@@ -1829,9 +1874,13 @@ def build_night_model(
         }
 
     try:
+        poison_rows = poison_tab.build_model(tiddlers)
+        poison_output_available = _poison_output_availability(tiddlers, poison_rows)
         model["poison"] = [
-            dict(asdict(r), apps_per_min=r.apps_per_min)
-            for r in poison_tab.build_model(tiddlers)
+            dict(asdict(r), output=r.output if math.isfinite(r.output) else None,
+                 apps_per_min=r.apps_per_min,
+                 output_available=poison_output_available.get(r.account, False))
+            for r in poison_rows
         ]
     except Exception as exc:  # noqa
         warnings.append(f"poison: {type(exc).__name__}: {exc}")

@@ -9,6 +9,7 @@ import copy
 import json
 import re
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 
 
@@ -57,6 +58,30 @@ def _prof_from_cell(cell):
     return m.group(1).strip() if m else cell.strip()
 
 
+class _PoisonHitsParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.apps = 0
+
+    def handle_starttag(self, tag, attrs):
+        for key, value in attrs:
+            if key == "data-tooltip" and value is not None:
+                match = re.fullmatch(r"Hits Applied:\s*([0-9]+(?:,[0-9]{3})*)\s*", value)
+                if match:
+                    self.apps = int(match.group(1).replace(",", ""))
+
+
+def _poison_hits(cell):
+    try:
+        return int(cell.replace(",", "") or 0)
+    except ValueError:
+        # The visible formatted value is not a hit count.
+        parser = _PoisonHitsParser()
+        parser.feed(cell)
+        parser.close()
+        return parser.apps
+
+
 def parse_applications(tiddlers):
     co = next(
         (t for t in tiddlers if t.get("title", "").endswith("-Conditions-Out")),
@@ -79,7 +104,7 @@ def parse_applications(tiddlers):
         name = re.sub(r"<[^>]+>", "", c[2]) if len(c) > 2 else acct
         prof = _prof_from_cell(c[3]) if len(c) > 3 else ""
         try:
-            apps = int(c[pidx].replace(",", "") or 0)
+            apps = _poison_hits(c[pidx])
         except (ValueError, IndexError):
             apps = 0
         try:

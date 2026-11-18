@@ -8,6 +8,8 @@ suppressed so the table stays flat and quiet like a native file list.
 
 import logging
 import threading
+import time
+
 from typing import Optional
 
 from PySide6.QtWidgets import (
@@ -16,7 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QProgressBar, QSizePolicy, QHeaderView,
     QMessageBox, QAbstractItemView,
 )
-from PySide6.QtCore import Qt, Signal, Slot, QUrl
+from PySide6.QtCore import Qt, Signal, Slot, QUrl, QTimer
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QDesktopServices
 
@@ -51,14 +53,16 @@ class RaidReportTab(QWidget):
     sig_process_files_requested = Signal()
     # Background discover thread -> GUI thread. The log folder is typically a
     # network share; scanning it on the GUI thread froze the window whenever
-    # the share hiccuped (ticket 6c8e08f9). (logs, sizes, preserve, chip)
+    # the share hiccuped (ticket 6c8e08f9). (scoped result, sizes, preserve, chip)
     sig_logs_discovered = Signal(object, object, object, object)
 
     def __init__(self, *, discover, select_session, select_today,
-                 select_recent=None, runner_factory, publish, parent=None):
+                 select_recent=None, runner_factory, publish,
+                 discovery_root=None, parent=None):
         super().__init__(parent)
 
         self._discover = discover
+        self._discovery_root = discovery_root
         self._select_session = select_session
         self._select_today = select_today
         self._select_recent = select_recent
@@ -69,16 +73,37 @@ class RaidReportTab(QWidget):
         self.sig_done.connect(self._on_done)
         self.sig_error.connect(self._on_error)
         self.sig_publish_done.connect(self._on_publish_done)
-        self.sig_logs_discovered.connect(self._on_logs_discovered)
+        self.sig_logs_discovered.connect(
+            self._on_logs_discovered, Qt.ConnectionType.QueuedConnection)
 
         self._running = False
         self._discovering = False
+        self._scope = discovery_root() if discovery_root else None
+        self._rows_scope = self._scope
+        self._epoch = 0
+        self._request_id = 0
+        self._trailing = False
+        self._entry_waiting = False
+        self._after_generation = False
+        self._deferred_discovery = None
+        self._complete_at = None
+        self._list_state = "loading"
+        self._list_error = ""
+        self._initial_chip = "recent"
+        self._retry_left = 1
         self._logs: list[LogInfo] = []
         self._log_sizes: dict = {}
         self._error_details = ""
         self.last_result: Optional[ReportResult] = None
 
         self._setup_ui()
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setSingleShot(True)
+        self._retry_timer.setInterval(1500)
+        self._retry_timer.timeout.connect(self._retry_discovery)
+        self._freshness_timer = QTimer(self)
+        self._freshness_timer.setInterval(60000)
+        self._freshness_timer.timeout.connect(self.rescan)
         # Async initial scan; the "recent" quick-pick applies when it lands.
         self._refresh(chip="recent")
 
@@ -152,9 +177,16 @@ class RaidReportTab(QWidget):
         quick_picks.addStretch()
         layout.addLayout(quick_picks)
 
+        found_row = QHBoxLayout()
         self._found_label = QLabel("")
+        self._found_label.setWordWrap(True)
         theme.mark_hint(self._found_label)
-        layout.addWidget(self._found_label)
+        found_row.addWidget(self._found_label, 1)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setToolTip("Read the log folder again without making a report.")
+        self.refresh_btn.clicked.connect(self._manual_refresh)
+        found_row.addWidget(self.refresh_btn)
+        layout.addLayout(found_row)
 
         # Empty-state bridge: raw logs first go through Process Files, then
         # appear here as pickable fights. Do not leave a blank table with no
@@ -316,61 +348,178 @@ class RaidReportTab(QWidget):
 
     @Slot()
     def _refresh(self, chip=None):
-        self._start_discover(preserve=None, chip=chip)
+        if chip:
+            self._initial_chip = chip
+        self._request_discovery(force=True)
+
+    @Slot()
+    def _manual_refresh(self):
+        self._request_discovery(force=True)
 
     @Slot()
     def rescan(self):
-        """Re-discover logs — the page-open contract (lists that show folder
-        contents rescan on every open, operator bug 2026-07-19). Preserves
-        the user's ticked fights by path; new fights arrive unticked."""
+        """Page entry: immediately reuse a recent complete same-root list.
+
+        Refresh always reads again. Auto entry/visible-page polling revalidates
+        after 60 seconds, not a full traversal for every navigation click.
+        """
+        self._request_discovery()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._freshness_timer.start()
+        self.rescan()
+
+    def hideEvent(self, event):
+        self._freshness_timer.stop()
+        super().hideEvent(event)
+
+    def _sync_scope(self):
+        scope = self._discovery_root() if self._discovery_root else None
+        if scope == self._scope:
+            return False
+        self._scope = scope
+        self._epoch += 1
+        self._complete_at = None
+        self._initial_chip = "recent"
+        self._retry_timer.stop()
+        self._deferred_discovery = None
+        # Reset the new scope's UI before an in-flight scan/generation can
+        # return early. No complete result exists for this root yet.
+        self._list_state = "loading"
+        self._list_error = ""
+        self.empty_panel.hide()
+        # Do not touch the table while report generation owns it. Its input
+        # is already captured; clear obsolete rows when generation releases it.
+        if not self._running:
+            self._logs = []
+            self._log_sizes = {}
+            self._populate()
+        self._update_found()
+        return True
+
+    def _request_discovery(self, force=False, reset_retry=True):
+        changed = self._sync_scope()
         if self._running:
+            self._after_generation = True
+            self._trailing |= force or changed
             return
-        checked = {log.path for log in self.selected_logs()}
-        self._start_discover(preserve=checked, chip=None)
+        if self._discovering:
+            self._trailing |= force or changed
+            self._entry_waiting |= not force
+            return
+        if reset_retry:
+            self._retry_left = 1
+        self._retry_timer.stop()
+        if (not force and not changed and self._complete_at is not None
+                and self._list_state not in ("failed", "partial")
+                and time.monotonic() - self._complete_at < 60):
+            self._update_found()
+            return
+        if changed:
+            self._logs = []
+            self._log_sizes = {}
+            self._populate()
+        self._list_state = "loading"
+        self.empty_panel.hide()
+        self._update_found()
+        self._start_discover(preserve=None, chip=None)
+
+    @Slot()
+    def _retry_discovery(self):
+        self._request_discovery(force=True, reset_retry=False)
 
     def _start_discover(self, preserve, chip):
-        """Run the log-folder scan (network share — must never block the GUI
-        thread) on a daemon thread. Sizes are gathered there too so
-        _populate needs no per-row stat. Single-flight: a scan already out
-        wins; the page-open contract retriggers on the next open."""
+        """One scoped worker; no source filesystem calls on the GUI thread."""
         if self._discovering:
             return
         self._discovering = True
+        self._request_id += 1
+        scope, epoch, request = self._scope, self._epoch, self._request_id
+        discover, scoped = self._discover, self._discovery_root is not None
+        emit = self.sig_logs_discovered.emit
 
         def _work():
+            error = ""
+            partial = False
             try:
-                logs = self._discover()
-            except Exception:
+                logs = list(discover(scope) if scoped else discover())
+            except Exception as exc:
                 logger.exception("Log discovery failed")
-                logs = []
+                logs = list(getattr(exc, "logs", ()))
+                partial = bool(logs)
+                error = str(exc) or type(exc).__name__
             sizes = {}
             for log in logs:
                 try:
-                    sizes[log.path] = log.path.stat().st_size
-                except OSError:
-                    sizes[log.path] = 0
-            self.sig_logs_discovered.emit(logs, sizes, preserve, chip)
+                    size = getattr(log, "size_bytes", None)
+                    sizes[log.path] = (log.path.stat().st_size
+                                       if size is None else size)
+                except OSError as exc:
+                    error = str(exc) or type(exc).__name__
+                    partial = True
+            result = dict(logs=logs, error=error, partial=partial,
+                          scope=scope, epoch=epoch, request=request)
+            try:
+                emit(result, sizes, preserve, chip)
+            except RuntimeError:
+                pass  # widget destroyed while an uninterruptible share read finishes
 
-        threading.Thread(target=_work, daemon=True).start()
+        threading.Thread(target=_work, daemon=True,
+                         name="fight-summary-discovery").start()
 
-    def _on_logs_discovered(self, logs, sizes, preserve, chip):
-        """GUI-thread landing slot for a finished background scan."""
+    @Slot(object, object, object, object)
+    def _on_logs_discovered(self, result, sizes, preserve, chip):
+        """Explicit queued GUI receiver; failed/partial scans never erase rows."""
         self._discovering = False
+        self._sync_scope()
         if self._running:
-            return          # never repopulate mid-generation
-        self._logs = logs
-        self._log_sizes = sizes
-        self._populate()
-        if preserve:
-            self._check_rows_for(
-                [log for log in self._logs if log.path in preserve])
-        elif chip:
-            self._apply_chip(chip)
-        self._update_found()
+            self._deferred_discovery = (result, sizes, preserve, chip)
+            return
+        obsolete = (result["scope"] != self._scope
+                    or result["epoch"] != self._epoch)
+        failed = bool(result["error"])
+        if not obsolete:
+            if failed:
+                self._list_state = "partial" if result["partial"] else "failed"
+                self._list_error = result["error"]
+            else:
+                checked = {log.path for log in self.selected_logs()}
+                self._logs = result["logs"]
+                self._log_sizes = sizes
+                self._populate()
+                if self._initial_chip:
+                    self._apply_chip(self._initial_chip)
+                    self._initial_chip = None
+                else:
+                    self._check_rows_for([log for log in self._logs
+                                          if log.path in checked])
+                self._complete_at = time.monotonic()
+                self._list_state = "complete"
+                self._list_error = ""
+            self.empty_panel.setVisible(
+                self._list_state == "complete" and not self._logs)
+            self._update_found()
+        trailing = self._trailing or obsolete
+        entry_retry = failed and self._entry_waiting and self._retry_left > 0
+        self._trailing = False
+        self._entry_waiting = False
+        if trailing or entry_retry:
+            self._retry_left = 0  # one trailing attempt per coalesced burst
+            self._request_discovery(force=True, reset_retry=False)
+        elif failed and self._retry_left > 0:
+            self._retry_left -= 1
+            self._retry_timer.start()
 
     @Slot()
     def _populate(self):
-        self.empty_panel.setVisible(not self._logs)
+        self._rows_scope = self._scope
+        self.empty_panel.setVisible(
+            self._list_state == "complete" and not self._logs)
+        header = self._table.horizontalHeader()
+        sort_col, sort_order = header.sortIndicatorSection(), header.sortIndicatorOrder()
+        if self._complete_at is None:
+            sort_col, sort_order = _COL_DATE, Qt.SortOrder.DescendingOrder
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         for log in self._logs:
@@ -409,14 +558,16 @@ class RaidReportTab(QWidget):
             size_item.setData(_ROLE_SORT, size_bytes)
             self._table.setItem(row, _COL_SIZE, size_item)
         self._table.setSortingEnabled(True)
-        # Newest fights first by default
-        self._table.sortItems(_COL_DATE, Qt.SortOrder.DescendingOrder)
+        # Newest-first initially; never reset a user's active sort on Refresh.
+        self._table.sortItems(sort_col, sort_order)
 
     # ------------------------------------------------------------------
     # chips
     # ------------------------------------------------------------------
 
     def _apply_chip(self, mode: str):
+        if self._complete_at is None:
+            self._initial_chip = mode
         if mode == "all":
             for row in range(self._table.rowCount()):
                 self._set_row_checked(row, True)
@@ -444,13 +595,23 @@ class RaidReportTab(QWidget):
     def _update_found(self):
         n = len(self._logs)
         s = len(self.selected_logs())
-        if n:
-            self._found_label.setText(
-                f"{n} fight{'s' if n != 1 else ''} found "
-                f"· {s} selected"
-            )
+        counts = f"{n} fight{'s' if n != 1 else ''} found · {s} selected"
+        retained = (f"Showing last complete list · {counts}"
+                    if self._complete_at is not None else "Refresh to retry.")
+        if self._list_state == "loading":
+            text = "Loading fights…"
+            if self._complete_at is not None:
+                text += f" · {retained}"
+        elif self._list_state in ("failed", "partial"):
+            prefix = "Scan incomplete" if self._list_state == "partial" else "Refresh failed"
+            text = f"{prefix} · {retained}"
+        elif n:
+            age = max(0, int(time.monotonic() - self._complete_at)) if self._complete_at else 0
+            text = f"{counts} · Last checked {age}s ago"
         else:
-            self._found_label.setText("No fights found.")
+            text = "No fights found."
+        self._found_label.setText(text)
+        self._found_label.setToolTip(self._list_error)
 
     # ------------------------------------------------------------------
     # big button
@@ -614,6 +775,7 @@ class RaidReportTab(QWidget):
         self._chip_all.setEnabled(not running)
         self._chip_none.setEnabled(not running)
         self._table.setEnabled(not running)
+        self.refresh_btn.setEnabled(not running)
         self.open_report_btn.setEnabled(
             not running and self.last_result is not None)
         self.post_discord_btn.setEnabled(
@@ -621,3 +783,17 @@ class RaidReportTab(QWidget):
         self.progress_bar.setVisible(running)
         if not running:
             self.progress_bar.setValue(0)
+            self._after_generation |= self._sync_scope()
+            if self._rows_scope != self._scope:
+                self._logs = []
+                self._log_sizes = {}
+                self._populate()
+            if self._deferred_discovery is not None:
+                args = self._deferred_discovery
+                self._deferred_discovery = None
+                self._on_logs_discovered(*args)
+            if self._after_generation:
+                self._after_generation = False
+                force = self._trailing
+                self._trailing = False
+                self._request_discovery(force=force)

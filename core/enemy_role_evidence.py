@@ -584,14 +584,67 @@ def collect_enemy_role_evidence(json_paths):
     return collect_report_evidence(json_paths)[0]
 
 
+def _detach_compact(value):
+    """Detach only extracted output values, never copy the full EI tree.
+
+    EI metadata is normally scalar, but standalone collectors historically
+    also preserve JSON containers in those fields. Keep their values without
+    letting an unusual field keep an original input subtree alive.
+    """
+    if isinstance(value, dict):
+        return {key: _detach_compact(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_detach_compact(item) for item in value]
+    return value
+
+
+class _ReportEvidenceAccumulator:
+    """Compact native evidence; never retain the original EI document."""
+
+    def __init__(self):
+        self.performance_rows = []
+        self.actors = []
+        self.players = {}
+        self.composition = []
+        self.timestamp_fights = []
+
+    def feed(self, data, path):
+        from core.enemy_performance import extract
+        time_end = _detach_compact(data.get("timeEnd"))
+        self.timestamp_fights.append({"time_end": time_end})
+        fight_actors = []
+        self.performance_rows.extend(_detach_compact(extract(data, str(path))))
+        _accumulate_enemy_role_evidence(data, fight_actors)
+        fight_actors = _detach_compact(fight_actors)
+        self.actors.extend(fight_actors)
+        # Preserve zero-enemy detailed fights too: stale captions must not win.
+        # Join with Overview by EI's literal end clock, never input list order.
+        if data.get("timeEnd") and isinstance(data.get("targets"), list):
+            teams = defaultdict(list)
+            for actor in fight_actors:
+                teams[actor["team"]].append(actor)
+            self.composition.append({
+                "time_end": time_end,
+                "teams": [{
+                    "color": color,
+                    "team_ids": sorted({r["team_id"] for r in rows if r["team_id"] is not None}),
+                    "counts": dict(Counter(r["profession"] for r in rows)),
+                } for color, rows in sorted(teams.items())],
+            })
+        _accumulate_player_skill_evidence(data, self.players)
+
+    def finish(self):
+        from core.enemy_performance import summarize
+        enemy = _finish_enemy_role_evidence(self.actors)
+        enemy["composition_fights"] = self.composition
+        enemy["timestamp_fights"] = self.timestamp_fights
+        enemy["performance"] = summarize(self.performance_rows)
+        return enemy, _finish_player_skill_evidence(self.players)
+
+
 def collect_report_evidence(json_paths):
     """Collect enemy and squad evidence while decoding each fight once."""
-    from core.enemy_performance import extract, summarize
-    performance_rows = []
-    actors = []
-    players = {}
-    composition = []
-    timestamp_fights = []
+    accumulator = _ReportEvidenceAccumulator()
     seen_paths = set()
     for path in json_paths:
         path = Path(path).resolve()
@@ -604,31 +657,5 @@ def collect_report_evidence(json_paths):
             continue
         if not isinstance(data, dict):
             continue
-        timestamp_fights.append({"time_end": data.get("timeEnd")})
-        fight_actors = []
-        performance_rows.extend(extract(data, str(path)))
-        _accumulate_enemy_role_evidence(data, fight_actors)
-        actors.extend(fight_actors)
-        # Preserve zero-enemy detailed fights too: stale captions must not win.
-        # Join with Overview by EI's literal end clock, never input list order.
-        if data.get("timeEnd") and isinstance(data.get("targets"), list):
-            teams = defaultdict(list)
-            for actor in fight_actors:
-                teams[actor["team"]].append(actor)
-            composition.append({
-                "time_end": data["timeEnd"],
-                "teams": [{
-                    "color": color,
-                    "team_ids": sorted({r["team_id"] for r in rows if r["team_id"] is not None}),
-                    "counts": dict(Counter(r["profession"] for r in rows)),
-                } for color, rows in sorted(teams.items())],
-            })
-        _accumulate_player_skill_evidence(data, players)
-    enemy = _finish_enemy_role_evidence(actors)
-    enemy["composition_fights"] = composition
-    enemy["timestamp_fights"] = timestamp_fights
-    enemy["performance"] = summarize(performance_rows)
-    return (
-        enemy,
-        _finish_player_skill_evidence(players),
-    )
+        accumulator.feed(data, path)
+    return accumulator.finish()
