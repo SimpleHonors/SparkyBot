@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.apppaths import app_dir, gw2ei_dir, no_window_kwargs
+from core.fight_links import digest
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ PARSE_CONFIG_CONTENT = (
     "RawTimelineArrays=True\n"
     "ParsePhases=True\n"
     "ComputeDamageModifiers=True\n"
-    "SaveAtOut=True\n"
+    "SaveAtOut=False\n"
     "SingleThreaded=False\n"
     "ParseMultipleLogs=False\n"
     "SkipFailedTries=False\n"
@@ -43,9 +44,23 @@ PARSE_CONFIG_CONTENT = (
 )
 
 
+def _is_network_share(path: Path) -> bool:
+    drive = path.drive
+    if not drive:
+        return False
+    if not drive.endswith(':'):
+        return True
+    try:
+        import ctypes
+        # GetDriveTypeW expects a root directory, including its trailing slash.
+        return ctypes.windll.kernel32.GetDriveTypeW(drive + '\\') == 4
+    except (AttributeError, OSError):
+        return False
+
+
 def _same_log_lock(log_file: Path):
-    """Return the process-wide lock for one source log path."""
-    key = str(Path(log_file).resolve()).casefold()
+    """Serialize EI writers to the same directory/stem output namespace."""
+    key = str(log_file.parent.resolve() / log_file.stem).casefold()
     with _same_log_locks_guard:
         lock = _same_log_locks.get(key)
         if lock is None:
@@ -118,8 +133,8 @@ class GW2EIInvoker:
 
         The live watcher and End Run worker can reach this method through
         separate ``GW2EIInvoker`` instances in the same application. Same-log
-        calls are serialized until the deterministic GW2EI output has been
-        moved to a unique local claim path. Distinct logs remain parallel.
+        and same-directory/stem calls are serialized until the deterministic
+        output has been moved to a unique local claim path.
         """
         gw2ei_path = self.get_gw2ei_path()
         if not gw2ei_path:
@@ -137,18 +152,36 @@ class GW2EIInvoker:
         parse_lock.acquire()
         is_temp_config = config_name is not None
         parse_config = None
+        staging = None
 
         try:
+            working_file = log_file
+            if _is_network_share(log_file):
+                # EI writes beside its input. Isolate equal basenames from different shares.
+                staging = tempfile.TemporaryDirectory(prefix="SparkyBot-EI-")
+                working_file = Path(staging.name) / log_file.name
+                selected_hash = digest(log_file)
+                shutil.copy2(log_file, working_file)
+                if digest(working_file) != selected_hash or digest(log_file) != selected_hash:
+                    logger.warning("EI staged copy does not match the selected raw log")
+                    return None
+            # In a shared directory only the exact EI names are attributable.
+            # Do not let this job overwrite a previous owner's result.
+            local_outputs = [working_file.with_name(working_file.stem + suffix) for suffix in
+                             ('_detailed_wvw_kill.json', '_detailed_gh_kill.json')]
+            if staging is None and any(p.exists() or p.is_symlink() for p in local_outputs):
+                logger.warning("EI output already exists beside local input")
+                return None
             parse_config = self._ensure_parse_config(
                 config_name or "wvwupload.conf"
             )
             logger.info(
                 f"Invoking GW2EI for {log_file.name} (timeout: {timeout}s)"
             )
-            cmd = [str(gw2ei_path), "-c", str(parse_config), str(log_file)]
+            cmd = [str(gw2ei_path), "-c", str(parse_config), str(working_file)]
             logger.info(f"GW2EI command: {' '.join(cmd)}")
 
-            start_time = time.time()
+            start_time = time.monotonic()
 
             result = subprocess.run(
                 cmd,
@@ -159,7 +192,7 @@ class GW2EIInvoker:
                 **no_window_kwargs(),
             )
 
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             logger.info(f"GW2EI completed in {elapsed:.1f}s with exit code {result.returncode}")
 
             if result.stdout:
@@ -172,18 +205,23 @@ class GW2EIInvoker:
                     logger.error(f"GW2EI stderr: {result.stderr[:500]}")
                 return None
 
-            # Find generated JSON file
-            json_file = self._find_generated_json(log_file, start_time)
-            if json_file:
-                if not self._wait_for_json_stable(json_file):
-                    logger.error(f"JSON file never stabilized: {json_file.name}")
-                    return None
-                claimed_file = self._claim_generated_json(json_file)
-                logger.info(f"Generated JSON: {claimed_file.name}")
-                return claimed_file
-            else:
-                logger.warning("No JSON file generated")
+            # The private staging directory contained only our raw at launch.
+            outputs = (list(working_file.parent.glob('*.json')) if staging is not None
+                       else [p for p in local_outputs if p.exists()])
+            if len(outputs) != 1 or outputs[0].is_symlink() or not outputs[0].is_file():
+                logger.warning("No uniquely attributable EI output")
                 return None
+            json_file = outputs[0]
+            if not self._wait_for_json_stable(json_file):
+                logger.error(f"JSON file never stabilized: {json_file.name}")
+                return None
+            if staging is not None and (digest(working_file) != selected_hash
+                                        or digest(log_file) != selected_hash):
+                logger.warning("Raw log changed during EI parsing")
+                return None
+            claimed_file = self._claim_generated_json(json_file)
+            logger.info(f"Generated JSON: {claimed_file.name}")
+            return claimed_file
 
         except subprocess.TimeoutExpired:
             logger.error(f"GW2EI timed out after {timeout}s")
@@ -198,8 +236,16 @@ class GW2EIInvoker:
                 try:
                     parse_config.unlink()
                 except OSError:
-                    pass
-            parse_lock.release()
+                    logger.warning("Could not clean up EI job config")
+            try:
+                if staging is not None:
+                    staging.cleanup()
+            except OSError:
+                # A successful claim is already outside staging and belongs to
+                # the caller. Cleanup must not replace that path (or failure).
+                logger.warning("Could not clean up EI staging directory")
+            finally:
+                parse_lock.release()
 
     def _claim_generated_json(self, json_file: Path) -> Path:
         """Move a stable shared GW2EI output to a unique local path."""
@@ -214,39 +260,6 @@ class GW2EIInvoker:
             claimed.unlink(missing_ok=True)
             raise
         return claimed
-
-    def _find_generated_json(self, log_file: Path, start_time: float) -> Optional[Path]:
-        """Find the JSON file generated from parsing the log file
-
-        Args:
-            log_file: The source EVTC log file
-            start_time: Timestamp when parsing started (files modified after this are results)
-        """
-        base_path = log_file.parent / log_file.stem
-
-        # Check for known WvW and GH kill variants first
-        for suffix in ['_detailed_wvw_kill.json', '_detailed_gh_kill.json']:
-            json_path = Path(str(base_path) + suffix)
-            if json_path.exists() and json_path.stat().st_mtime >= start_time:
-                return json_path
-
-        # Fallback: search for any matching JSON created after start time
-        # This is ambiguous when multiple logs share similar names; log a warning
-        candidates = []
-        for p in log_file.parent.glob(f"{log_file.stem}*.json"):
-            try:
-                if p.stat().st_mtime >= start_time:
-                    candidates.append(p)
-            except FileNotFoundError:
-                pass
-        if candidates:
-            logger.warning(
-                f"Ambiguous JSON detection for {log_file.name}: "
-                f"found {len(candidates)} candidates, using first: {candidates[0].name}"
-            )
-            return candidates[0]
-
-        return None
 
     def _wait_for_json_stable(self, json_file: Path, timeout: float = 30.0) -> bool:
         """Wait for GW2EI JSON output to finish writing.

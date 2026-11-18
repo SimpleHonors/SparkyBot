@@ -49,44 +49,65 @@ def log_info_for_path(path: Path, stat_result=None) -> LogInfo:
     )
 
 
-def discover_logs(log_folder: Path, *, include_size: bool = False) -> list[LogInfo]:
+class LogDiscoveryError(OSError):
+    """Incomplete directory enumeration; never equivalent to complete-empty."""
+
+    def __init__(self, logs, errors):
+        self.logs = tuple(logs)
+        self.errors = tuple(errors)
+        super().__init__("; ".join(self.errors))
+
+
+def discover_logs(log_folder: Path, *, include_size: bool = False,
+                  strict: bool = False) -> list[LogInfo]:
     """Discover .zevtc + .evtc logs in one metadata-efficient walk.
 
     Timestamp from YYYYMMDD-HHMMSS filename prefix; falls back to mtime
     if the name doesn't match.  ``include_size`` captures file size from the
     same scandir entry for UIs that display it, avoiding a second SMB stat per
-    row. Sorted by timestamp ascending.
+    row. Sorted by timestamp ascending. ``strict`` is the filename-list
+    contract: report unreadable roots/subtrees/metadata/iterators. Legacy
+    report callers retain best-effort behavior.
     """
     results: list[LogInfo] = []
+    errors = []
     pending = [Path(log_folder)]
     while pending:
         current = pending.pop()
         try:
             entries = os.scandir(current)
-        except OSError:
+        except OSError as exc:
+            errors.append(f"{current}: {exc}")
             logger.debug("Skipping unreadable folder: %s", current)
             continue
-
-        with entries:
-            for entry in entries:
-                try:
-                    if entry.is_dir(follow_symlinks=False):
-                        pending.append(Path(entry.path))
-                        continue
-                    if not entry.name.lower().endswith(('.zevtc', '.evtc')):
-                        continue
-                    path = Path(entry.path)
-                    needs_mtime = _LOG_STEM_RE.match(path.stem) is None
-                    stat_result = (
-                        entry.stat(follow_symlinks=False)
-                        if include_size or needs_mtime else None
-                    )
-                    results.append(log_info_for_path(path, stat_result))
-                except OSError:
-                    logger.debug("Skipping unreadable file: %s", entry.path)
-                    continue
+        try:
+            with entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+                            continue
+                        if not entry.name.lower().endswith(('.zevtc', '.evtc')):
+                            continue
+                        path = Path(entry.path)
+                        needs_mtime = _LOG_STEM_RE.match(path.stem) is None
+                        stat_result = (
+                            entry.stat(follow_symlinks=False)
+                            if include_size or needs_mtime else None
+                        )
+                        results.append(log_info_for_path(path, stat_result))
+                    except OSError as exc:
+                        errors.append(f"{entry.path}: {exc}")
+                        logger.debug("Skipping unreadable file: %s", entry.path)
+        except OSError as exc:
+            if not strict:
+                raise  # preserve legacy report-generation iterator semantics
+            errors.append(f"{current}: {exc}")
+            logger.debug("Skipping unreadable folder: %s", current)
 
     results.sort(key=lambda x: x.timestamp)
+    if strict and errors:
+        raise LogDiscoveryError(results, errors)
     return results
 
 
@@ -152,7 +173,7 @@ def settings_fingerprint(settings_text: str) -> str:
 class RaidReportCache:
     """Cache for GW2EI-parsed fight JSON files.
 
-    Layout: cache_root/YYYYMMDD/<logstem>__<ei_version>__<fingerprint>.json
+    Layout: cache_root/YYYYMMDD/<resolved-path SHA256>.<ei_version>.<fingerprint>.json
     """
 
     def __init__(self, cache_root: Path):
@@ -172,9 +193,11 @@ class RaidReportCache:
 
     def path_for(self, log_path: Path, ei_version: str,
                  fingerprint: str) -> Path:
-        return self._date_dir(log_path) / (
-            f"{log_path.stem}__{ei_version}__{fingerprint}.json"
-        )
+        # A basename-only legacy entry cannot identify its raw. Leave it alone
+        # and parse on a miss rather than attributing its EI to this path.
+        source = log_path.resolve()
+        source_id = hashlib.sha256(os.fsencode(source)).hexdigest()
+        return self._date_dir(source) / f"{source_id}.{ei_version}.{fingerprint}.json"
 
     def store(self, log_path: Path, json_path: Path,
               ei_version: str, fingerprint: str) -> Path:

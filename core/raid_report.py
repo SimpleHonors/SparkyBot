@@ -28,7 +28,7 @@ from core.report_bake import (
 )
 from core.report_viewer import convert_report_file
 from core.enemy_role_evidence import (
-    collect_report_evidence,
+    _ReportEvidenceAccumulator,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,11 +66,16 @@ def _stage_combiner_json(source: Path, destination: Path) -> None:
     Original EI/cache files remain authoritative for native evidence and IDs.
     No external GPL code is imported, patched, or bundled by this adapter.
     """
-    from core.enemy_role_evidence import _enemy_team
-
     if source.resolve() == destination.resolve():
         raise ValueError("Combiner staging must not overwrite an original EI file")
     data = json.loads(source.read_text(encoding="utf-8"))
+    _stage_combiner_document(source, destination, data)
+
+
+def _stage_combiner_document(source: Path, destination: Path, data) -> None:
+    """Mutate only the loaded private transport, after native extraction."""
+    from core.enemy_role_evidence import _enemy_team
+
     # Only the private combiner input receives recovered metadata. Exact EI
     # bytes bind the URL; existing EI links and original logs stay untouched.
     from core.fight_links import report_url, safe_report_url
@@ -102,6 +107,71 @@ def _stage_combiner_json(source: Path, destination: Path) -> None:
             for color, team_id in transport_ids.items()
         })
     destination.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+class _ReportPreparation:
+    """One document at a time; failures surface at the original viewer boundary."""
+
+    def __init__(self):
+        self.evidence = _ReportEvidenceAccumulator()
+        self.evidence_failure = None
+        self.outcomes_failure = None
+        try:
+            from core.fight_outcomes import _FightOutcomesAccumulator
+            self.outcomes = _FightOutcomesAccumulator()
+        except Exception as exc:
+            self.outcomes = None
+            self.outcomes_failure = self._failure(exc)
+
+    @staticmethod
+    def _failure(exc):
+        # No exception/traceback (and therefore no original tree) survives.
+        try:
+            message = str(exc)
+        except Exception:
+            message = type(exc).__name__
+        return type(exc), message
+
+    @staticmethod
+    def _raise_failure(failure):
+        kind, message = failure
+        try:
+            error = kind(message)
+        except Exception:
+            error = RuntimeError(message)
+        raise error
+
+    def stage(self, source, destination):
+        if source.resolve() == destination.resolve():
+            raise ValueError("Combiner staging must not overwrite an original EI file")
+        data = json.loads(source.read_text(encoding="utf-8"))
+        resolved = source.resolve()
+        if isinstance(data, dict):
+            if self.evidence_failure is None:
+                try:
+                    self.evidence.feed(data, resolved)
+                except Exception as exc:
+                    self.evidence_failure = self._failure(exc)
+                    self.evidence = None
+            if self.outcomes_failure is None:
+                try:
+                    self.outcomes.feed(data, source)
+                except Exception as exc:
+                    # _analyse failures are skipped inside feed; aggregation
+                    # failures still disable the optional whole outcome model.
+                    self.outcomes_failure = self._failure(exc)
+                    self.outcomes = None
+        _stage_combiner_document(source, destination, data)
+
+    def finish_evidence(self):
+        if self.evidence_failure is not None:
+            self._raise_failure(self.evidence_failure)
+        return self.evidence.finish()
+
+    def finish_outcomes(self):
+        if self.outcomes_failure is not None:
+            self._raise_failure(self.outcomes_failure)
+        return self.outcomes.finish()
 
 
 class RaidReportRunner:
@@ -169,15 +239,24 @@ class RaidReportRunner:
             try:
                 raw_hash = fight_links.digest(log.path)
             except OSError:
-                raw_hash = None
+                logger.warning('Could not verify selected raw log before parsing')
+                return index, log, None
             result = self.parse_log(log.path)
             if not isinstance(result, Path):
                 return index, log, None
             try:
-                if raw_hash and fight_links.digest(log.path) == raw_hash:
-                    fight_links.bind_parsed(raw_hash, result)
+                unchanged = fight_links.digest(log.path) == raw_hash
             except OSError:
-                logger.warning('Could not verify raw log for hosted-link recovery')
+                unchanged = False
+            if not unchanged:
+                logger.warning('Raw log changed or could not be verified after parsing')
+                # parse_log transfers ownership of the claim to the runner.
+                try:
+                    result.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning('Could not remove rejected EI claim')
+                return index, log, None
+            fight_links.bind_parsed(raw_hash, result)
             stored = self.cache.store(
                 log.path, result, self.ei_version,
                 self.settings_fingerprint,
@@ -265,6 +344,11 @@ class RaidReportRunner:
     def _generate_inner(self, selected: list[LogInfo],
                         report_name: str | None = None,
                         work_dir: Path | None = None) -> ReportResult:
+        # Plan once per resolved raw, including misses that will parse in parallel.
+        unique = {}
+        for log in selected:
+            unique.setdefault(log.path.resolve(), log)
+        selected = list(unique.values())
         hits, to_parse = plan_report(selected, self.cache,
                                      self.ei_version,
                                      self.settings_fingerprint)
@@ -292,21 +376,19 @@ class RaidReportRunner:
 
         self._check_cancelled()
 
-        if work_dir is None:
-            # mkdtemp needs the parent to already exist; the default
-            # output dir lives under %TEMP% and isn't created until a
-            # report is written (WinError 3 on fresh session temp).
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            input_dir = Path(tempfile.mkdtemp(dir=str(self.output_dir)))
-            cleanup_temp = True
-        else:
-            input_dir = Path(work_dir)
-            cleanup_temp = False
-        input_dir.mkdir(parents=True, exist_ok=True)
+        # Even a reused workspace must expose only this run's documents.
+        cleanup_temp = work_dir is None
+        root = self.output_dir if cleanup_temp else Path(work_dir)
+        root.mkdir(parents=True, exist_ok=True)
+        input_dir = Path(tempfile.mkdtemp(dir=str(root)))
 
+        json_paths = list(dict.fromkeys(path.resolve() for path in json_paths))
+        names_collide = len({p.name.casefold() for p in json_paths}) != len(json_paths)
         self._emit("collect", 0, len(json_paths))
+        preparation = _ReportPreparation()
         for index, jp in enumerate(json_paths, start=1):
-            _stage_combiner_json(jp, input_dir / jp.name)
+            name = f"fight-{index}.json" if names_collide else jp.name
+            preparation.stage(jp, input_dir / name)
             self._emit("collect", index, len(json_paths))
 
         self._check_cancelled()
@@ -325,15 +407,14 @@ class RaidReportRunner:
             self._emit("resolve", 0, 1, "Resolving stats viewer...")
             self.viewer_html = self._viewer_factory()
             self._emit("resolve", 1, 1, "Stats viewer ready")
-        self.combiner.write_run_config(
-            run_dir, input_dir,
-            self.guild_name, self.guild_id, self.api_key,
-        )
         self._emit("combine", 0, 1)
         dragdrop_json = self.combiner.run(
             input_dir,
             run_dir,
             standalone_html_template=self.viewer_html,
+            guild_name=self.guild_name,
+            guild_id=self.guild_id,
+            api_key=self.api_key,
         )
         standalone_html = dragdrop_json.with_suffix(".html")
         self._emit("combine", 1, 1)
@@ -387,8 +468,14 @@ class RaidReportRunner:
         self._emit("view", 0, 1, "Building report views...")
         try:
             enemy_role_evidence, player_skill_evidence = (
-                collect_report_evidence(json_paths)
+                preparation.finish_evidence()
             )
+            fight_outcomes = None
+            try:
+                fight_outcomes = preparation.finish_outcomes()
+            except Exception:
+                # Outcome measures are optional; the report must still build.
+                logger.warning('Fight outcome measures unavailable', exc_info=True)
             current_tiddlers = json.loads(
                 dragdrop_json.read_text(encoding="utf-8")
             )
@@ -408,6 +495,7 @@ class RaidReportRunner:
                 dpsreport_links_enabled=self.dpsreport_links_enabled,
                 enemy_role_evidence=enemy_role_evidence,
                 player_skill_evidence=player_skill_evidence,
+                fight_outcomes=fight_outcomes,
             )
             self._emit("view", 1, 1, "Report views ready")
         except Exception as exc:

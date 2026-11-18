@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fix Fight Summary file-list refresh, loading/error states and stale folder results.
+- Read explicit poison hit counts and restore the native Poison Coverage plot, keeping unavailable output separate.
+- Simplify existing report wording and group food/utility observations with validated coverage counts.
+- Reuse detailed-log decodes for native report evidence before combiner staging.
+
 All notable changes to SparkyBot will be documented in this file.
 
 ## [2.3.3] — 2026-09-27

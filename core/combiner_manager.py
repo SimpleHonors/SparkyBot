@@ -23,9 +23,10 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import requests
 from core.apppaths import is_frozen
@@ -320,18 +321,19 @@ class CombinerManager:
             raise
 
     # ------------------------------------------------------------------
-    # write_run_config
+    # _run_config
     # ------------------------------------------------------------------
 
-    def write_run_config(
+    @contextmanager
+    def _run_config(
         self,
         run_dir: Path,
         input_dir: Path,
         guild_name: str = "",
         guild_id: str = "",
         api_key: str = "",
-    ) -> Path:
-        """Emit a ``top_stats_config.ini`` file into *run_dir*.
+    ) -> Iterator[Path]:
+        """Own a closed, child-readable config for the duration of one run.
 
         ``db_path`` is always set to the stable directory ``self.db_dir`` so
         the combiner's history database survives across runs.
@@ -350,9 +352,19 @@ class CombinerManager:
             db_path=db_path,
         )
 
-        config_path = run_dir / "top_stats_config.ini"
-        config_path.write_text(body, encoding="utf-8")
-        return config_path
+        # Managers may share run_dir. Reserve the name across instances/processes
+        # and close the file before passing its path to the external reader.
+        config = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=run_dir,
+            prefix="top_stats_config_", suffix=".ini", delete=False,
+        )
+        path = Path(config.name)
+        try:
+            with config:
+                config.write(body)
+            yield path
+        finally:
+            path.unlink(missing_ok=True)
 
     # ------------------------------------------------------------------
     # run
@@ -365,6 +377,10 @@ class CombinerManager:
         timeout: int = 900,
         progress_callback: Optional[Callable[[str], None]] = None,
         standalone_html_template: Optional[Path] = None,
+        *,
+        guild_name: str = "",
+        guild_id: str = "",
+        api_key: str = "",
     ) -> Path:
         """Run the combiner as a subprocess.
 
@@ -387,7 +403,6 @@ class CombinerManager:
         if entry is None:
             raise CombinerNotInstalled("No installed combiner entry point found")
 
-        config_path = self.write_run_config(run_dir, input_dir)
         template_path = None
         if standalone_html_template is not None:
             template_path = Path(standalone_html_template).resolve()
@@ -412,21 +427,24 @@ class CombinerManager:
                     "from a frozen SparkyBot build.  The bundled .exe build "
                     "requires the TopStats.exe asset."
                 )
-            cmd = [sys.executable, entry, "-c", str(config_path)]
+            cmd = [sys.executable, entry]
         else:
-            cmd = [entry, "-c", str(config_path)]
-        if template_path is not None:
-            cmd.extend(["-s", str(template_path)])
+            cmd = [entry]
 
-        logger.info("Running combiner: %s", cmd)
+        with self._run_config(run_dir, input_dir, guild_name, guild_id, api_key) as config_path:
+            cmd.extend(["-c", str(config_path)])
+            if template_path is not None:
+                cmd.extend(["-s", str(template_path)])
+            logger.info("Running combiner: %s", cmd)
+            try:
+                result = subprocess.run(cmd, **kwargs)
+            except subprocess.TimeoutExpired as exc:
+                raise CombinerRunError(
+                    f"Combiner timed out after {timeout} seconds"
+                ) from exc
 
-        try:
-            result = subprocess.run(cmd, **kwargs)
-        except subprocess.TimeoutExpired as exc:
-            raise CombinerRunError(
-                f"Combiner timed out after {timeout} seconds"
-            ) from exc
-
+        logger.info("Combiner exited with code %d (stdout %d chars, stderr %d chars)",
+                    result.returncode, len(result.stdout or ""), len(result.stderr or ""))
         if progress_callback:
             progress_callback("Combiner finished with exit code %d" % result.returncode)
 

@@ -814,12 +814,98 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     }).join('')+'</ul></section>';
   }
   refreshCss += '.fight-links{margin:14px 0 20px}.fight-links h3{font-size:14px;margin:0 0 8px}.fight-links ul{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:4px 24px;padding:0;margin:0;list-style:none}.fight-links li{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px;min-width:0;border-bottom:1px solid var(--line)}.fight-links a{display:inline-block;padding:9px 0;white-space:nowrap}.fight-links .muted{color:var(--muted);padding:9px 0}';
+  function fightOutcomesData() {
+    var fo=model.fight_outcomes;
+    return fo && typeof fo==='object' && (fo.fights||[]).length ? fo : null;
+  }
+  function foNum(v) { return (typeof v==='number' && isFinite(v)) ? v : null; }
+
+  function foFirst(v) { return v==='enemy' ? 'Enemy' : v==='us' ? 'Us' : '—'; }
+  function foMeasurement(key, v) {
+    v=foNum(v);
+    if (v==null) return '—';
+    if (key==='downs_to_kills_pct') return fmt(v/100);
+    return fmt(v)+(key==='opening_trade'?'×':(/_pct$/.test(key)||key==='stab_at_worst_hit'?'%':''));
+  }
+  function foCell(kind, v) {
+    var keys={stab:'stab_at_worst_hit',trade:'opening_trade',cc:'cc_received_per_member_min',stun:'stuns_broken_pct',dtk:'downs_to_kills_pct'};
+    return '<td class="number">'+foMeasurement(keys[kind],v)+'</td>';
+  }
+  function foTable(head, rows, label) {
+    return '<div class="fo-scroll" tabindex="0" role="region" aria-label="'+esc(label)+'"><table class="fo-table"><thead><tr>'+head.map(function(h){return '<th scope="col">'+esc(h)+'</th>';}).join('')+'</tr></thead><tbody>'+rows.join('')+'</tbody></table></div>';
+  }
+  function fightOutcomesSection(pro) {
+    var fo=fightOutcomesData();
+    if (!fo) return '';
+    var s=fo.summary||{}, w=s.wins_avg||{}, l=s.losses_avg||{};
+    var wins=foNum(s.wins), losses=foNum(s.losses);
+    function measured(group,key){return foNum((group==='wins'?wins:losses))>0 ? foNum((group==='wins'?w:l)[key]) : null;}
+    var defs=[
+      ['Stability when hit hardest','stab_at_worst_hit','Stability coverage for standing squad members around the biggest hit we took (3 seconds).'],
+      ['Opening damage: dealt vs taken','opening_trade','About the first 15 seconds. 1× means equal damage dealt and taken.'],
+      ['Enemy went down first','enemy_down_first_pct','Fights where an enemy went down before anyone in our squad.'],
+      ['CC received per player / min','cc_received_per_member_min','How often a squad member received crowd control, per minute.'],
+      ['Stun breaks vs CC received','stuns_broken_pct','For every 100 CC events received, how many stun breaks were recorded.'],
+      ['Enemy deaths for each down','downs_to_kills_pct','Deaths compared with downs. 1 means the counts were equal.']
+    ];
+    var sentences=[], ow=measured('wins','opening_trade'), ol=measured('losses','opening_trade');
+    if (ow!=null && ol!=null) sentences.push('Opening damage balance was '+(ow>ol?'higher in wins':ow<ol?'lower in wins':'the same in wins and losses')+' ('+foMeasurement('opening_trade',ow)+' vs '+foMeasurement('opening_trade',ol)+').');
+    var cw=measured('wins','cc_received_per_member_min'), cl=measured('losses','cc_received_per_member_min');
+    if (cw!=null && cl!=null) sentences.push('The squad received '+(cw<cl?'fewer CC events per player/min in wins':cw>cl?'more CC events per player/min in wins':'the same CC events per player/min in wins and losses')+' ('+foMeasurement('cc_received_per_member_min',cw)+' vs '+foMeasurement('cc_received_per_member_min',cl)+').');
+    var sw=measured('wins','stab_at_worst_hit'), sl=measured('losses','stab_at_worst_hit');
+    if (sw!=null && sl!=null) sentences.push('Stability coverage around the hardest hit was '+foMeasurement('stab_at_worst_hit',sw)+' in wins and '+foMeasurement('stab_at_worst_hit',sl)+' in losses.');
+    function comparison(key,title,unit,percent,note){
+      var a=measured('wins',key), b=measured('losses',key), max=percent?100:Math.max(1,a==null?0:a,b==null?0:b);
+      var rows=['wins','losses'].map(function(group){
+        var value=measured(group,key), fill=value==null?'':'<span class="fo-fill" style="width:'+(100*Math.max(0,value)/max)+'%"></span>';
+        var reference=key==='opening_trade'?'<span class="fo-reference" style="left:'+(100/max)+'%"></span>':'';
+        return '<div class="fo-pair-row" data-fo-group="'+group+'" data-value="'+(value==null?'':value)+'"><div class="fo-pair-label"><span>'+(group==='wins'?'Wins':'Losses')+'</span><b'+(value==null?' aria-label="No measured value"':'')+'>'+foMeasurement(key,value)+'</b></div><div class="fo-track" aria-hidden="true">'+fill+reference+'</div></div>';
+      }).join('');
+      return '<article class="fo-comparison" data-fo-comparison="'+key+'" aria-label="'+esc(title)+'"><h3>'+esc(title)+'</h3><p class="fo-unit">'+esc(unit)+'</p>'+rows+'<div class="fo-scale" aria-hidden="true"><span>'+foMeasurement(key,0)+'</span><span>'+foMeasurement(key,max)+'</span></div>'+(note?'<p class="fo-chart-note">'+esc(note)+'</p>':'')+'</article>';
+    }
+    var rows=defs.map(function(d){return '<tr><th scope="row">'+esc(d[0])+'<small>'+esc(d[2])+'</small></th><td class="number">'+foMeasurement(d[1],measured('wins',d[1]))+'</td><td class="number">'+foMeasurement(d[1],measured('losses',d[1]))+'</td></tr>';});
+    var evens=(fo.fights||[]).filter(function(f){return f.result==='even';}).length;
+    var out='<section class="fight-outcomes" data-fight-outcomes><h2>How wins and losses differed</h2><p class="fo-note">'+fmt(wins)+' wins · '+fmt(losses)+' losses'+(evens?' · '+fmt(evens)+' even':'')+'</p>'+
+      '<p class="fo-assessment" data-fo-assessment>'+(sentences.join(' ')||'No measured win/loss pairs are available.')+'</p><div class="fo-comparisons">'+
+      comparison('opening_trade','Opening damage: dealt vs taken','Damage dealt for each 1 damage taken',false,'About the first 15 seconds · 1× means equal damage')+
+      comparison('cc_received_per_member_min','CC received','Times per player per minute · lower is better',false,'')+
+      comparison('stab_at_worst_hit','Stability when hit hardest','Coverage for standing squad members (3 seconds)',true,'')+'</div>'+
+      '<details data-fo-measures><summary>All six measures</summary>'+foTable(['Measure','Wins','Losses'],rows,'Current win and loss measurements')+
+      '<p class="fo-note">Averages across fights. — = not recorded. Wins have more enemy deaths than squad deaths; losses have fewer.</p></details>';
+    var past=fo.past_fights||{}, historical=defs.map(function(d){
+      var key=d[1], h=past[key==='enemy_down_first_pct'?'first_down':key];
+      if (!h || typeof h!=='object') return '';
+      var text;
+      if (key==='enemy_down_first_pct') text='Enemy first: '+foMeasurement('win_pct',h.enemy_won_pct)+' wins; squad first: '+foMeasurement('win_pct',h.us_won_pct)+' wins.';
+      else text=foMeasurement(key,h.high)+' or higher: '+foMeasurement('win_pct',h.high_won_pct)+' wins; '+(key==='stab_at_worst_hit'?'below '+foMeasurement(key,h.low):foMeasurement(key,h.low)+' or lower')+': '+foMeasurement('win_pct',h.low_won_pct)+' wins.';
+      return '<li><b>'+esc(d[0])+':</b> '+text+'</li>';
+    }).join('');
+    if (historical) out+='<details class="fo-history" data-fo-history><summary>Earlier fights</summary><p class="fo-note">Win rates from earlier fights.</p><ul>'+historical+'</ul></details>';
+    if (pro) {
+      var resName={win:'Win',loss:'Loss',even:'Even'};
+      var frows=(fo.fights||[]).map(function(f,i){
+        var epm=foNum(f.enemies_per_member);
+        return '<tr><th scope="row">'+(i+1)+'</th><td>'+esc(fightClock(f.time_start||f.time_end)||'—')+'</td><td>'+esc(resName[f.result]||'—')+'</td><td class="number">'+fmt(epm)+'</td>'+
+          foCell('stab',f.stab_at_worst_hit)+foCell('trade',f.opening_trade)+'<td>'+foFirst(f.first_down)+'</td>'+foCell('cc',f.cc_received_per_member_min)+foCell('stun',f.stuns_broken_pct)+foCell('dtk',f.downs_to_kills_pct)+'</tr>';
+      });
+      out+='<details class="fo-fight-details"><summary>Fight and party details</summary><h3>Each fight</h3>'+foTable(['Fight #','Time','Result','Enemies per player','Stability when hit hardest (%)','Opening damage (×)','First down','CC received/player/min','Stun breaks vs CC (%)','Enemy deaths/down'],frows,'Fight by fight');
+      var prows=(fo.parties||[]).map(function(p){
+        return '<tr><th scope="row">'+esc(p.group)+'</th><td class="number">'+fmt(foNum(p.fights))+'</td>'+foCell('stab',p.stab_at_worst_hit)+foCell('cc',p.cc_received_per_member_min)+foCell('stun',p.stuns_broken_pct)+'</tr>';
+      });
+      if (prows.length) out+='<h3>By party</h3>'+foTable(['Party','Fights','Stability when hit hardest (%)','CC received/player/min','Stun breaks vs CC (%)'],prows,'By party');
+      out+='</details>';
+    }
+    return out+'</section>';
+  }
+  refreshCss += '.fight-outcomes{margin:16px 0;padding:20px;background:var(--surface);border:1px solid var(--line);border-radius:12px}.fight-outcomes h2{margin-top:0}.fight-outcomes h3{margin:18px 0 8px}.fo-scroll{max-width:100%;overflow-x:auto}.fo-table{width:100%;border-collapse:collapse;font-size:14px}.fo-table th,.fo-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;background:var(--panel);color:var(--text)}.fo-table th{text-transform:none;letter-spacing:normal;white-space:normal}.fo-table thead th{font-size:12px;color:var(--muted);vertical-align:bottom;min-width:72px}.fo-table tbody th{font-size:14px;font-weight:500}.fo-table td.number{text-align:right;font-variant-numeric:tabular-nums}.fo-table .fo-good{font-weight:650}.fo-table .fo-bad{font-style:italic}.fo-note{color:var(--muted);font-size:13px;margin:8px 0}';
+  refreshCss += '.fight-outcomes .fo-assessment{font-size:15px;line-height:1.6;margin:12px 0 16px}.fo-comparisons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}.fo-comparison{min-width:0;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.fight-outcomes .fo-comparison h3{font-size:15px;line-height:1.35;min-height:2.7em;margin:0 0 6px}.fo-unit{color:var(--muted);font-size:12px;min-height:2.9em;margin:0 0 12px}.fo-pair-row{margin-top:12px}.fo-pair-label{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;font-size:14px}.fo-pair-label b{font-variant-numeric:tabular-nums;white-space:nowrap}.fo-track{height:9px;position:relative;background:var(--panel-2);border-radius:2px}.fo-fill{display:block;height:100%;background:var(--accent);border-radius:2px}.fo-pair-row[data-fo-group=losses] .fo-fill{background:var(--muted)}.fo-reference{position:absolute;top:-3px;bottom:-3px;border-left:2px dashed var(--text);transform:translateX(-1px)}.fo-scale{display:flex;justify-content:space-between;margin-top:6px;color:var(--muted);font-size:11px}.fo-chart-note{margin:10px 0 0;font-size:12px;color:var(--muted)}.fight-outcomes>details{border-top:1px solid var(--line);margin-top:10px;padding-top:6px}.fight-outcomes>details>summary{cursor:pointer;min-height:32px;padding:5px 0;font-size:14px}.fight-outcomes summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.fight-outcomes .fo-table small{display:block;font-weight:400;font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45}.fight-outcomes [data-fo-measures] th:first-child{width:62%}.fo-history ul{padding-left:20px}.fo-history li{margin:10px 0}.fo-fight-details .fo-table{min-width:1080px}.fo-fight-details .fo-scroll{margin-bottom:12px}@media(max-width:800px){.fo-comparisons{grid-template-columns:1fr}.fight-outcomes .fo-comparison h3,.fo-unit{min-height:0}}@media(max-width:520px){.fight-outcomes{padding:14px}.fo-comparison{padding:14px}.fight-outcomes .fo-table th,.fight-outcomes .fo-table td{padding:8px 5px}.fight-outcomes [data-fo-measures] th:first-child{width:58%}.fight-outcomes .fo-table tbody th{font-size:13px}}';
+
   function renderSimple() {
     var barrier=healMetric("Barrier","barrier","barrierps","Barrier / sec");
     var body = "<div class=\"simple-briefing\">" +
       reportHeading("Nightly briefing · essential results") +
       "" +
-      totalsCards(true) + fightLinks() +
+      totalsCards(true) + fightLinks() + fightOutcomesSection(false) +
       "<section class=\"boards\">" + ["damage","healing","utility"].map(function(group){return metricGrid(group);}).join("") + "</section>" +
       boonGenerationCharts(true) +
       (barrier ? "<details class=\"secondary-support\" open><summary>Barrier</summary>" + boardCard(barrier,10) + "</details>" : "") +
@@ -947,11 +1033,70 @@ _SHELL_TEMPLATE = r"""<!doctype html>
           "><td class=\"number\">" + (i + 1) + "</td><td class=\"poison-player-cell\">" + tablePlayer(r) +
           "</td><td class=\"number\">" + fmt(r.apps) +
           "</td><td class=\"number\">" + fmt(r.apps_per_min) +
-          "</td><td class=\"number\">" + fmt(r.output) + "</td></tr>";
+          "</td><td class=\"number\">" + poisonPlotValue(poisonOutputValue(r)) + "</td></tr>";
       }).join("") + "</tbody></table></div>" + (rows.length > initialLimit ?
         "<footer class=\"board-actions\"><button type=\"button\" data-expand-board aria-expanded=\"false\">Expand all " +
         rows.length + "</button></footer>" : "") + "</article>";
   }
+  // Poison plot: original poison_tab axes/colors; retained native SVG renderer.
+  var poisonOriginalClassColors={"Necromancer": "#52A76F", "Scourge": "#52A76F", "Reaper": "#3E7D54", "Harbinger": "#6FB58A", "Guardian": "#72C1D9", "Firebrand": "#72C1D9", "Dragonhunter": "#5A9FB5", "Luminary": "#8FD3E8", "Willbender": "#3F7E94", "Elementalist": "#F68A87", "Tempest": "#F68A87", "Catalyst": "#D96E6B", "Evoker": "#FBAAA7", "Weaver": "#B85451", "Mesmer": "#B679D5", "Chronomancer": "#B679D5", "Mirage": "#9A5CB8", "Troubadour": "#CE9BE6", "Virtuoso": "#7E44A0", "Warrior": "#E5B84B", "Spellbreaker": "#E5B84B", "Berserker": "#C79A2E", "Paragon": "#F0D477", "Bladesworn": "#A87F22", "Revenant": "#D16E5A", "Herald": "#D16E5A", "Renegade": "#B45540", "Ritualist": "#E0917C", "Vindicator": "#96422F", "Ranger": "#8CDC82", "Druid": "#8CDC82", "Amalgam": "#6FB56A", "Conduit": "#A7E89E", "Soulbeast": "#4E9A48", "Untamed": "#C8F2C0", "Galeshot": "#B9E463", "Engineer": "#D09C59", "Scrapper": "#B07E3E", "Holosmith": "#E8B678", "Mechanist": "#F2CE9B", "Thief": "#C08F95", "Daredevil": "#A6707A", "Deadeye": "#8E5A64", "Specter": "#D5A8B0", "Antiquary": "#E2BFC7", "_default": "#9AA0A6"};
+  function poisonOutputValue(row){
+    var value=finiteMetric(row.output);
+    if(row.output_available===false||value==null||value<0)return null;
+    // Older models defaulted unavailable generation to zero. Only a positive
+    // legacy value is evidence of measurement; explicit metadata retains zero.
+    return row.output_available===true || value>0 ? value : null;
+  }
+  function poisonPlotColor(prof){return poisonOriginalClassColors[prof] || poisonOriginalClassColors._default;}
+  function poisonPlotValue(v){
+    if(v==null)return "—";
+    return v>0 && v<0.01 ? v.toExponential(2).replace(/\.0+(?=e)/,"").replace(/(\.\d*?)0+(?=e)/,"$1") : fmt(v);
+  }
+  function poisonDetailsTable(){
+    var table=poisonTable();
+    return table ? '<details class="poison-application-details"><summary>All poison applications</summary>'+table+'</details>' : '';
+  }
+  function poisonBubbleChart() {
+    if(!(model.poison || []).length)return "";
+    var group="poison";
+    var all=(model.poison || []).map(function(r){
+      return {key:[r.account,r.name,r.prof || r.profession].join("|"),
+        row:{account:r.account,name:r.name,profession:r.prof || r.profession},
+        x:finiteMetric(r.apps),y:poisonOutputValue(r),
+        size:finiteMetric(r.apps_per_min)};
+    });
+    var maxX=Math.max.apply(null,all.map(function(p){return p.x||0;}).concat([0]));
+    var maxY=Math.max.apply(null,all.map(function(p){return p.y||0;}).concat([0]));
+    var maxSize=Math.max.apply(null,all.map(function(p){return p.size||0;}).concat([0]));
+    var xLabel="Poison Hits",yLabel="Poison Output/sec",sizeLabel="Apps/min";
+    function shown(v){return poisonPlotValue(v);}
+    function detail(p){return p.row.name+" · "+p.row.profession+" · "+xLabel+": "+shown(p.x)+" · "+yLabel+": "+shown(p.y)+" · "+sizeLabel+": "+shown(p.size);}
+    function attrs(p){return ' data-overview-name="'+esc(p.row.name)+'" data-identity="'+esc(p.key)+'" data-x="'+(p.x==null?'':p.x)+'" data-y="'+(p.y==null?'':p.y)+'" data-size="'+(p.size==null?'':p.size)+'"';}
+    function radius(p){return p.size>0 ? 18*Math.sqrt(p.size/maxSize) : 3;}
+    function circle(p,cx,cy,index){return '<circle data-bubble data-point-index="'+index+'" data-point-name="'+esc(p.row.name)+'" data-size="'+(p.size==null?'':p.size)+'" data-tooltip="'+esc(detail(p))+'" tabindex="0" role="button" aria-label="'+esc(detail(p))+'" cx="'+cx.toFixed(3)+'" cy="'+cy.toFixed(3)+'" r="'+radius(p).toFixed(3)+'" fill="'+(p.size>0?'var(--point-color)':'none')+'" stroke="var(--point-color)"'+(p.size==null?' stroke-dasharray="2 2"':'')+drillAttrs('session-player',p.row.name,detail(p),'Selected night')+'/>';}
+    var points=[],missing=[];
+    all.forEach(function(p){
+      if(p.x==null||p.y==null){missing.push(p);return;}
+      if(p.x!==0||p.y!==0)points.push(p);
+    });
+    points.sort(function(a,b){return b.y-a.y||b.x-a.x;});
+    var scatter='';
+    if(points.length){
+      scatter='<section class="bubble-paired"><div class="bubble-scroll"><svg class="bubble-scatter" viewBox="0 0 900 480" role="img" aria-label="'+esc(xLabel+' versus '+yLabel)+'">';
+      for(var tick=0;tick<=4;tick++) {
+        var tx=75+tick*190,ty=410-tick*90;
+        scatter+='<path class="bubble-gridline" d="M '+tx+' 50 V 410 M 75 '+ty+' H 835"/><text x="'+tx+'" y="432" text-anchor="middle">'+fmt(maxX*tick/4)+'</text><text x="65" y="'+(ty+4)+'" text-anchor="end">'+fmt(maxY*tick/4)+'</text>';
+      }
+      scatter+='<text x="455" y="468" text-anchor="middle">'+esc(xLabel)+'</text><text x="75" y="22">'+esc(yLabel)+'</text>';
+      scatter+=points.slice().sort(function(a,b){return (b.size||0)-(a.size||0);}).map(function(p){var index=points.indexOf(p),cx=75+(maxX?p.x/maxX*760:0),cy=410-(maxY?p.y/maxY*360:0);return '<g style="--point-color:'+poisonPlotColor(p.row.profession)+'"'+attrs(p)+'>'+circle(p,cx,cy,index)+'<text class="bubble-number" x="'+(cx+radius(p)+3).toFixed(3)+'" y="'+(cy-4).toFixed(3)+'">'+(index+1)+'</text></g>';}).join('')+'</svg></div><div class="bubble-key-columns">'+identityTable(points.slice(0,Math.ceil(points.length/2)),true)+identityTable(points.slice(Math.ceil(points.length/2)),true)+'</div></section>';
+    }
+    function identityTable(list,paired){
+      if(!list.length)return '';
+      return '<div class="bubble-key-scroll"><table class="bubble-identity-table"><thead><tr><th>Player</th><th title="'+esc(xLabel)+'">'+'Poison Hits'+'</th><th title="'+esc(yLabel)+'">'+'Output / sec'+'</th><th title="'+esc(sizeLabel)+'">'+'Apps/min'+'</th></tr></thead><tbody>'+list.map(function(p){var index=points.indexOf(p);return '<tr style="--point-color:'+poisonPlotColor(p.row.profession)+'"'+(paired?'':attrs(p))+'><th><button type="button" class="bubble-identity" '+(paired?'data-highlight-point="'+index+'" ':'')+'data-tooltip="'+esc(detail(p))+'"'+drillAttrs('session-player',p.row.name,detail(p),'Selected night')+'>'+(paired?'<span>'+(index+1)+'.</span>':'')+tablePlayer(p.row)+'</button></th><td>'+shown(p.x)+'</td><td>'+shown(p.y)+'</td><td>'+shown(p.size)+'</td></tr>';}).join('')+'</tbody></table></div>';
+    }
+    return '<article class="bubble-card bubble-comparison" data-bubble-chart="'+group+'"><h3>'+'Poison Coverage'+'</h3><p class="bubble-size-key">Area: '+esc(sizeLabel)+' · ○ 0 · ◌ —</p>'+scatter+(missing.length?'<h4>Output/sec unavailable</h4>'+identityTable(missing,false):'')+'</article>';
+  }
+  refreshCss += '[data-bubble-chart="poison"] .bubble-size-key{font-size:14px}[data-bubble-chart="poison"] .bubble-identity-table{font-variant-numeric:tabular-nums}.poison-application-details>summary{padding:12px 0;cursor:pointer}@media(max-width:600px){[data-bubble-chart="poison"] .bubble-scroll text{font-size:28px}[data-bubble-chart="poison"] .bubble-identity-table th:first-child{width:75%!important}[data-bubble-chart="poison"] .bubble-identity-table th:nth-child(2){width:25%}[data-bubble-chart="poison"] .bubble-identity-table th:nth-child(n+3),[data-bubble-chart="poison"] .bubble-identity-table td:nth-child(n+3){display:none}[data-bubble-chart="poison"] .bubble-identity-table .table-player b{white-space:nowrap!important;overflow-wrap:normal}}';
   function squadCards() {
     var squads = model.squad_composition && model.squad_composition.squads || [];
     if (!squads.length) return "";
@@ -1063,7 +1208,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   function conditionDamageView() {
     var board=derivedDamageBoard("Condition Damage","targetcondition","targetconditionps","Condition DPS");
     var applications=tableBySource("Conditions-Out");
-    return metricBoardView(board,"condition",true) + poisonContext() + poisonTable() +
+    return metricBoardView(board,"condition",true) + poisonContext() + poisonBubbleChart() + poisonDetailsTable() +
       (applications ? sectionHead("Applications", "Conditions Applied", "Application counts are separate from Condition Damage.") +
         "<div class=\"boards\">" + boardCard(applications,100) + "</div>" : "");
   }
@@ -1299,7 +1444,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       }).join("");
     }).join("");
     return "<div class=\"chart-card outcome-chart\"><div class=\"chart-title\"><b>Fight outcomes</b>" +
-      "<span>Select a bar for fight details</span></div>" +
+      "</div>" +
       "<div class=\"chart-legend\">" + series.map(function(s){return "<span class=\"key-" +
       s.cls + "\">" + s.label + "</span>";}).join("") + "</div><div class=\"svg-scroll\"><svg " +
       "viewBox=\"0 0 " + width + " " + height + "\" role=\"img\" " +
@@ -1709,7 +1854,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         "</td><td class=\"number\" data-label=\"Damage / Hit\">" + fmt(skill.damage_per_hit) +
         "</td><td class=\"number\" data-label=\"Share\">" + fmt(skill.percent_of_total) + "%</td></tr>";}).join("");
       return "<article class=\"board skill-player-board\"><h3>" + tablePlayer(player) + "</h3><div class=\"skill-coverage\"><b>" + fmt(player.total_damage) +
-        " damage represented</b><span>Per-player table exported by Classic; absence does not mean zero.</span></div>" +
+        " damage recorded</b></div>" +
         "<div class=\"table-wrap\"><table class=\"skill-damage-table\"><colgroup><col class=\"skill-rank\"><col class=\"skill-name\"><col class=\"skill-value\"><col class=\"skill-value\"><col class=\"skill-value\"><col class=\"skill-value\"><col class=\"skill-share\"></colgroup>" +
         "<thead><tr><th>#</th><th>Skill</th><th class=\"number\">Damage</th><th class=\"number\">Down Contribution</th><th class=\"number\">Hits</th><th class=\"number\">Damage / Hit</th><th class=\"number\">Share</th></tr></thead><tbody>" + rows +
         "</tbody></table></div>" + (skills.length > 5 ? "<footer class=\"board-actions\"><button type=\"button\" data-expand-board aria-expanded=\"false\">Expand all " + skills.length + "</button></footer>" : "") + "</article>";
@@ -1782,7 +1927,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var excluded = (typeof selected === "number" && typeof reported === "number") ?
       Math.max(0, selected - reported) : null;
     return "<div class=\"coverage\"><span><b>" + fmt(selected) + "</b> logs selected</span>" +
-      "<span><b>" + fmt(reported) + "</b> modeled encounters</span>" +
+      "<span><b>" + fmt(reported) + "</b> fights analyzed</span>" +
       (excluded ? "<span><b>" + fmt(excluded) + "</b> unmodeled / excluded</span>" : "") +
       "<span><b>" +
       fmt(c.composition_snapshots) + "</b> composition snapshots</span><span><b>" +
@@ -1958,9 +2103,9 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   refreshCss += '.enemy-performance{margin:16px 0;width:100%;min-width:0}.enemy-performance table{width:100%;table-layout:fixed}.enemy-performance th,.enemy-performance td{padding:8px 6px;text-align:right;vertical-align:top}.enemy-performance th:first-child{width:19%;text-align:left}.enemy-performance thead th{white-space:normal;text-transform:none;letter-spacing:normal}.enemy-performance thead button{font:inherit;min-height:30px;padding:2px 14px 2px 0;white-space:normal;max-width:100%}.enemy-performance tbody th button{font:inherit;text-align:left;padding:0;background:transparent;border:0}.enemy-performance .enemy-coverage{font-size:12px;white-space:normal}.enemy-rate-track{display:block;height:9px;background:var(--line);border-radius:4px;margin-top:5px;overflow:hidden}.enemy-rate-track i{display:block;height:100%}.enemy-mobile{display:none}@media(max-width:700px){.enemy-performance .enemy-secondary{display:none}.enemy-performance th:first-child{width:57%}.enemy-performance .enemy-mobile{display:block;font-size:12px;margin-top:5px}.enemy-mobile dl{white-space:normal}.enemy-mobile dd{margin:3px 0 9px}.enemy-performance table{table-layout:fixed}.enemy-performance .profession-inline{white-space:normal}}';
   function traitAppearanceLabel(item) {
     if (item.eligible_actor_appearances == null || item.observed_percent == null)
-      return fmt(item.actor_appearances)+" observed appearances · eligible denominator / rate unavailable";
+      return "Seen in "+fmt(item.actor_appearances)+" appearances · percentage not recorded";
     return fmt(item.actor_appearances)+" / "+fmt(item.eligible_actor_appearances)+
-      " eligible appearances (>=15 seconds active) · "+fmt(item.observed_percent)+"% observed";
+      " appearances · "+fmt(item.observed_percent)+"% seen";
   }
   function professionRoleCandidate(profession,validation) {
     var profile=(validation && validation.professions || {})[profession] || {},signals=[];
@@ -2077,25 +2222,60 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       '<span class="trait-context">'+esc(item.specialization)+' · '+esc(item.observed_skill)+'</span>'+
       (hasRate ? '<strong class="trait-rate">'+fmt(percent)+'% observed</strong>'+
         '<div class="trait-meter" role="meter" aria-label="'+esc(item.trait)+' observed" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+fmt(percent)+'"><i style="width:'+percent+'%"></i></div>'+
-        '<small class="trait-count">'+fmt(item.actor_appearances)+' / '+fmt(item.eligible_actor_appearances)+' eligible appearances · detected / eligible · &gt;=15 seconds active</small>' :
+        '<small class="trait-count">Seen in '+fmt(item.actor_appearances)+' of '+fmt(item.eligible_actor_appearances)+' appearances</small>' :
         '<small class="trait-count">'+esc(traitAppearanceLabel(item))+'</small>')+
       (mechanics ? '<details class="trait-mechanics"><summary>Mechanics</summary><p>'+esc(mechanics)+'</p></details>' : '')+'</div>';
   }
+  function enemyConsumableFinding(item,eligible) {
+    var n=item.actor_appearances, d=eligible;
+    var hasCount=typeof n==='number' && Number.isFinite(n) && n>=0 && Number.isInteger(n);
+    var hasRate=hasCount && typeof d==='number' && Number.isFinite(d) && d>0 && Number.isInteger(d) && n<=d;
+    var percent=hasRate?n/d*100:null;
+    return '<div class="consumable-row" data-consumable-id="'+esc(item.id)+'" data-count="'+(hasCount?n:'')+'" data-eligible="'+(hasRate?d:'')+'">'+
+      '<span class="consumable-name">'+esc(item.name)+'</span><span class="consumable-values">'+
+      (hasRate?'<b class="consumable-percent">'+fmt(percent)+'%</b><small>'+fmt(n)+'/'+fmt(d)+'</small>':'<small>'+(hasCount?'Seen '+fmt(n)+' times':'Not recorded')+'</small>')+'</span>'+
+      (hasRate?'<div class="consumable-meter" role="meter" aria-label="'+esc(item.name)+' seen in '+fmt(n)+' of '+fmt(d)+' appearances" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+fmt(percent)+'"><i style="width:'+percent+'%"></i></div>':'')+'</div>';
+  }
+  function enemyConsumablesView(profile) {
+    var items=profile.consumables || [], eligible=profile.meaningful_appearances;
+    var food=[],utility=[],other=[];
+    items.forEach(function(item){
+      if (/^(Malnourished|Diminished)$/i.test(item.name || '')) other.push(item);
+      else if (item.classification==='Nourishment') food.push(item);
+      else if (item.classification==='Enhancement') utility.push(item);
+      else other.push(item);
+    });
+    function sorted(rows){return rows.slice().sort(function(a,b){
+      var aa=typeof a.actor_appearances==='number'?a.actor_appearances:-1;
+      var bb=typeof b.actor_appearances==='number'?b.actor_appearances:-1;
+      return bb-aa || String(a.name).localeCompare(String(b.name));
+    });}
+    function rowsHtml(rows){return rows.map(function(item){return enemyConsumableFinding(item,eligible);}).join('');}
+    function group(label,rows){
+      rows=sorted(rows);
+      if (!rows.length) return '';
+      return '<section class="consumable-group" data-consumable-category="'+label+'"><h4>'+label+'</h4>'+rowsHtml(rows.slice(0,3))+
+        (rows.length>3?'<details data-more-consumables><summary>More '+label.toLowerCase()+' ('+(rows.length-3)+')</summary>'+rowsHtml(rows.slice(3))+'</details>':'')+'</section>';
+    }
+    return '<div class="consumable-grid">'+group('Food',food)+group('Utility',utility)+'</div>'+
+      (other.length?'<details class="consumable-other" data-other-consumables><summary>Other buffs ('+other.length+')</summary>'+rowsHtml(sorted(other))+'</details>':'');
+  }
+  refreshCss += '.enemy-build-evidence .intel-grid{grid-template-columns:1fr}.consumable-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.consumable-group{min-width:0}.consumable-group h4{margin:12px 0 6px}.consumable-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;padding:8px 0;min-width:0;border-bottom:1px solid var(--line-soft)}.consumable-name{overflow-wrap:anywhere;min-width:0}.consumable-values{display:flex;align-items:baseline;justify-content:flex-end;gap:7px;white-space:nowrap}.consumable-values small{color:var(--muted)}.consumable-meter{grid-column:1/-1;height:5px;border-radius:3px;background:var(--line);overflow:hidden}.consumable-meter i{display:block;height:100%;background:var(--accent);border-radius:inherit}.consumable-other{margin-top:10px}.consumable-group summary,.consumable-other summary{cursor:pointer;color:var(--muted);padding:7px 0}.enemy-evidence-note{color:var(--muted);font-size:13px}@media(max-width:1100px){.consumable-grid{grid-template-columns:1fr}}';
   function enemyBuildEvidenceView(validation,selectedProfessions,scopeLabel) {
     if (scopeLabel && validation.status === "team_attribution_unavailable")
-      return '<section class="enemy-build-evidence"><h2>Enemy Build Evidence</h2><p class="empty">Team-attributed evidence unavailable for '+esc(scopeLabel)+'. Legacy or unknown-team observations are not assigned by profession. All-opponents evidence is available only in the global view.</p></section>';
+      return '<section class="enemy-build-evidence"><h2>Enemy traits & consumables</h2><p class="empty">Traits and consumables unavailable for '+esc(scopeLabel)+'.</p></section>';
     var allowed=Array.isArray(selectedProfessions) ? new Set(selectedProfessions) : null;
     var rows=Object.keys(validation.professions || {}).map(function(profession){
       return {profession:profession,profile:validation.professions[profession]};
     }).filter(function(row){return (!allowed || allowed.has(row.profession)) && ((row.profile.traits || []).length || (row.profile.consumables || []).length);});
-    if (!rows.length) return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><div><span class=\"eyebrow\">Observable build fingerprints</span><h2>Enemy Build Evidence</h2></div></div><p class=\"empty\">No observed build evidence.</p></section>";
+    if (!rows.length) return "<section class=\"enemy-build-evidence\"><h2>Enemy traits & consumables</h2><p class=\"empty\">No traits or consumables recorded.</p></section>";
     var hasConsumables=rows.some(function(row){return (row.profile.consumables || []).length;});
     var evidenceTitle=(scopeLabel || "All opponents")+" · "+(hasConsumables ? "Enemy Traits & Consumables" : "Observed Enemy Trait Procs");
-    return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><div><span class=\"eyebrow\">Observable build fingerprints</span><h2>"+esc(evidenceTitle)+"</h2></div></div><div class=\"intel-grid\">"+
+    return "<section class=\"enemy-build-evidence\"><div class=\"section-head\"><h2>"+esc(evidenceTitle)+"</h2></div><p class=\"enemy-evidence-note\">Each enemy counts once per included fight. Only triggered traits and recorded buffs are shown.</p><div class=\"intel-grid\">"+
       rows.map(function(row){var traits=row.profile.traits || [],consumables=row.profile.consumables || [];
         return "<article class=\"intel-card\"><h3>"+professionInline(row.profession)+"</h3>"+
           (traits.length ? '<h4>Observed major traits</h4><div class="build-evidence-list enemy-trait-list">'+traits.map(enemyTraitFinding).join('')+'</div>' : '')+
-          (consumables.length ? "<h4>Observed food / utility buffs</h4><div class=\"build-evidence-list\">"+consumables.map(function(item){return "<div><b>"+esc(item.name)+"</b><span>"+esc(item.classification)+((item.roles || []).length ? " · "+esc(item.roles.join(" / ")) : "")+"</span><small>Seen in "+fmt(item.actor_appearances)+" enemy appearance(s)</small></div>";}).join("")+"</div>" : "")+"</article>";
+          (consumables.length ? enemyConsumablesView(row.profile) : "")+"</article>";
       }).join("")+"</div>"+(!hasConsumables ? "" : "")+"</section>";
   }
   function partyGrid(fight) {
@@ -2171,7 +2351,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       "<div id=\"enemy-panel\">" + comparisonView() + "</div>" +
       (ai ? "<article class=\"ai-read\"><span class=\"eyebrow\">Optional analysis</span>" +
         "<h2>AI Enemy Read</h2><p>" + esc(ai.summary || ai.text || ai) +
-        "</p><small>Embedded when the report was generated. Opening this file makes no model call.</small></article>" : "");
+        "</p></article>" : "");
   }
   function comparisonPlayerKey(row) {
     return String(row && (row.account || row.name) || "").replace(/^:/,"").trim().toLowerCase();
@@ -2346,7 +2526,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     var boards = allBoards();
     var hasHistoricalLeaderboards=(model.leaderboards || []).some(function(board){return (board.rows || []).length;});
     var overview = subnav("overview", [["summary","Night Summary"],["timeline","Fight Timeline"]]) +
-      subpanel("overview", "summary", fightLinks() + enemyCoverage() +
+      subpanel("overview", "summary", fightLinks() + fightOutcomesSection(true) + enemyCoverage() +
         sectionHead("Fight review", "Outcome and high-impact findings", "Fight conversion, losses, incoming damage, and standout players without the table hunt.") +
         nightMvpCards() + outcomeChart() +
         boardGrid([], 8, "No overview boards were found."), false) +
@@ -3433,6 +3613,7 @@ def convert_report_file(
     dpsreport_links_enabled: bool = True,
     enemy_role_evidence: dict[str, Any] | None = None,
     player_skill_evidence: dict[str, Any] | None = None,
+    fight_outcomes: dict[str, Any] | None = None,
 ) -> Path:
     """Atomically replace a packed/raw upstream report with the three-view shell."""
     path = Path(report_path)
@@ -3451,6 +3632,7 @@ def convert_report_file(
             list(tiddlers), selected_fights=selected_fights,
             enemy_role_evidence=enemy_role_evidence,
             player_skill_evidence=player_skill_evidence,
+            fight_outcomes=fight_outcomes,
         ),
         default_view=default_view,
         dpsreport_links_enabled=dpsreport_links_enabled,
