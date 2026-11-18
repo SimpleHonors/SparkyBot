@@ -34,3 +34,9 @@ The report is a single web page — open it locally or download it from Discord;
 - **Report too big for Discord** — reports shrink automatically, and **Settings → Fight Summary → Always zip Discord uploads** squeezes further. You can always share the file from the report output folder instead.
 - **Reports build slowly** — turn on **Settings → Fight Summary → Fast reports (reuse live fight data)**; reports then reuse analysis SparkyBot already did after each fight.
 - **No Poison Coverage tab** — enable it in **Settings → Fight Summary**, then build a new report; it isn't added to already-built pages.
+
+### Refreshing the file list
+
+The file list loads in the background. Use **Refresh** to check again for newly arrived logs. A failed or incomplete scan is not treated as an empty folder; retry after the folder is available. Refresh does not parse logs or generate a report.
+
+Poison Coverage remains under Pro → DPS → Condition Damage. It uses explicit poison hit counts; unmeasured output is kept separate from measured zero. Enemy food and utility observations are grouped with validated coverage counts.

@@ -40,9 +40,9 @@ class TeamTraitViewerTests(unittest.TestCase):
 
     def test_trait_rates_show_eligible_appearances_without_disclaimers(self):
         page = render_js(model_fixture(), 'allFightsCompositionView(model.enemy_intel.scopes[0])')
-        self.assertIn('1 / 4 eligible appearances', page)
+        self.assertIn('Seen in 1 of 4 appearances', page)
         self.assertIn('25% observed', page)
-        self.assertIn('&gt;=15 seconds active', page)
+        self.assertIn('Each enemy counts once per included fight.', page)
         self.assertNotIn('Repeated players count once per fight', page)
         self.assertNotIn('not exact equip prevalence', page)
         self.assertIn('role="meter"', page)
@@ -58,7 +58,7 @@ class TeamTraitViewerTests(unittest.TestCase):
             else:
                 scope['role_validation'] = evidence
             page = render_js(model, 'allFightsCompositionView(model.enemy_intel.scopes[0])')
-            self.assertIn('Team-attributed evidence unavailable', page)
+            self.assertIn('Traits and consumables unavailable for Red.', page)
             for forbidden in ['Red Healing', 'Blue Damage', 'Global Only', 'Likely Support / Healing']:
                 self.assertNotIn(forbidden, page)
 
@@ -70,11 +70,13 @@ class TeamTraitViewerTests(unittest.TestCase):
     def test_legacy_trait_rate_is_not_invented(self):
         model = model_fixture()
         item = model['enemy_intel']['scopes'][0]['role_validation']['professions']['Firebrand']['traits'][0]
+        item['actor_appearances'] = 2
         item.pop('eligible_actor_appearances')
         item.pop('observed_percent')
         page = render_js(model, 'allFightsCompositionView(model.enemy_intel.scopes[0])')
-        self.assertIn('eligible denominator / rate unavailable', page)
+        self.assertIn('Seen in 2 appearances · percentage not recorded', page)
         self.assertNotIn('0% observed', page)
+        self.assertNotIn('role="meter"', page)
 
     def test_trait_meter_retains_source_percentage_and_spec_filter(self):
         model = model_fixture()
@@ -86,7 +88,7 @@ class TeamTraitViewerTests(unittest.TestCase):
                     trait_description='Secondary mechanics text')
         evidence['professions']['Druid'] = {'traits': [trait('Other spec', 'healing')]}
         page = render_js(model, 'enemyBuildEvidenceView(model.enemy_intel.scopes[0].role_validation,["Firebrand"],"Red")')
-        for text in ['40.16% observed', '51 / 127 eligible appearances',
+        for text in ['40.16% observed', 'Seen in 51 of 127 appearances',
                      'width:40.16%', 'Valor', 'Lesser Smite Condition',
                      '<details class="trait-mechanics"><summary>Mechanics</summary>']:
             self.assertIn(text, page)
@@ -140,7 +142,7 @@ class TeamTraitViewerTests(unittest.TestCase):
                     self.assertLessEqual(geometry['right'], width)
                     self.assertAlmostEqual(geometry['fill'] / geometry['width'], geometry['rate'] / 100, places=2)
             frame.locator('[data-enemy-scope="green"]').click()
-            expect(panel).to_contain_text('Team-attributed evidence unavailable')
+            expect(panel).to_contain_text('Traits and consumables unavailable for Green.')
             expect(panel).not_to_contain_text('Red Healing')
             frame.locator('[data-enemy-scope="all"]').click()
             for name in ['Red Healing', 'Blue Damage', 'Global Only']:

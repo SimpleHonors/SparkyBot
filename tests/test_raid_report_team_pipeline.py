@@ -89,14 +89,16 @@ def test_generate_sends_transport_copy_but_evidence_reads_original(tmp_path, mon
     original = source.read_bytes()
     log = LogInfo(tmp_path / 'log.zevtc', datetime(2026, 9, 19), 'filename')
     monkeypatch.setattr(raid_report, 'plan_report', lambda *a: ([(log, source)], []))
-    evidence = raid_report.collect_report_evidence
+    evidence = raid_report._ReportEvidenceAccumulator.feed
     seen = []
-    def collect(paths):
+    def collect(accumulator, data, path):
+        paths = [path]
         assert paths == [source]
         assert json.loads(paths[0].read_text())['targets'][0]['teamID'] == 2778
+        assert data['targets'][0]['teamID'] == 2778
         seen.append(True)
-        return evidence(paths)
-    monkeypatch.setattr(raid_report, 'collect_report_evidence', collect)
+        return evidence(accumulator, data, path)
+    monkeypatch.setattr(raid_report._ReportEvidenceAccumulator, 'feed', collect)
     def combine(input_dir, run_dir, **kwargs):
         assert json.loads((input_dir / source.name).read_text())['targets'][0]['teamID'] == 2739
         out = input_dir / 'combined.json'

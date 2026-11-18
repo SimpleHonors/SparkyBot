@@ -152,13 +152,16 @@ def build_raid_report_tab(config, parent=None):
     """Construct RaidReportTab wired to real dependencies."""
     from core.raid_report_tab import RaidReportTab
 
-    def _discover():
-        folders = config.get_log_folders()
-        if not folders:
-            return []
+    def _discovery_root():
+        # Raw intent only: no GUI exists/stat/resolve, no cached absence.
+        return str(config.log_folder or "")
+
+    def _discover(root):
+        if not root:
+            raise OSError("No log folder configured. Choose one in Settings.")
         # Capture sizes in the same directory walk.  Reading each Path.stat()
         # later in the GUI causes one SMB round trip per table row.
-        return discover_logs(folders[0], include_size=True)
+        return discover_logs(Path(root), include_size=True, strict=True)
 
     def _select_session(logs):
         return current_session(logs)
@@ -171,6 +174,7 @@ def build_raid_report_tab(config, parent=None):
 
     return RaidReportTab(
         discover=_discover,
+        discovery_root=_discovery_root,
         select_session=_select_session,
         select_recent=_select_recent,
         select_today=_select_today,
